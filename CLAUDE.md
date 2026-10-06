@@ -12,6 +12,9 @@ Attendance automation for Diego, a Teacher Assistant (dgomez230@ivy.edu). Talk t
   rules (to the TA or office, never the professor; student name + doctor/hospital phone; guardian/companion note;
   verified within a week). Reply-To is the TA's academic email.
 - Friday report per class: who missed this week and who is losing the course.
+- Zoom (Diego stays 1 hour): screenshots at 15 min (present), 31 min (tardy) and before leaving (the "Absent" folder).
+  Seen at 15 → Present even if missing at 31, if the last shot confirms. Seen earlier but not in the last shot →
+  Absent with a note. Only in the last shot, or never → Absent. Populi online only has present/absent (P and T = ticked).
 
 ## Classes
 C1 HA 103 Mon 9:00–1:00 (Room 300) · C2 OT 215 Mon 1:30–5:30 (Room 304) · C3 HA 105 Mon 6–10 pm Zoom ·

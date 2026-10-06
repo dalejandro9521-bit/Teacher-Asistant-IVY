@@ -30,7 +30,7 @@ var CONFIG_FIELDS = [
   ['populiVisibility', 'Populi visibility', 'Academic Admin, Account Admin, Admissions Admin, Staff, Academic Auditor, Admissions', 'Boxes to check under Visibility when you send a follow-up from Populi.'],
   ['bcc', 'BCC on student notices', '', 'Optional, e.g. the office, so they keep a copy.'],
   ['noticesFrom', 'Send notices from', '', 'Absences before this date are not emailed (so importing old weeks does not spam students).'],
-  ['ignoreNames', 'Ignore in screenshots', 'Diego Gomez', 'Names that are not students (you, the professors), separated by ";".'],
+  ['ignoreNames', 'Ignore in screenshots', 'Diego Gomez; Professor', 'Names that are not students (you, the professors), separated by ";".'],
   ['markMissing', 'Mark students missing from a file absent', 'Yes', 'Zoom report or Populi list of check-ins: whoever is not in it is Absent.'],
   ['termStart', 'Term start', '2026-10-05', 'First day of week 1 (yyyy-mm-dd). Used for "Week N" in the report.'],
   ['inboxFolderId', 'Inbox folder ID', '', 'Drive folder where you drop Populi exports and Zoom reports. Set up creates it.'],
@@ -294,17 +294,19 @@ function handleScreenshotFolder_(ctx, folder) {
   var roster = roster_(ctx, pick.cls.id);
   var res = screenshotStatuses(phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String));
   var entries = res.results.map(function (x) {
-    return { student: x.student, status: x.status, leftEarly: x.leftEarly, source: 'Zoom screenshots',
-      notes: x.leftEarly ? 'Not in the last screenshot (left before the end)' : '' };
+    return { student: x.student, status: x.status, leftEarly: x.leftEarly, source: 'Zoom screenshots', notes: x.note };
   });
   if (yes_(ctx.cfg.markMissing)) {
-    res.notSeen.forEach(function (s) { entries.push({ student: s, status: STATUS.A, source: 'Zoom screenshots (not seen)' }); });
+    res.notSeen.forEach(function (s) {
+      entries.push({ student: s, status: STATUS.A, source: 'Zoom screenshots (not seen)', notes: 'Not in any screenshot' });
+    });
   }
   var c = applyEntries_(ctx, pick.cls, date, entries);
   var p = res.results.filter(function (x) { return x.status === STATUS.P; }).length;
   var t = res.results.filter(function (x) { return x.status === STATUS.T; }).length;
+  var gone = res.results.filter(function (x) { return x.leftEarly; }).length;
   var msg = images + ' screenshot(s): ' + p + ' present, ' + t + ' tardy, ' + (roster.length - p - t) + ' absent of ' + roster.length +
-    '. ' + c.kept + ' kept (manual/excused).';
+    ' (' + gone + ' disconnected before the last screenshot). ' + c.kept + ' kept (manual/excused).';
   if (res.unmatched.length) msg += ' Names not recognized (add them under "Zoom names" in Students): ' + res.unmatched.join('; ') + '.';
   return { ok: true, kind: 'screenshots', cls: pick.cls.id, dates: date, msg: msg };
 }

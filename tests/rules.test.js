@@ -215,3 +215,54 @@ test('screenshot folders and OCR text of the Zoom participant list', () => {
   assert.equal(r2.results[0].status, 'Present');
   assert.equal(r2.notSeen.length, 3);
 });
+
+test('Diego\'s online rules: 15 min, 31 min and the 1-hour screenshot', () => {
+  const r6 = [
+    { id: 'a', name: 'Ana Uno' }, { id: 'b', name: 'Beto Dos' }, { id: 'c', name: 'Caro Tres' },
+    { id: 'd', name: 'Dani Cuatro' }, { id: 'e', name: 'Eva Cinco' }, { id: 'f', name: 'Fede Seis' }, { id: 'g', name: 'Gabi Siete' }
+  ];
+  const r = g.screenshotStatuses({
+    present: ['Ana Uno\nBeto Dos\nCaro Tres\nGabi Siete'],
+    tardy: ['Ana Uno\nCaro Tres\nDani Cuatro'],          // Beto's connection dropped at 6:31
+    end: ['Ana Uno\nBeto Dos\nDani Cuatro\nEva Cinco']    // Caro and Gabi gone; Eva joined late
+  }, r6, []);
+  const by = Object.fromEntries(r.results.map(x => [x.student.id, [x.status, x.note]]));
+  assert.deepEqual(plain(by.a), ['Present', '']);
+  assert.deepEqual(plain(by.b), ['Present', 'Not in the 31 minute screenshot; confirmed in the last one']);
+  assert.equal(by.c[0], 'Absent'); assert.match(by.c[1], /In the 15 and 31 minute screenshots, not in the last/);
+  assert.deepEqual(plain(by.d), ['Tardy', '']);
+  assert.deepEqual(plain(by.e), ['Absent', 'Joined after minute 30 (only in the last screenshot)']);
+  assert.equal(by.g[0], 'Absent'); assert.match(by.g[1], /Only in the 15 minute screenshot/);
+  assert.deepEqual(plain(r.notSeen.map(s => s.id)), ['f']);
+});
+
+test('names as Zoom shows them (partial, joined, first name only); chat lines with times are skipped', () => {
+  const ro = [
+    { id: '1', name: 'Lendy Mendoza Bohorquez' }, { id: '2', name: 'Sureeporn Sawang-ngoen' }, { id: '3', name: 'Larisa Elizarova' },
+    { id: '4', name: 'Muhammad Ikram Munir' }, { id: '5', name: 'Muhammad Usman Munir' }, { id: '6', name: 'Maide Arsoy' }
+  ];
+  assert.equal(g.matchStudent({ name: 'Lendy Mendoza' }, ro).id, '1');
+  assert.equal(g.matchStudent({ name: 'Sureeporn Sawangngoen' }, ro).id, '2');
+  assert.equal(g.matchStudent({ name: 'Larisa' }, ro).id, '3');
+  assert.equal(g.matchStudent({ name: 'Maide Ceren Arsoy' }, ro).id, '6');
+  assert.equal(g.matchStudent({ name: 'Muhammad Munir' }, ro), null);   // two of them: never guess
+  assert.equal(g.matchStudent({ name: 'Muhammad' }, ro), null);
+  const r = g.screenshotStatuses({ present: ['Larisa\nMaide 6:44 PM\nProfessor Braden\nLula'] }, ro, []);
+  assert.deepEqual(plain(r.results.map(x => x.student.id)), ['3']);
+  assert.deepEqual(plain(r.unmatched), ['Lula']);
+});
+
+test('Populi roster export: real column layout, professors and the TA skipped, Populi order kept', () => {
+  const rows = g.parseCSV([
+    '"Student ID","Populi Name","Academic Term","Course Abbrv","Course Name","Course Section",Email,Street,City,State,ZIP,Country,Phone,Type,"Receives Mail"',
+    ',"Pat Teacher","2026-2027: 2026 Fall Quarter","HA 105","Introduction to Ethics",1,pteacher@ivy.edu,,,,,,,faculty,Yes',
+    '2020000001,"Tom Assistant","2026-2027: 2026 Fall Quarter","HA 105","Introduction to Ethics",1,ta@ivy.edu,"1 Main St",X,MD,1,US,,faculty,Yes',
+    '2026000002,"Zoe Zeta","2026-2027: 2026 Fall Quarter","HA 105","Introduction to Ethics",1,zz26@ivy.edu,"2 Long Rd',
+    'Apt 5",Arlington,VA,22204,US,"(000) 000-0000",student,Yes',
+    '2026000003,"Al Alpha","2026-2027: 2026 Fall Quarter","HA 105","Introduction to Ethics",1,aa26@ivy.edu,,,,,,,student,Yes'
+  ].join('\n'));
+  assert.equal(g.parsePopuli(rows, 2026).records.length, 0);
+  assert.equal(g.parsePopuli(rows, 2026).course, 'HA 105');
+  assert.deepEqual(plain(g.parseRoster(rows).map(s => [s.id, s.name, s.email])),
+    [['2026000002', 'Zoe Zeta', 'zz26@ivy.edu'], ['2026000003', 'Al Alpha', 'aa26@ivy.edu']]);
+});

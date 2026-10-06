@@ -272,6 +272,7 @@ function parseRoster(rows) {
   var cId = findCol_(head, /(\bid\b|student\s*id|number|barcode|^id)/i, /email/i);
   var cEmail = findCol_(head, /email/i);
   var cStatus = findCol_(head, /^(status|enrollment)/i);
+  var cType = findCol_(head, /^(type|role)$/i);
   var out = [];
   for (var r = h + 1; r < rows.length; r++) {
     var row = rows[r], name = cName >= 0 ? row[cName] : '';
@@ -281,6 +282,7 @@ function parseRoster(rows) {
     }
     var id = cId >= 0 ? row[cId] : '', email = cEmail >= 0 ? row[cEmail] : '';
     if (!name && !id) continue;
+    if (cType >= 0 && row[cType] && !/student/i.test(row[cType])) continue; // professors and the TA are listed too
     var st = cStatus >= 0 ? String(row[cStatus] || '') : '';
     out.push({ name: name, id: id, email: email, active: !/(withdr|drop|cancel|incomplete)/i.test(st) });
   }
@@ -299,14 +301,18 @@ function screenshotPhase(folderName) {
   return '';
 }
 
-var ZOOM_UI_WORDS_ = /\b(mute|unmute|participants?|invite|waiting room|chat|raise|lower|hand|reactions?|share|record|security|breakout|apps|whiteboard|leave|end|more|rename|search|in the meeting|host|co-host|guest|me|video|audio|view|speaker|gallery|zoom|meeting|minutes?)\b/;
+var ZOOM_UI_WORDS_ = /\b(professor|prof|teacher|instructor|everyone|screen|mute|unmute|participants?|invite|waiting room|chat|raise|lower|hand|reactions?|share|record|security|breakout|apps|whiteboard|leave|end|more|rename|search|in the meeting|host|co-host|guest|me|video|audio|view|speaker|gallery|zoom|meeting|minutes?)\b/;
 
 /**
- * Text read (OCR) from the screenshots of each moment → status per roster student.
- * phases: {present:[text], tardy:[text], end:[text]} — each text is one screenshot. ignore: names that are not students.
- * - In the "present" shots (first 15 min) → Present; only in the "tardy" shots → Tardy; in neither → not seen (Absent).
- * - If there are "end" shots and a student seen earlier is not in them → Absent (left before the end).
- * Returns {results:[{student, status, leftEarly}], notSeen:[students], unmatched:[lines that look like names]}.
+ * Text read (OCR) from the screenshots of each moment → status per roster student. Diego's rules for Zoom:
+ * - "present" shots (minutes 0–15), "tardy" shots (16–30), "end" shot (before he leaves, about 1 hour in).
+ * - In present → Present, even if missing from the tardy shot, as long as the end shot confirms them.
+ * - First seen in tardy → Tardy (if still there at the end).
+ * - Seen earlier but not in the end shot → Absent (disconnected), with a note.
+ * - Only in the end shot (joined after minute 30) or never seen → Absent.
+ * Without end shots, nobody is marked as disconnected.
+ * phases: {present:[text], tardy:[text], end:[text]} — one text per screenshot. ignore: names that are not students.
+ * Returns {results:[{student, status, leftEarly, note}], notSeen:[students], unmatched:[lines that look like names]}.
  */
 function screenshotStatuses(phases, roster, ignore) {
   var seen = { present: {}, tardy: {}, end: {} }, unmatched = [];
@@ -315,26 +321,32 @@ function screenshotStatuses(phases, roster, ignore) {
     (phases[ph] || []).forEach(function (text) {
       String(text || '').split(/\r?\n/).forEach(function (line) {
         var clean = line.replace(/[|•·]/g, ' ').trim();
-        if (!clean) return;
+        if (!clean || /\d{1,2}:\d{2}\s*[AaPp][Mm]/.test(clean)) return; // chat "Name 6:44 PM" lines, clocks
         var s = matchStudent({ name: clean }, roster);
         if (s) { seen[ph][s.id] = true; return; }
         if (skip.length && matchStudent({ name: clean }, skip)) return;
         var words = normalizeName(clean.replace(/\(.*?\)/g, '')).split(' ').filter(function (w) { return /[a-z]{2}/.test(w); });
-        if (words.length >= 2 && words.length <= 5 && !ZOOM_UI_WORDS_.test(normalizeName(clean)) && unmatched.indexOf(clean) < 0) unmatched.push(clean);
+        if (words.length >= 1 && words.length <= 5 && !ZOOM_UI_WORDS_.test(normalizeName(clean)) && unmatched.indexOf(clean) < 0) unmatched.push(clean);
       });
     });
   });
   var hasEnd = (phases.end || []).some(function (t) { return String(t || '').trim(); });
   var results = [], notSeen = [];
   roster.forEach(function (s) {
-    var st = seen.present[s.id] ? STATUS.P : seen.tardy[s.id] ? STATUS.T : '';
-    if (!st) {
-      // Joined late but still there at the end, without being in the 6:31 shot → Absent (arrived after minute 30).
-      notSeen.push(s);
-      return;
-    }
-    var left = hasEnd && !seen.end[s.id];
-    results.push({ student: s, status: left ? STATUS.A : st, leftEarly: left });
+    var p = seen.present[s.id], t = seen.tardy[s.id], e = seen.end[s.id];
+    var r = { student: s, status: '', leftEarly: false, note: '' };
+    if (p || t) {
+      r.status = p ? STATUS.P : STATUS.T;
+      if (hasEnd && !e) {
+        r.status = STATUS.A; r.leftEarly = true;
+        r.note = (p && t ? 'In the 15 and 31 minute screenshots' : p ? 'Only in the 15 minute screenshot' : 'Tardy (31 minute screenshot)') +
+          ', not in the last screenshot: disconnected before the 1-hour check';
+      } else if (p && !t && e) r.note = 'Not in the 31 minute screenshot; confirmed in the last one';
+    } else if (e) {
+      r.status = STATUS.A;
+      r.note = 'Joined after minute 30 (only in the last screenshot)';
+    } else { notSeen.push(s); return; }
+    results.push(r);
   });
   return { results: results, notSeen: notSeen, unmatched: unmatched };
 }

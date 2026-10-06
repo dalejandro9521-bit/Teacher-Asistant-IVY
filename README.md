@@ -72,13 +72,24 @@ Si Populi incluye la **hora del escaneo**, el sistema decide Present, Tardy o Ab
        2. Tardy/     screenshots de las 6:31
        3. Absent/    screenshots antes de salir (para saber quién se fue)
    ```
-2. Toma los screenshots de la **lista de participantes** de Zoom (no de la vista de video): los nombres salen completos.
-   Si no caben todos, toma varios bajando por la lista.
-3. Cada 15 minutos el sistema lee el texto de las imágenes con el **OCR de Google Drive**, que es gratis, y aplica las reglas:
-   - En "Present" = Present.
-   - Solo en "Tardy" = Tardy.
-   - En ninguno = Absent.
-   - Estuvo, pero ya no aparece en "3. Absent" = Absent (left early).
+2. Screenshots en la **vista de galería**, como ya los tomas:
+   - **Cierra el chat antes del screenshot.** Los estudiantes escriben ahí su nombre y quedaría como si siguieran conectados.
+   - Pon la galería en **49 por pantalla** (Zoom → Settings → Video → "Display up to 49 participants per screen in Gallery View").
+     Así son 2 páginas en lugar de 3.
+   - Toma un screenshot por página y ponlos todos en la carpeta del momento que corresponde.
+3. Cada 15 minutos el sistema lee el texto de las imágenes con el **OCR de Google Drive** (gratis) y aplica tus reglas:
+
+   | Aparece en… | Resultado | Nota en la hoja |
+   |---|---|---|
+   | Present y en el último | Present | |
+   | Present, no en Tardy, sí en el último | Present | se cayó la conexión a los 31 min, confirmado al final |
+   | Tardy y en el último | Tardy | |
+   | Present y/o Tardy, pero no en el último | Absent | se desconectó antes de la revisión de la hora |
+   | Solo en el último | Absent | se conectó después del minuto 30 |
+   | En ninguno | Absent | nunca se conectó |
+
+   En Populi (online) solo existe presente o ausente: marca la casilla para P y T y déjala vacía para A.
+   La hoja **Grid** está en el mismo orden que Populi.
 4. En el **Inbox log** ves el resultado y los nombres de Zoom que no reconoció.
    Si alguien se pone otro nombre en Zoom (por ejemplo "iPhone de Ana"), escríbelo una vez en **Students → Zoom names** de ese estudiante y desde ahí lo reconoce siempre.
    En **Config → Ignore in screenshots** pon tu nombre y el del profesor.
