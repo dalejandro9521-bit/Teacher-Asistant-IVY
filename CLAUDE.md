@@ -51,5 +51,5 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
 - `tests/gas-mock.js` runs the real `src/` files in a VM with fake SpreadsheetApp/DriveApp/GmailApp/ScriptApp.
 
 ## Before delivering
-`npm test` must pass. Add a test in `tests/flow.test.js` for any new behavior of Code.js.
+`npm test` must pass. After changing src/, run `npm run bundle` (dist/TA-Attendance.gs is what Diego pastes). Add a test in `tests/flow.test.js` for any new behavior of Code.js.
 Never commit student data (CSV/XLSX exports).
