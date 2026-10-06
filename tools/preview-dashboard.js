@@ -52,7 +52,7 @@ window.google = { script: { run: (function make(ok, fail) {
 
 (async () => {
   const browser = await chromium.launch();
-  const page = await browser.newPage({ viewport: { width: 1400, height: 860 } });
+  const page = await browser.newPage({ viewport: { width: +(process.env.W || 1400), height: 860 } });
   // The fake google.script.run goes in before the page's own script.
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'Dashboard.html'), 'utf8')
     .replace('<script>', '<script>' + stub + '</script>\n<script>');

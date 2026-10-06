@@ -220,6 +220,24 @@
   .actionbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
   .name-link { cursor: pointer; }
   .name-link:hover { color: var(--brand2); text-decoration: underline; }
+  /* smaller screens (laptop, or the window over the sheet) */
+  @media (max-width: 1100px) {
+    .app { grid-template-columns: 180px 1fr; }
+    nav { padding: 14px 8px; }
+    main { padding: 18px 18px 50px; }
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .wtiles { grid-template-columns: repeat(3, 1fr); }
+    .weeks { grid-template-columns: repeat(5, 1fr); }
+    .loading { left: 180px; }
+  }
+  @media (max-width: 760px) {
+    .app { grid-template-columns: 1fr; height: auto; }
+    nav { flex-direction: row; flex-wrap: wrap; gap: 4px; }
+    .nav-h, .nav-foot, .logo-sub, .nav-i small { display: none; }
+    .nav-i { width: auto; }
+    .wtiles, .weeks { grid-template-columns: repeat(2, 1fr); }
+    .loading { left: 0; }
+  }
   .changed { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 13px; }
   .report table { width: auto; }
 </style>

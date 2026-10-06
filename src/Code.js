@@ -887,7 +887,18 @@ function rerunSessions_(ctx, rerun) {
 /* ---------- dashboard (Dashboard.html) ---------- */
 
 function openDashboard() {
-  var html = HtmlService.createHtmlOutputFromFile('Dashboard').setWidth(1400).setHeight(860);
+  // Published as a web app → open it in its own full-size tab. Otherwise show it over the sheet.
+  var url = '';
+  try { url = ScriptApp.getService().getUrl() || ''; } catch (e) { url = ''; }
+  if (url) {
+    var go = HtmlService.createHtmlOutput('<p style="font-family:Arial;font-size:14px">Opening the dashboard… ' +
+      '<a href="' + url + '" target="_blank">click here</a> if it doesn\'t open.</p>' +
+      '<script>window.open(' + JSON.stringify(url) + ', "_blank"); setTimeout(function () { google.script.host.close(); }, 1500);</script>')
+      .setWidth(360).setHeight(90);
+    SpreadsheetApp.getUi().showModalDialog(go, 'TA Attendance');
+    return;
+  }
+  var html = HtmlService.createHtmlOutputFromFile('Dashboard').setWidth(1600).setHeight(1000);
   SpreadsheetApp.getUi().showModalDialog(html, 'TA Attendance');
 }
 

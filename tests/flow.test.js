@@ -646,3 +646,12 @@ test('Zoom class: "Done in Populi" task until ticked; old sheets get new columns
   assert.ok(!tasks.some(t => t.type === 'populi'));
   assert.ok(j(env.gas.apiSession('C3', '2026-10-05')).populi);
 });
+
+test('Open dashboard: over the sheet, or straight to the full-page web app once it is published', () => {
+  const env = setupTerm();
+  env.gas.openDashboard();
+  assert.equal(env.dialogs.length, 1);
+  env.service.url = 'https://script.google.com/macros/s/abc/exec';
+  env.gas.openDashboard();
+  assert.equal(env.dialogs.length, 2);
+});

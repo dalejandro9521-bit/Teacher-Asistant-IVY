@@ -77,6 +77,7 @@ function makeEnv(opts) {
   }
   const sheets = {};
   const toasts = [];
+  const dialogs = [];
   const ss = {
     getSheetByName: n => sheets[n] || null,
     insertSheet: n => (sheets[n] = new Sheet(n)),
@@ -87,7 +88,7 @@ function makeEnv(opts) {
     getActive: () => ss,
     getActiveSpreadsheet: () => ss,
     newDataValidation: () => chain(),
-    getUi: () => ({ createMenu: () => chain(), showModalDialog() {}, alert() {} }),
+    getUi: () => ({ createMenu: () => chain(), showModalDialog: (h, title) => { dialogs.push(title); }, alert() {} }),
     openById: id => {
       const f = drive.byId[id];
       return { getSheets: () => [{ getDataRange: () => ({ getDisplayValues: () => f.rows }) }] };
@@ -174,7 +175,9 @@ function makeEnv(opts) {
     createDraft: (to, subject, body, o) => mail.drafts.push({ to, subject, body, ...o })
   };
   const triggers = [];
+  const service = { url: '' };
   const ScriptApp = {
+    getService: () => ({ getUrl: () => service.url }),
     WeekDay: { FRIDAY: 'FRIDAY' },
     getProjectTriggers: () => triggers.slice(),
     deleteTrigger: t => triggers.splice(triggers.indexOf(t), 1),
@@ -209,7 +212,7 @@ function makeEnv(opts) {
     vm.runInContext(fs.readFileSync(path.join(src, f), 'utf8'), ctx, { filename: f });
   });
   return {
-    gas: ctx, sheets, mail, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot,
+    gas: ctx, sheets, mail, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot, service, dialogs,
     setNow: iso => { NOW = new RealDate(iso).getTime(); },
     sheet: n => sheets[n]
   };
