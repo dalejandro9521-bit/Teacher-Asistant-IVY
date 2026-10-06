@@ -99,7 +99,18 @@ function makeEnv(opts) {
   const drive = { byId: {} };
   function iter(list) { let i = 0; return { hasNext: () => i < list.length, next: () => list[i++] }; }
   class Folder {
-    constructor(name, parent) { this.id = 'fold' + nextId++; this.name = name; this.files = []; this.folders = []; this.parent = parent; drive.byId[this.id] = this; }
+    constructor(name, parent) {
+      this.id = 'fold' + nextId++; this.name = name; this.files = []; this.folders = []; this.parent = parent;
+      this.created = new FakeDate(); drive.byId[this.id] = this;
+    }
+    getDateCreated() { return this.created; }
+    getFolders() { return iter(this.folders.slice()); }
+    moveTo(folder) {
+      if (this.parent) this.parent.folders = this.parent.folders.filter(f => f !== this);
+      folder.folders.push(this); this.parent = folder;
+    }
+    // test helper: a screenshot whose "pixels" are the text Zoom shows
+    addImage(name, text) { return this.addFile(name, text, 'image/png'); }
     getId() { return this.id; }
     getName() { return this.name; }
     getUrl() { return 'https://drive.google.com/drive/folders/' + this.id; }
@@ -128,8 +139,23 @@ function makeEnv(opts) {
   const rootFolders = [];
   const DriveApp = {
     createFolder: n => { const f = new Folder(n, null); rootFolders.push(f); return f; },
-    getFolderById: id => { if (!drive.byId[id]) throw new Error('no folder ' + id); return drive.byId[id]; }
+    getFolderById: id => { if (!drive.byId[id]) throw new Error('no folder ' + id); return drive.byId[id]; },
+    getFileById: id => ({ setTrashed: () => { drive.docs[id].trashed = true; } })
   };
+  // Advanced Drive service (v3): converting an image to a Google Doc runs OCR. Here the image content is its text.
+  drive.docs = {};
+  const ocr = { calls: 0 };
+  const Drive = {
+    Files: {
+      create: (meta, blob) => {
+        ocr.calls++;
+        const id = 'doc' + nextId++;
+        drive.docs[id] = { text: blob.getDataAsString(), trashed: false, meta };
+        return { id };
+      }
+    }
+  };
+  const DocumentApp = { openById: id => ({ getBody: () => ({ getText: () => drive.docs[id].text }) }) };
 
   /* ---- Gmail etc. ---- */
   const mail = { sent: [], drafts: [] };
@@ -157,7 +183,7 @@ function makeEnv(opts) {
   };
   const ctx = {
     Date: FakeDate, console, Math, JSON, String, Number, Object, Array, RegExp, Error, isNaN, parseFloat, parseInt,
-    SpreadsheetApp, DriveApp, GmailApp, ScriptApp, Utilities,
+    SpreadsheetApp, DriveApp, GmailApp, ScriptApp, Utilities, Drive, DocumentApp,
     Session: { getScriptTimeZone: () => TZ },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     HtmlService: { createHtmlOutput: () => chain() }
@@ -168,7 +194,7 @@ function makeEnv(opts) {
     vm.runInContext(fs.readFileSync(path.join(src, f), 'utf8'), ctx, { filename: f });
   });
   return {
-    gas: ctx, sheets, mail, triggers, toasts, rootFolders,
+    gas: ctx, sheets, mail, triggers, toasts, rootFolders, ocr, docs: drive.docs,
     setNow: iso => { NOW = new RealDate(iso).getTime(); },
     sheet: n => sheets[n]
   };

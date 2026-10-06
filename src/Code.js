@@ -6,7 +6,7 @@
 var SHEETS = {
   Config: ['Setting', 'Value', 'Notes'],
   Classes: ['Class ID', 'Course', 'Section', 'Professor', 'Professor email', 'Day', 'Start', 'End', 'Mode', 'Zoom meeting ID', 'Active'],
-  Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active', 'Order'],
+  Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active', 'Order', 'Zoom names'],
   Attendance: ['Date', 'Class ID', 'Student ID', 'Name', 'Status', 'Minutes late', 'Source', 'No ID', 'Left early',
     'Excuse', 'Excuse date', 'Notified', 'Office notified', 'Notes', 'Updated'],
   Assignments: ['Class ID', 'Title', 'Due date', 'Remind days before', 'Notes', 'Reminded'],
@@ -30,8 +30,9 @@ var CONFIG_FIELDS = [
   ['populiVisibility', 'Populi visibility', 'Academic Admin, Account Admin, Admissions Admin, Staff, Academic Auditor, Admissions', 'Boxes to check under Visibility when you send a follow-up from Populi.'],
   ['bcc', 'BCC on student notices', '', 'Optional, e.g. the office, so they keep a copy.'],
   ['noticesFrom', 'Send notices from', '', 'Absences before this date are not emailed (so importing old weeks does not spam students).'],
+  ['ignoreNames', 'Ignore in screenshots', 'Diego Gomez', 'Names that are not students (you, the professors), separated by ";".'],
   ['markMissing', 'Mark students missing from a file absent', 'Yes', 'Zoom report or Populi list of check-ins: whoever is not in it is Absent.'],
-  ['termStart', 'Term start', '', 'First day of week 1 (yyyy-mm-dd). Used for "Week N" in the report.'],
+  ['termStart', 'Term start', '2026-10-05', 'First day of week 1 (yyyy-mm-dd). Used for "Week N" in the report.'],
   ['inboxFolderId', 'Inbox folder ID', '', 'Drive folder where you drop Populi exports and Zoom reports. Set up creates it.'],
   ['reportHour', 'Weekly report hour (Friday)', 8, '0–23, script time zone.'],
   ['reminderHour', 'Assignment reminder hour', 7, '0–23, every day.'],
@@ -50,10 +51,10 @@ var NUMERIC_KEYS = ['reportHour', 'reminderHour', 'totalSessions', 'maxAbsences'
   'tardyUntilMin', 'tardiesPerAbsence', 'noIdLimit', 'earlyLeaveGraceMin', 'excuseReviewDays'];
 
 var DEFAULT_CLASSES = [
-  ['C1', 'Course name', '', '', '', 'Monday', '9:00 AM', '1:00 PM', 'In person', '', 'Yes'],
-  ['C2', 'Course name', '', '', '', 'Monday', '1:30 PM', '2:30 PM', 'In person', '', 'Yes'],
-  ['C3', 'Course name', '', '', '', 'Monday', '6:00 PM', '7:00 PM', 'Zoom', '', 'Yes'],
-  ['C4', 'Course name', '', '', '', 'Thursday', '9:00 AM', '10:00 AM', 'Zoom', '', 'Yes']
+  ['C1', 'HA 103: History of World Religions', '', '', '', 'Monday', '9:00 AM', '1:00 PM', 'In person (Vienna, Room 300)', '', 'Yes'],
+  ['C2', 'OT 215: Minor Prophets', '', '', '', 'Monday', '1:30 PM', '5:30 PM', 'In person (Vienna, Room 304)', '', 'Yes'],
+  ['C3', 'HA 105: Introduction to Ethics', '', '', '', 'Monday', '6:00 PM', '10:00 PM', 'Zoom', '', 'Yes'],
+  ['C4', 'SB 100: Introduction to Business', '', '', '', 'Thursday', '9:00 AM', '1:00 PM', 'Zoom', '', 'Yes']
 ];
 
 var TRIGGER_HANDLERS = ['tick', 'weeklyReport', 'assignmentReminders'];
@@ -242,7 +243,85 @@ function processInbox_(ctx) {
     appendRow_('Inbox log', [nowStr_(), name, res.kind, res.cls, res.dates, res.msg]);
     log.push(res);
   }
+  // A folder = one Zoom class: subfolders "1. Present" / "2. Tardy" / "3. Absent" with the screenshots.
+  var folders = folder.getFolders();
+  while (folders.hasNext()) {
+    var sub = folders.next(), fname = sub.getName(), fres;
+    if (fname === 'Processed' || fname === 'Needs attention') continue;
+    try {
+      fres = handleScreenshotFolder_(ctx, sub);
+    } catch (err) {
+      fres = { ok: false, kind: 'screenshots', cls: '', dates: '', msg: 'Error: ' + (err && err.message || err) };
+    }
+    if (fres.wait) continue; // still uploading
+    sub.moveTo(fres.ok ? done : bad);
+    appendRow_('Inbox log', [nowStr_(), fname + '/', fres.kind, fres.cls, fres.dates, fres.msg]);
+    log.push(fres);
+  }
   return log;
+}
+
+/**
+ * Zoom screenshots → attendance, with Google Drive's free OCR (no AI).
+ * Folder name gives the class (course code like "HA 105" or [C3]) and the date ("10.05.26").
+ */
+function handleScreenshotFolder_(ctx, folder) {
+  var name = folder.getName(), phases = { present: [], tardy: [], end: [] }, todo = [], newest = 0;
+  var subs = folder.getFolders();
+  while (subs.hasNext()) {
+    var sf = subs.next(), ph = screenshotPhase(sf.getName());
+    if (!ph) continue;
+    var files = sf.getFiles();
+    while (files.hasNext()) {
+      var f = files.next();
+      if (!/^image\//.test(f.getMimeType())) continue;
+      todo.push({ phase: ph, file: f });
+      newest = Math.max(newest, f.getDateCreated().getTime());
+    }
+  }
+  if (!todo.length) {
+    if (Date.now() - folder.getDateCreated().getTime() < 30 * 60000) return { wait: true };
+    return { ok: false, kind: 'screenshots', cls: '', dates: '', msg: 'No screenshots found. Use subfolders "1. Present", "2. Tardy", "3. Absent".' };
+  }
+  if (Date.now() - newest < 2 * 60000) return { wait: true }; // give the upload a moment to finish (before any OCR)
+  var pick = pickClass({ fileName: name }, ctx.classes, rosterByClass_(ctx), []);
+  if (!pick.cls) return { ok: false, kind: 'screenshots', cls: '', dates: '', msg: 'Could not tell the class. Put the course code (HA 105) or [C3] in the folder name.' };
+  var date = dateFromName_(name);
+  if (!date) return { ok: false, kind: 'screenshots', cls: pick.cls.id, dates: '', msg: 'No date in the folder name (e.g. "HA 105 - 10.05.26").' };
+  var images = todo.length;
+  todo.sort(function (a, b) { return a.file.getName() < b.file.getName() ? -1 : 1; })
+    .forEach(function (x) { phases[x.phase].push(ocrText_(x.file)); });
+  var roster = roster_(ctx, pick.cls.id);
+  var res = screenshotStatuses(phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String));
+  var entries = res.results.map(function (x) {
+    return { student: x.student, status: x.status, leftEarly: x.leftEarly, source: 'Zoom screenshots',
+      notes: x.leftEarly ? 'Not in the last screenshot (left before the end)' : '' };
+  });
+  if (yes_(ctx.cfg.markMissing)) {
+    res.notSeen.forEach(function (s) { entries.push({ student: s, status: STATUS.A, source: 'Zoom screenshots (not seen)' }); });
+  }
+  var c = applyEntries_(ctx, pick.cls, date, entries);
+  var p = res.results.filter(function (x) { return x.status === STATUS.P; }).length;
+  var t = res.results.filter(function (x) { return x.status === STATUS.T; }).length;
+  var msg = images + ' screenshot(s): ' + p + ' present, ' + t + ' tardy, ' + (roster.length - p - t) + ' absent of ' + roster.length +
+    '. ' + c.kept + ' kept (manual/excused).';
+  if (res.unmatched.length) msg += ' Names not recognized (add them under "Zoom names" in Students): ' + res.unmatched.join('; ') + '.';
+  return { ok: true, kind: 'screenshots', cls: pick.cls.id, dates: date, msg: msg };
+}
+
+/** Text in an image, using Google Drive's OCR (Advanced Drive service). The temporary Doc is deleted. */
+function ocrText_(file) {
+  var blob = file.getBlob(), doc;
+  if (Drive.Files.create) {
+    doc = Drive.Files.create({ name: 'ocr-' + file.getName(), mimeType: 'application/vnd.google-apps.document' }, blob, { ocrLanguage: 'en' });
+  } else {
+    doc = Drive.Files.insert({ title: 'ocr-' + file.getName(), mimeType: 'application/vnd.google-apps.document' }, blob, { ocr: true, ocrLanguage: 'en' });
+  }
+  try {
+    return DocumentApp.openById(doc.id).getBody().getText();
+  } finally {
+    DriveApp.getFileById(doc.id).setTrashed(true);
+  }
 }
 
 function rowsFromFile_(file) {
@@ -622,8 +701,9 @@ function subfolder_(folder, name) {
 function dateFromName_(name) {
   var m = String(name).match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
   if (m) return m[1] + '-' + pad2_(+m[2]) + '-' + pad2_(+m[3]);
-  m = String(name).match(/(\d{1,2})[-_.](\d{1,2})[-_.](\d{4})/);
-  if (m) return m[3] + '-' + pad2_(+m[1]) + '-' + pad2_(+m[2]);
+  // "10.05.26", "10-05-2026", "10_5_26" (month first)
+  m = String(name).match(/(?:^|[^\d])(\d{1,2})[-_.](\d{1,2})[-_.](\d{4}|\d{2})(?!\d)/);
+  if (m && +m[1] <= 12 && +m[2] <= 31) return (m[3].length === 2 ? '20' + m[3] : m[3]) + '-' + pad2_(+m[1]) + '-' + pad2_(+m[2]);
   return '';
 }
 
@@ -698,6 +778,7 @@ function load_() {
 function studentFrom_(t, r) {
   return { id: t.get(r, 'Student ID'), name: t.get(r, 'Name'), email: t.get(r, 'Email'), classId: t.get(r, 'Class ID'),
     active: !/^(no|n|false|0)$/i.test(t.get(r, 'Active')), order: parseInt(t.get(r, 'Order'), 10) || 0,
+    aliases: t.get(r, 'Zoom names').split(/\s*;\s*/).filter(String),
     row: t.rows.indexOf(r) };
 }
 

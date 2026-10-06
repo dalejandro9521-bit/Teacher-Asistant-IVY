@@ -227,13 +227,18 @@ function pickClass(hints, classes, rosterByClass, people) {
     var z = classes.filter(function (c) { return String(c.zoomId || '').replace(/\D/g, '') === hints.meetingId; });
     if (z.length === 1) return { cls: z[0], how: 'Zoom meeting ID' };
   }
-  var text = normalizeName([hints.course, hints.topic, name].join(' '));
-  var byText = classes.filter(function (c) {
-    var sec = normalizeName(c.section), crs = normalizeName(c.course), code = courseCode(c.course);
-    var padded = ' ' + text + ' ';
-    return (sec && padded.indexOf(' ' + sec + ' ') >= 0) || (crs && text.indexOf(crs) >= 0) ||
-      (code && (padded.indexOf(' ' + code + ' ') >= 0 || padded.indexOf(' ' + code.replace(' ', '') + ' ') >= 0));
-  });
+  var text = normalizeName([hints.course, hints.topic, name].join(' ')), padded = ' ' + text + ' ';
+  // Course code ("HA 105") first, then the full course name, then the section number (weakest: "01" is common).
+  var tests = [
+    function (c) { var code = courseCode(c.course); return code && (padded.indexOf(' ' + code + ' ') >= 0 || padded.indexOf(' ' + code.replace(' ', '') + ' ') >= 0); },
+    function (c) { var crs = normalizeName(c.course); return crs && text.indexOf(crs) >= 0; },
+    function (c) { var sec = normalizeName(c.section); return sec && padded.indexOf(' ' + sec + ' ') >= 0; }
+  ];
+  var byText = [];
+  for (var k = 0; k < tests.length && byText.length !== 1; k++) {
+    var hits = classes.filter(tests[k]);
+    if (hits.length) byText = hits;
+  }
   if (byText.length === 1) return { cls: byText[0], how: 'course name' };
   var best = null, bestN = 0, tie = false;
   (byText.length ? byText : classes).forEach(function (c) {
@@ -280,4 +285,56 @@ function parseRoster(rows) {
     out.push({ name: name, id: id, email: email, active: !/(withdr|drop|cancel|incomplete)/i.test(st) });
   }
   return out;
+}
+
+/**
+ * Which moment a screenshot folder is, from its name. Diego's folders: "1. Present", "2. Tardy", "3. Absent"
+ * (the last check before leaving). Also understands "6.15", "6.31", "End", "Final", "Salida".
+ */
+function screenshotPhase(folderName) {
+  var n = String(folderName || '').toLowerCase();
+  if (/present|presente|:15|\.15\b|\b15\b/.test(n)) return 'present';
+  if (/tard|:31|\.31\b|\b31\b/.test(n)) return 'tardy';
+  if (/absent|ausente|\\bend\\b|final|salida|leav|check/.test(n)) return 'end';
+  return '';
+}
+
+var ZOOM_UI_WORDS_ = /\b(mute|unmute|participants?|invite|waiting room|chat|raise|lower|hand|reactions?|share|record|security|breakout|apps|whiteboard|leave|end|more|rename|search|in the meeting|host|co-host|guest|me|video|audio|view|speaker|gallery|zoom|meeting|minutes?)\b/;
+
+/**
+ * Text read (OCR) from the screenshots of each moment → status per roster student.
+ * phases: {present:[text], tardy:[text], end:[text]} — each text is one screenshot. ignore: names that are not students.
+ * - In the "present" shots (first 15 min) → Present; only in the "tardy" shots → Tardy; in neither → not seen (Absent).
+ * - If there are "end" shots and a student seen earlier is not in them → Absent (left before the end).
+ * Returns {results:[{student, status, leftEarly}], notSeen:[students], unmatched:[lines that look like names]}.
+ */
+function screenshotStatuses(phases, roster, ignore) {
+  var seen = { present: {}, tardy: {}, end: {} }, unmatched = [];
+  var skip = (ignore || []).map(function (n) { return { id: n, name: n }; });
+  ['present', 'tardy', 'end'].forEach(function (ph) {
+    (phases[ph] || []).forEach(function (text) {
+      String(text || '').split(/\r?\n/).forEach(function (line) {
+        var clean = line.replace(/[|•·]/g, ' ').trim();
+        if (!clean) return;
+        var s = matchStudent({ name: clean }, roster);
+        if (s) { seen[ph][s.id] = true; return; }
+        if (skip.length && matchStudent({ name: clean }, skip)) return;
+        var words = normalizeName(clean.replace(/\(.*?\)/g, '')).split(' ').filter(function (w) { return /[a-z]{2}/.test(w); });
+        if (words.length >= 2 && words.length <= 5 && !ZOOM_UI_WORDS_.test(normalizeName(clean)) && unmatched.indexOf(clean) < 0) unmatched.push(clean);
+      });
+    });
+  });
+  var hasEnd = (phases.end || []).some(function (t) { return String(t || '').trim(); });
+  var results = [], notSeen = [];
+  roster.forEach(function (s) {
+    var st = seen.present[s.id] ? STATUS.P : seen.tardy[s.id] ? STATUS.T : '';
+    if (!st) {
+      // Joined late but still there at the end, without being in the 6:31 shot → Absent (arrived after minute 30).
+      notSeen.push(s);
+      return;
+    }
+    var left = hasEnd && !seen.end[s.id];
+    results.push({ student: s, status: left ? STATUS.A : st, leftEarly: left });
+  });
+  return { results: results, notSeen: notSeen, unmatched: unmatched };
 }

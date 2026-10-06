@@ -193,3 +193,25 @@ test('weekly report lists this week\'s absences and who is losing the course', (
   assert.ok(!r.text.includes('Ana Maria Lopez — 2026-09-28'));
   assert.match(r.subject, /3 absences, 1 losing the course/);
 });
+
+test('screenshot folders and OCR text of the Zoom participant list', () => {
+  assert.equal(g.screenshotPhase('1. Present'), 'present');
+  assert.equal(g.screenshotPhase('2. Tardy'), 'tardy');
+  assert.equal(g.screenshotPhase('3. Absent'), 'end');
+  assert.equal(g.screenshotPhase('Attendance'), '');
+  assert.equal(g.dateFromName_('1. HA 105 - Week 01 - 10.05.26'), '2026-10-05');
+  assert.equal(g.dateFromName_('HA 105 10-12-2026'), '2026-10-12');
+  const shot = names => ['Participants (' + names.length + ')', 'Find a participant', ...names, 'Invite  Mute All  More'].join('\n');
+  const r = g.screenshotStatuses({
+    present: [shot(['Diego Gomez (Host, me)', 'Ana Maria Lopez', 'Carla Perez (Guest)']), shot(['David Kim'])],
+    tardy: [shot(['Ana Maria Lopez', 'Carla Perez', 'Brian Smith', 'Mystery Guy'])],
+    end: [shot(['Ana Maria Lopez', 'Brian Smith', 'Carla Perez'])]
+  }, roster, ['Diego Gomez']);
+  const by = Object.fromEntries(r.results.map(x => [x.student.id, x.status + (x.leftEarly ? ' (left)' : '')]));
+  assert.deepEqual(plain(by), { 1001: 'Present', 1002: 'Tardy', 1003: 'Present', 1004: 'Absent (left)' });
+  assert.deepEqual(plain(r.unmatched), ['Mystery Guy']);
+  // no "end" screenshots → nobody is marked as leaving early
+  const r2 = g.screenshotStatuses({ present: [shot(['David Kim'])] }, roster, []);
+  assert.equal(r2.results[0].status, 'Present');
+  assert.equal(r2.notSeen.length, 3);
+});

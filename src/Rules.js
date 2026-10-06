@@ -155,7 +155,7 @@ function normalizeName(s) {
 
 /**
  * Finds the roster student for a name typed in Zoom or shown in a Populi export.
- * Tries: exact ID, exact email, full name, "Last, First", every roster-name word present, then first + last word.
+ * Tries: exact ID, exact email, full name or alias, "Last, First", every roster-name word present, then first + last word.
  * Returns the student or null (also null when two students match equally).
  */
 function matchStudent(probe, roster) {
@@ -181,7 +181,10 @@ function matchStudent(probe, roster) {
     if (comma.length === 2) variants.push(comma[1] + ' ' + comma[0]);
   });
   var tests = [
-    function (s, v) { return normalizeName(s.name) === v; },
+    function (s, v) {
+      // Zoom names Diego linked by hand ("Aliases" column), then the roster name itself.
+      return normalizeName(s.name) === v || (s.aliases || []).some(function (a) { return normalizeName(a) === v; });
+    },
     function (s, v) {
       var words = normalizeName(s.name).split(' '), have = ' ' + v + ' ';
       return words.length > 1 && words.every(function (w) { return have.indexOf(' ' + w + ' ') >= 0; });

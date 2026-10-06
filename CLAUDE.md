@@ -14,16 +14,19 @@ Attendance automation for Diego, a Teacher Assistant (dgomez230@ivy.edu). Talk t
 - Friday report per class: who missed this week and who is losing the course.
 
 ## Classes
-C1 Mon 9:00–1:00 in person · C2 Mon 1:30–2:30 in person · C3 Mon 6–7 pm Zoom · C4 Thu 9–10 Zoom.
-In person attendance is scanned in Populi (barcode); Zoom attendance comes from the participants report.
+C1 HA 103 Mon 9:00–1:00 (Room 300) · C2 OT 215 Mon 1:30–5:30 (Room 304) · C3 HA 105 Mon 6–10 pm Zoom ·
+C4 SB 100 Thu 9:00–1:00 Zoom. 2026 Fall Quarter: week 1 = Oct 5–9, week 10 = Dec 7–11. Campus: Vienna, VA (Eastern).
+In person attendance is scanned in Populi (barcode). Zoom attendance: screenshots of the participant list read by
+Google Drive OCR in Apps Script (`handleScreenshotFolder_`, no AI, no tokens), or a Zoom participants report.
 
 ## Emails go out from Populi
 Default `Email mode = POPULI`: notices become rows in the "Follow-ups" sheet (roster # in Populi order, names, subject,
 message, the 6 visibility roles). Students with the same class/date/kind/numbers share one row ("Dear student,").
 No Populi API (Diego cannot get a key). Students' order = Populi roster order (`Order` column), never alphabetical.
 
-## Reading Zoom screenshots for Diego (weekly)
-Diego sends screenshots of the Zoom participant list (6:15, 6:31, before leaving) + class + date. Then:
+## Reading Zoom screenshots for Diego (only as a fallback — the OCR does this for free)
+Prefer telling Diego to drop the week folder ("HA 105 - Week 01 - 10.05.26" / "1. Present" "2. Tardy" "3. Absent")
+in TA Inbox. If he still sends screenshots here, ask for the participant list cropped to the names (fewer tokens). Then:
 1. Read every name; drop Diego (TA) and the professor. Compare the count with Zoom's total minus 2.
 2. Match names to that class's roster (Students sheet / Grid, Populi order). List names you can't match; don't guess.
 3. In the 6:15 shot → Present; only from 6:31 → Tardy; in neither → leave out (the import marks them Absent);

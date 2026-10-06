@@ -26,15 +26,26 @@ El reporte del viernes siempre te llega a ti por Gmail.
 
 ## Instalación (una vez, ~15 minutos)
 
-1. Crea una hoja de cálculo nueva en Google Sheets, idealmente con tu cuenta **@ivy.edu**, para que los correos salgan de ahí.
+1. Crea una hoja de cálculo nueva en Google Sheets con tu cuenta **dgomez230@ivy.edu** (es Google Workspace).
+   Si el administrador bloquea Apps Script en esa cuenta, usa tu Gmail personal: funciona igual.
 2. Ve a **Extensiones → Apps Script**. Borra el contenido de `Código.gs` y crea 4 archivos de script con el contenido de `src/`:
    `Rules`, `Parsers`, `Messages`, `Code` (copia y pega cada `.js`).
-   En **Configuración del proyecto**, activa "Mostrar appsscript.json" y pega `src/appsscript.json` (zona horaria de Indiana).
+   En **Configuración del proyecto**, activa "Mostrar appsscript.json" y pega `src/appsscript.json`.
+   Eso pone la hora de Virginia (Este) y activa el servicio **Drive**, que es el que hace el OCR de los screenshots.
 3. Guarda, vuelve a la hoja y recárgala. Aparece el menú **TA Attendance**.
 4. **TA Attendance → Set up / repair sheets**. Acepta los permisos (Sheets, Drive, Gmail). Se crean las hojas y la carpeta **TA Inbox** en tu Drive.
 5. Llena las hojas:
    - **Classes**: nombre del curso, sección, profesor y, en las de Zoom, el **Zoom meeting ID** (así reconoce el reporte solo).
-     Ya vienen las 4: C1 lunes 9–1 (presencial), C2 lunes 1:30–2:30 (presencial), C3 lunes 6–7 pm (Zoom) y C4 jueves 9–10 (Zoom).
+     Ya vienen las 4:
+
+     | ID | Curso | Horario | Modalidad |
+     |---|---|---|---|
+     | C1 | HA 103 History of World Religions | lunes 9:00–1:00 | Room 300 |
+     | C2 | OT 215 Minor Prophets | lunes 1:30–5:30 | Room 304 |
+     | C3 | HA 105 Introduction to Ethics | lunes 6–10 pm | Zoom |
+     | C4 | SB 100 Introduction to Business | jueves 9:00–1:00 | Zoom |
+
+     La semana 1 empieza el 5 de octubre de 2026.
    - **Students**: se llena sola. En Populi abre **Roster → Actions → Export this section CSV** de cada clase y sube el archivo a **TA Inbox**.
      El sistema reconoce la clase por el código del curso (HA 103, HA 105…) o por `[C1]` en el nombre del archivo, y guarda el **orden de Populi** (#1, #2, …).
      Si el roster cambia, vuelve a exportarlo: el orden se actualiza y quien ya no aparece queda inactivo.
@@ -45,27 +56,38 @@ Con [clasp](https://github.com/google/clasp) también puedes subir el código co
 
 ## Uso diario
 
-**Presencial (C1, C2):** tomas la asistencia con el lector en Populi como siempre. Al terminar:
+**Presencial (C1 HA 103, C2 OT 215):** tomas la asistencia con el lector en Populi como siempre. Al terminar:
 1. Exporta la asistencia de la clase desde Populi en **CSV**.
 2. Súbela a **TA Inbox**. Si el sistema no reconoce la clase, pon `[C1]` o `[C2]` en el nombre del archivo.
 
 Si Populi incluye la **hora del escaneo**, el sistema decide Present, Tardy o Absent con la regla de 15 y 30 minutos.
 
-**Zoom (C3, C4)**. Hay dos caminos:
+**Zoom (C3 HA 105, C4 SB 100). Los screenshots se leen solos, sin IA y sin costo:**
 
-**Opción A: screenshots y Claude.**
-1. Toma los screenshots de la **lista de participantes** a las 6:15, 6:31 y antes de salir. Si no cabe todo, toma varios bajando por la lista.
-2. Envíaselos a Claude diciendo la clase y la fecha.
-3. Claude lee los nombres y aplica las reglas:
-   - En el de 6:15 = Present.
-   - Solo en el de 6:31 = Tardy.
+1. Usa la misma estructura de carpetas que ya tienes, pero dentro de **TA Inbox** en Google Drive:
+   ```
+   TA Inbox/
+     1. HA 105 - Week 01 - 10.05.26/     ← el nombre lleva el código del curso y la fecha (mes.día.año)
+       1. Present/   screenshots de las 6:15
+       2. Tardy/     screenshots de las 6:31
+       3. Absent/    screenshots antes de salir (para saber quién se fue)
+   ```
+2. Toma los screenshots de la **lista de participantes** de Zoom (no de la vista de video): los nombres salen completos.
+   Si no caben todos, toma varios bajando por la lista.
+3. Cada 15 minutos el sistema lee el texto de las imágenes con el **OCR de Google Drive**, que es gratis, y aplica las reglas:
+   - En "Present" = Present.
+   - Solo en "Tardy" = Tardy.
    - En ninguno = Absent.
-   - Ya no estaba en el último = Absent (left early).
-   - Cuadra el total con el contador de Zoom, menos tú y el profesor.
-4. Claude genera `Zoom screenshots AAAA-MM-DD [C3].csv` para **TA Inbox** y te dice qué nombres no pudo reconocer.
+   - Estuvo, pero ya no aparece en "3. Absent" = Absent (left early).
+4. En el **Inbox log** ves el resultado y los nombres de Zoom que no reconoció.
+   Si alguien se pone otro nombre en Zoom (por ejemplo "iPhone de Ana"), escríbelo una vez en **Students → Zoom names** de ese estudiante y desde ahí lo reconoce siempre.
+   En **Config → Ignore in screenshots** pon tu nombre y el del profesor.
 
-**Opción B: reporte de participantes.** Baja el reporte (**Zoom → Reports → Usage → Participants → Export**) y súbelo a **TA Inbox**.
-El sistema calcula Present, Tardy, Absent y "left early" con las horas de entrada y salida.
+Para no tener que arrastrar archivos, instala **Google Drive para escritorio** y cambia dónde guarda la Mac los screenshots
+(**Cmd+Shift+5 → Opciones → Otra ubicación**) a la carpeta de la semana en TA Inbox.
+
+Si el profesor puede bajar el **reporte de participantes** de Zoom (Reports → Usage → Participants → Export) y te lo pasa, súbelo a TA Inbox.
+Ese reporte trae la hora exacta de entrada y salida de cada persona.
 
 En los dos casos, la hoja **Grid** de la clase queda en el orden de Populi para que marques las casillas de **Attendance → participation** de arriba abajo.
 Los screenshots siguen siendo tu evidencia ante reclamos.

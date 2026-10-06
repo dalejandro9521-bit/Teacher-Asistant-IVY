@@ -343,3 +343,45 @@ test('POPULI mode: office no-ID notice and assignment reminders become follow-up
   env.gas.weeklyReport();
   assert.equal(env.mail.sent.length, 1);
 });
+
+test('screenshot folder in TA Inbox → OCR → attendance, aliases remembered, folder moved to Processed', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.sheet('Classes').put(4, 2, 'HA 105: Introduction to Ethics'); // C3
+  env.setConfig('Ignore in screenshots', 'Diego Gomez; Sam Braden');
+  env.inbox().addFile('HA 105 roster.csv', rosterHA103.replace(',Withdrawn,', ',Enrolled,'));
+  env.gas.tick();
+  // "QA phone" is how Qais shows up in Zoom; Diego wrote it once under "Zoom names".
+  const st = env.sheet('Students'), h = st.data[0];
+  const qi = st.data.findIndex(r => r[h.indexOf('Name')] === 'Qais Alanaqreh');
+  st.put(qi + 1, h.indexOf('Zoom names') + 1, 'QA phone');
+
+  const shot = names => ['Participants (' + (names.length + 2) + ')', 'Diego Gomez (Host, me)', 'Sam Braden (Co-host)', ...names, 'Invite  Mute All'].join('\n');
+  const week = env.inbox().createFolder('1. HA 105 - Week 01 - 10.05.26');
+  week.createFolder('1. Present').addImage('Screenshot 6.15.01 PM.png', shot(['Malek Abufardeh', 'QA phone']));
+  week.createFolder('2. Tardy').addImage('Screenshot 6.31.10 PM.png', shot(['Malek Abufardeh', 'QA phone', 'Traecy Aguilar (Guest)', 'Unknown Person']));
+  week.createFolder('3. Absent').addImage('Screenshot 9.58.40 PM.png', shot(['Malek Abufardeh', 'Traecy Aguilar']));
+  env.gas.tick();
+  assert.ok(env.inbox().folders.some(f => f.name === '1. HA 105 - Week 01 - 10.05.26'), 'waits while the upload may still be running');
+  env.setNow('2026-10-06T03:00:00Z');
+  env.gas.tick();
+  assert.equal(env.ocr.calls, 3);
+  assert.ok(Object.values(env.docs).every(d => d.trashed), 'temporary OCR docs are deleted');
+  assert.ok(env.inbox().folders.find(f => f.name === 'Processed').folders.some(f => f.name.startsWith('1. HA 105')));
+  const status = n => env.row('2026-10-05', 'C3', n).Status + (env.row('2026-10-05', 'C3', n)['Left early'] ? ' (left)' : '');
+  assert.equal(status('Malek Abufardeh'), 'Present');
+  assert.equal(status('Traecy Aguilar'), 'Tardy');
+  assert.equal(status('Qais Alanaqreh'), 'Absent (left)');
+  assert.equal(status('Mohammed Alohali'), 'Absent');
+  assert.equal(status('Zed Withdrawn'), 'Absent');
+  const log = env.sheet('Inbox log').objects().at(-1);
+  assert.equal(log.Kind, 'screenshots');
+  assert.equal(log.Dates, '2026-10-05');
+  assert.match(log.Result, /3 screenshot\(s\): 1 present, 1 tardy, 3 absent of 5/);
+  assert.match(log.Result, /Names not recognized .*: Unknown Person\./);
+  assert.doesNotMatch(log.Result, /Braden/);
+  // Grid ready to tick Populi's participation boxes in the same order
+  assert.deepEqual(env.sheet('Grid C3').data.slice(1).map(r => r.slice(0, 3)), [
+    ['1', 'Malek Abufardeh', 'P'], ['2', 'Traecy Aguilar', 'T'], ['3', 'Qais Alanaqreh', 'A (left)'],
+    ['4', 'Mohammed Alohali', 'A'], ['5', 'Zed Withdrawn', 'A']
+  ]);
+});
