@@ -48,6 +48,8 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
 - `src/Rules.js`, `src/Parsers.js`, `src/Messages.js`: pure functions, no Apps Script services (tested in Node).
 - `src/Code.js`: Apps Script glue (Sheets tables read with `getDisplayValues`, all sheets plain text, Drive inbox, Gmail, triggers).
 - All `src/*.js` share one global scope in Apps Script: use `var`/function declarations at top level, no `require`/`export`.
+- `src/Dashboard.html`: the panel (TA Attendance → Open dashboard), talks to the `api*` functions in Code.js via
+  google.script.run (only functions without a trailing `_` are callable). `npm run preview` renders it with made-up data.
 - `tests/gas-mock.js` runs the real `src/` files in a VM with fake SpreadsheetApp/DriveApp/GmailApp/ScriptApp.
 
 ## Before delivering

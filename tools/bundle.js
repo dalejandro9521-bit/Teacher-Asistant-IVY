@@ -12,8 +12,11 @@ function bundle() {
 }
 
 if (require.main === module) {
-  fs.writeFileSync(path.join(__dirname, '..', 'dist', 'TA-Attendance.gs'), bundle());
-  console.log('dist/TA-Attendance.gs written');
+  const dist = path.join(__dirname, '..', 'dist');
+  fs.writeFileSync(path.join(dist, 'TA-Attendance.gs'), bundle());
+  // The dashboard is a separate HTML file in Apps Script, named "Dashboard".
+  fs.copyFileSync(path.join(__dirname, '..', 'src', 'Dashboard.html'), path.join(dist, 'Dashboard.html'));
+  console.log('dist/TA-Attendance.gs and dist/Dashboard.html written');
 }
 
 module.exports = { bundle };

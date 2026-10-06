@@ -645,9 +645,12 @@ function parseRoster(rows) {
  */
 function screenshotPhase(folderName) {
   var n = String(folderName || '').toLowerCase();
-  if (/present|presente|:15|\.15\b|\b15\b/.test(n)) return 'present';
-  if (/tard|:31|\.31\b|\b31\b/.test(n)) return 'tardy';
-  if (/absent|ausente|\\bend\\b|final|salida|leav|check/.test(n)) return 'end';
+  // The words win over the numbers: "Absent - min 31 to end" is the last check, not the 31-minute one.
+  if (/present|presente/.test(n)) return 'present';
+  if (/tard/.test(n)) return 'tardy';
+  if (/absent|ausente|\bend\b|final|salida|leav|check/.test(n)) return 'end';
+  if (/:15|\.15\b|\b15\b/.test(n)) return 'present';
+  if (/:31|\.31\b|\b31\b/.test(n)) return 'tardy';
   return '';
 }
 
@@ -765,6 +768,43 @@ function looksLikeName_(line) {
   var n = normalizeName(String(line).replace(/\(.*?\)/g, ' '));
   var words = n.split(' ').filter(function (w) { return /[a-z]{2}/.test(w); });
   return words.length >= 1 && words.length <= 5 && n.length <= 45 && !ZOOM_UI_WORDS_.test(n);
+}
+
+/**
+ * For the dashboard: every line the OCR read in each screenshot and what it became.
+ * → {phases:{present:[shot], tardy:[shot], end:[shot]}} with shot = [{text, kind:'tile'|'chat', time, result, who}]
+ *   result: 'match' (who = "#5 Name", how), 'doubt' (who = candidates), 'ignored', 'unknown', 'noise'.
+ */
+function screenshotDiagnostics(phases, roster, ignore, opts) {
+  opts = opts || {};
+  var skip = (ignore || []).map(function (n) { return { id: n, name: n }; });
+  function judge(names) {
+    var doubt = null;
+    for (var i = 0; i < names.length; i++) {
+      var r = resolveName(names[i], roster);
+      if (r && r.student) return { result: 'match', how: r.how, who: '#' + (r.student.order || '?') + ' ' + r.student.name };
+      if (skip.length && (matchStudent({ name: names[i] }, skip) || nameCandidates(names[i], skip).some(function (x) { return x.score >= 1; }))) {
+        return { result: 'ignored', who: '' };
+      }
+      if (r && r.doubt && !doubt) doubt = r.doubt;
+    }
+    if (doubt) return { result: 'doubt', who: doubt.map(function (s) { return '#' + (s.order || '?') + ' ' + s.name; }).join(' / ') };
+    return names.some(looksLikeName_) ? { result: 'unknown', who: '' } : { result: 'noise', who: '' };
+  }
+  var out = { phases: {} };
+  ['present', 'tardy', 'end'].forEach(function (ph) {
+    out.phases[ph] = (phases[ph] || []).map(function (text) {
+      var shot = readScreenshotText(text), lines = [];
+      shot.tiles.forEach(function (t) { lines.push(Object.assign({ text: t, kind: 'tile' }, judge([t]))); });
+      shot.chat.forEach(function (m) {
+        var late = opts.start != null && m.time != null ? Math.floor(m.time - opts.start) : null;
+        lines.push(Object.assign({ text: m.names.join(' ← '), kind: 'chat', time: m.time != null ? minToLabel(m.time) : '',
+          minute: late }, judge(m.names)));
+      });
+      return lines;
+    });
+  });
+  return out;
 }
 
 /* ===== Messages.js ===== */
@@ -1054,6 +1094,7 @@ var TRIGGER_HANDLERS = ['tick', 'weeklyReport', 'assignmentReminders'];
 
 function onOpen() {
   SpreadsheetApp.getUi().createMenu('TA Attendance')
+    .addItem('Open dashboard', 'openDashboard')
     .addItem('Process inbox + send notices now', 'tick')
     .addItem('Send weekly report now', 'weeklyReport')
     .addItem('Send assignment reminders now', 'assignmentReminders')
@@ -1157,23 +1198,28 @@ function showInbox() {
 /** Every 15 minutes: read new files, apply manual flags, email notices, refresh the summary. */
 function tick() {
   withLock_(function () {
-    var ctx = load_();
-    var log = processInbox_(ctx);
-    rerunSessions_(ctx, answerQuestions_(ctx));
-    applyManualFlags_(ctx);
-    save_(ctx.att);
-    save_(ctx.studentsT);
-    save_(ctx.sessT);
-    save_(ctx.revT);
-    var sent = sendPendingNotices_(ctx);
-    var office = checkNoId_(ctx);
-    save_(ctx.att);
-    refreshSummary_(ctx);
-    refreshGrids_(ctx);
-    if (log.length || sent || office) {
-      toast_((log.length ? log.length + ' file(s) processed. ' : '') + sent + ' student notice(s), ' + office + ' office notice(s).');
+    var r = runAll_(load_());
+    if (r.files || r.sent || r.office) {
+      toast_((r.files ? r.files + ' file(s) processed. ' : '') + r.sent + ' student notice(s), ' + r.office + ' office notice(s).');
     }
   });
+}
+
+/** Everything the 15-minute job does, on an already loaded context. */
+function runAll_(ctx) {
+  var log = processInbox_(ctx);
+  var reruns = rerunSessions_(ctx, answerQuestions_(ctx));
+  applyManualFlags_(ctx);
+  save_(ctx.att);
+  save_(ctx.studentsT);
+  save_(ctx.sessT);
+  save_(ctx.revT);
+  var sent = sendPendingNotices_(ctx);
+  var office = checkNoId_(ctx);
+  save_(ctx.att);
+  refreshSummary_(ctx);
+  refreshGrids_(ctx);
+  return { files: log.length, reruns: reruns, sent: sent, office: office, log: log };
 }
 
 function weeklyReport() {
@@ -1851,6 +1897,180 @@ function rerunSessions_(ctx, rerun) {
     t.set(r, 'Open questions', String(openQuestions_(ctx, t.get(r, 'Class ID'), parseDateCell(t.get(r, 'Date'), y))));
   });
   return n;
+}
+
+/* ---------- dashboard (Dashboard.html) ---------- */
+
+function openDashboard() {
+  var html = HtmlService.createHtmlOutputFromFile('Dashboard').setWidth(1400).setHeight(860);
+  SpreadsheetApp.getUi().showModalDialog(html, 'TA Attendance');
+}
+
+/** Same page as a web app (Deploy → Web app, execute as me, only myself) to open it in its own tab. */
+function doGet() {
+  return HtmlService.createHtmlOutputFromFile('Dashboard').setTitle('TA Attendance')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+function classInfo_(cls) {
+  return { id: cls.id, label: classLabel(cls), course: cls.course, day: DAY_NAMES[dayIndex(cls.day)] || cls.day,
+    time: classTime(cls), mode: cls.mode, active: cls.active };
+}
+
+function rowsOf_(t) {
+  return t.rows.map(function (r, i) {
+    var o = { row: i };
+    t.header.forEach(function (h) { if (h) o[h] = t.get(r, h); });
+    return o;
+  });
+}
+
+/** Home: one card per class + what needs attention. */
+function apiOverview() {
+  var ctx = load_(), recs = records_(ctx), totals = tally(recs, ctx.cfg), y = yearOf_(ctx);
+  var classes = ctx.classes.filter(function (c) { return c.active; }).map(function (cls) {
+    var roster = roster_(ctx, cls.id), mine = recs.filter(function (r) { return r.classId === cls.id; });
+    var dates = mine.map(function (r) { return r.date; }).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
+    var last = dates[dates.length - 1] || '';
+    var lastCounts = { P: 0, T: 0, A: 0, E: 0 };
+    mine.filter(function (r) { return r.date === last; }).forEach(function (r) {
+      var k = /^accepted$/i.test(r.excuse) ? 'E' : (r.status || '').charAt(0);
+      if (k in lastCounts) lastCounts[k]++;
+    });
+    var states = { warning: 0, 'at-limit': 0, failing: 0 };
+    roster.forEach(function (s) { var t = totals[cls.id + '|' + s.id]; if (t && t.state in states) states[t.state]++; });
+    return Object.assign(classInfo_(cls), {
+      students: roster.length, sessions: dates.length, last: last, lastCounts: lastCounts, states: states,
+      questions: ctx.revT.rows.filter(function (r) { return ctx.revT.get(r, 'Class ID') === cls.id && !ctx.revT.get(r, 'Done'); }).length
+    });
+  });
+  var fu = table_('Follow-ups');
+  var log = table_('Inbox log');
+  return {
+    today: today_(), week: termWeek(today_(), ctx.cfg.termStart), mode: mode_(ctx.cfg), classes: classes,
+    pendingFollowups: fu.rows.filter(function (r) { return !fu.get(r, 'Done'); }).length,
+    openQuestions: ctx.revT.rows.filter(function (r) { return !ctx.revT.get(r, 'Done'); }).length,
+    log: rowsOf_(log).slice(-15).reverse(),
+    inboxUrl: ctx.cfg.inboxFolderId ? 'https://drive.google.com/drive/folders/' + ctx.cfg.inboxFolderId : ''
+  };
+}
+
+/** One class: students in Populi order × weeks. */
+function apiClass(classId) {
+  var ctx = load_(), cls = classById_(ctx, classId);
+  if (!cls) throw new Error('No class ' + classId);
+  var recs = records_(ctx).filter(function (r) { return r.classId === cls.id; }), totals = tally(recs, ctx.cfg);
+  var dates = recs.map(function (r) { return r.date; }).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
+  var cell = {};
+  recs.forEach(function (r) {
+    cell[r.studentId + '|' + r.date] = { s: /^accepted$/i.test(r.excuse) ? 'E' : (r.status || '?').charAt(0), left: r.leftEarly, excuse: r.excuse };
+  });
+  var att = ctx.att, notes = {};
+  att.rows.forEach(function (r) {
+    if (att.get(r, 'Class ID') !== cls.id) return;
+    notes[att.get(r, 'Student ID') + '|' + parseDateCell(att.get(r, 'Date'), yearOf_(ctx))] = att.get(r, 'Notes');
+  });
+  return {
+    cls: classInfo_(cls),
+    sessions: dates.map(function (d) {
+      return { date: d, label: longDate(d), week: termWeek(d, ctx.cfg.termStart), start: minToLabel(sessionStart_(ctx, cls, d)),
+        questions: openQuestions_(ctx, cls.id, d) };
+    }),
+    students: roster_(ctx, cls.id).map(function (s) {
+      var t = totals[cls.id + '|' + s.id] || emptyTally(ctx.cfg);
+      return { id: s.id, order: s.order, name: s.name, email: s.email, aliases: s.aliases,
+        weeks: dates.map(function (d) { var c = cell[s.id + '|' + d]; return c ? Object.assign(c, { note: notes[s.id + '|' + d] || '' }) : null; }),
+        absences: t.absences, tardies: t.tardies, effective: t.effective, remaining: Math.max(0, t.remaining), pct: t.pct,
+        state: t.state, stateLabel: STATE_LABEL[t.state] };
+    })
+  };
+}
+
+/** One class on one date: every student's result and, for screenshots, what the OCR read and how each name was matched. */
+function apiSession(classId, date) {
+  var ctx = load_(), cls = classById_(ctx, classId);
+  if (!cls) throw new Error('No class ' + classId);
+  var y = yearOf_(ctx), att = ctx.att, byStudent = {};
+  att.rows.forEach(function (r) {
+    if (att.get(r, 'Class ID') === cls.id && parseDateCell(att.get(r, 'Date'), y) === date) {
+      byStudent[att.get(r, 'Student ID')] = { status: att.get(r, 'Status'), left: yes_(att.get(r, 'Left early')),
+        source: att.get(r, 'Source'), notes: att.get(r, 'Notes'), notified: att.get(r, 'Notified') };
+    }
+  });
+  var roster = roster_(ctx, cls.id), srow = sessionRow_(ctx, cls, date, false), st = ctx.sessT;
+  var out = {
+    cls: classInfo_(cls), date: date, label: longDate(date), scheduled: minToLabel(cls.start),
+    start: minToLabel(sessionStart_(ctx, cls, date)), source: srow ? st.get(srow, 'Source') : '',
+    students: roster.map(function (s) { return Object.assign({ id: s.id, order: s.order, name: s.name }, byStudent[s.id] || { status: '' }); }),
+    questions: rowsOf_(ctx.revT).filter(function (q) { return q['Class ID'] === cls.id && parseDateCell(q.Date, y) === date; }),
+    ocr: null
+  };
+  if (srow && st.get(srow, 'Source') === 'Zoom screenshots' && st.get(srow, 'Source ID')) {
+    try {
+      var folder = DriveApp.getFolderById(st.get(srow, 'Source ID')), it = folder.getFilesByName('ocr.json');
+      if (it.hasNext()) {
+        var saved = JSON.parse(it.next().getBlob().getDataAsString());
+        out.ocr = screenshotDiagnostics(saved.phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
+          { start: sessionStart_(ctx, cls, date), cfg: ctx.cfg });
+        out.folderUrl = folder.getUrl();
+      }
+    } catch (err) { out.ocrError = String(err && err.message || err); }
+  }
+  return out;
+}
+
+function apiQuestions() {
+  var ctx = load_();
+  return rowsOf_(ctx.revT).filter(function (q) { return !q.Done; }).map(function (q) {
+    var cls = classById_(ctx, q['Class ID']);
+    q.classLabel = cls ? classLabel(cls) : q['Class ID'];
+    q.roster = roster_(ctx, q['Class ID']).map(function (s) { return { order: s.order, name: s.name }; });
+    return q;
+  });
+}
+
+/** Answer a Review question (# / name / "ignore") and re-run that class right away. */
+function apiAnswer(row, answer) {
+  var res;
+  withLock_(function () {
+    var ctx = load_(), t = ctx.revT, r = t.rows[row];
+    if (!r) throw new Error('Question not found');
+    t.set(r, 'Student (# or name, or "ignore")', String(answer || '').trim());
+    res = runAll_(ctx);
+    res.note = t.get(r, 'Done') || t.get(r, 'Notes');
+  });
+  return res;
+}
+
+/** Change the real start of a class on a date; the class is re-run. */
+function apiSetStart(classId, date, text) {
+  var res;
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId), min = startFromText_(text, cls);
+    if (min == null) throw new Error('Not a time: ' + text);
+    setSessionStart_(ctx, cls, date, min, true);
+    save_(ctx.sessT);
+    res = runAll_(ctx);
+  });
+  return res;
+}
+
+function apiFollowups() {
+  return rowsOf_(table_('Follow-ups')).filter(function (f) { return !f.Done; });
+}
+
+function apiFollowupDone(row) {
+  var t = table_('Follow-ups'), r = t.rows[row];
+  if (!r) throw new Error('Follow-up not found');
+  t.set(r, 'Done', 'Yes · ' + nowStr_());
+  save_(t);
+  return true;
+}
+
+function apiProcessNow() {
+  var res;
+  withLock_(function () { res = runAll_(load_()); });
+  return res || { busy: true };
 }
 
 /* ---------- data helpers ---------- */

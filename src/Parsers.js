@@ -295,9 +295,12 @@ function parseRoster(rows) {
  */
 function screenshotPhase(folderName) {
   var n = String(folderName || '').toLowerCase();
-  if (/present|presente|:15|\.15\b|\b15\b/.test(n)) return 'present';
-  if (/tard|:31|\.31\b|\b31\b/.test(n)) return 'tardy';
-  if (/absent|ausente|\\bend\\b|final|salida|leav|check/.test(n)) return 'end';
+  // The words win over the numbers: "Absent - min 31 to end" is the last check, not the 31-minute one.
+  if (/present|presente/.test(n)) return 'present';
+  if (/tard/.test(n)) return 'tardy';
+  if (/absent|ausente|\bend\b|final|salida|leav|check/.test(n)) return 'end';
+  if (/:15|\.15\b|\b15\b/.test(n)) return 'present';
+  if (/:31|\.31\b|\b31\b/.test(n)) return 'tardy';
   return '';
 }
 
@@ -415,4 +418,41 @@ function looksLikeName_(line) {
   var n = normalizeName(String(line).replace(/\(.*?\)/g, ' '));
   var words = n.split(' ').filter(function (w) { return /[a-z]{2}/.test(w); });
   return words.length >= 1 && words.length <= 5 && n.length <= 45 && !ZOOM_UI_WORDS_.test(n);
+}
+
+/**
+ * For the dashboard: every line the OCR read in each screenshot and what it became.
+ * → {phases:{present:[shot], tardy:[shot], end:[shot]}} with shot = [{text, kind:'tile'|'chat', time, result, who}]
+ *   result: 'match' (who = "#5 Name", how), 'doubt' (who = candidates), 'ignored', 'unknown', 'noise'.
+ */
+function screenshotDiagnostics(phases, roster, ignore, opts) {
+  opts = opts || {};
+  var skip = (ignore || []).map(function (n) { return { id: n, name: n }; });
+  function judge(names) {
+    var doubt = null;
+    for (var i = 0; i < names.length; i++) {
+      var r = resolveName(names[i], roster);
+      if (r && r.student) return { result: 'match', how: r.how, who: '#' + (r.student.order || '?') + ' ' + r.student.name };
+      if (skip.length && (matchStudent({ name: names[i] }, skip) || nameCandidates(names[i], skip).some(function (x) { return x.score >= 1; }))) {
+        return { result: 'ignored', who: '' };
+      }
+      if (r && r.doubt && !doubt) doubt = r.doubt;
+    }
+    if (doubt) return { result: 'doubt', who: doubt.map(function (s) { return '#' + (s.order || '?') + ' ' + s.name; }).join(' / ') };
+    return names.some(looksLikeName_) ? { result: 'unknown', who: '' } : { result: 'noise', who: '' };
+  }
+  var out = { phases: {} };
+  ['present', 'tardy', 'end'].forEach(function (ph) {
+    out.phases[ph] = (phases[ph] || []).map(function (text) {
+      var shot = readScreenshotText(text), lines = [];
+      shot.tiles.forEach(function (t) { lines.push(Object.assign({ text: t, kind: 'tile' }, judge([t]))); });
+      shot.chat.forEach(function (m) {
+        var late = opts.start != null && m.time != null ? Math.floor(m.time - opts.start) : null;
+        lines.push(Object.assign({ text: m.names.join(' ← '), kind: 'chat', time: m.time != null ? minToLabel(m.time) : '',
+          minute: late }, judge(m.names)));
+      });
+      return lines;
+    });
+  });
+  return out;
 }

@@ -188,7 +188,7 @@ function makeEnv(opts) {
     SpreadsheetApp, DriveApp, GmailApp, ScriptApp, Utilities, Drive, DocumentApp,
     Session: { getScriptTimeZone: () => TZ },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
-    HtmlService: { createHtmlOutput: () => chain() }
+    HtmlService: { createHtmlOutput: () => chain(), createHtmlOutputFromFile: () => chain() }
   };
   vm.createContext(ctx);
   const src = path.join(__dirname, '..', 'src');

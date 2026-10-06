@@ -457,3 +457,54 @@ test('in person: the real start time from Sessions moves the 15 / 30 minute cut-
   assert.equal(env.row('2026-10-05', 'C1', '2').Status, 'Tardy');    // minute 20
   assert.equal(env.row('2026-10-05', 'C1', '3').Status, 'Absent');   // minute 35
 });
+
+test('dashboard API: overview, class, session with OCR diagnostics, answering a question, start time, follow-ups', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.sheet('Classes').put(4, 2, 'HA 105: Introduction to Ethics');
+  env.inbox().addFile('HA 105 roster.csv', ['Student ID,Populi Name,Course Abbrv,Type', '11,Malek Abu,HA 105,student',
+    '12,Malek Bay,HA 105,student', '13,Vale Cisneros,HA 105,student'].join('\n'));
+  env.gas.tick();
+  const week = env.inbox().createFolder('1. HA 105 - Week 01 - 10.05.26');
+  week.createFolder('1. Present').addImage('a.png', 'Malek Abu\nVale Sisneros\nMalek\nMute');
+  week.createFolder('3. Absent').addImage('c.png', 'Malek Abu\nVale Sisneros');
+  env.setNow('2026-10-06T03:00:00Z');
+  const o0 = env.gas.apiOverview();
+  assert.equal(o0.classes.length, 4);
+  const run = env.gas.apiProcessNow();
+  assert.equal(run.files, 1);
+
+  const o = JSON.parse(JSON.stringify(env.gas.apiOverview()));
+  const c3 = o.classes.find(c => c.id === 'C3');
+  assert.deepEqual(c3.lastCounts, { P: 2, T: 0, A: 1, E: 0 });
+  assert.equal(c3.questions, 1);
+  assert.equal(o.openQuestions, 1);
+  assert.equal(o.week, 1);
+
+  const cl = JSON.parse(JSON.stringify(env.gas.apiClass('C3')));
+  assert.deepEqual(cl.students.map(s => [s.order, s.name, s.weeks[0].s]), [[1, 'Malek Abu', 'P'], [2, 'Malek Bay', 'A'], [3, 'Vale Cisneros', 'P']]);
+  assert.equal(cl.sessions[0].questions, 1);
+
+  const se = JSON.parse(JSON.stringify(env.gas.apiSession('C3', '2026-10-05')));
+  const lines = se.ocr.phases.present[0];
+  assert.deepEqual(lines.map(l => [l.text, l.result]), [['Malek Abu', 'match'], ['Vale Sisneros', 'match'], ['Malek', 'doubt'], ['Mute', 'noise']]);
+  assert.equal(lines[1].how, 'similar');
+  assert.match(lines[2].who, /#2 Malek Bay/);
+  assert.equal(se.questions.length, 1);
+
+  const qs = JSON.parse(JSON.stringify(env.gas.apiQuestions()));
+  const ans = env.gas.apiAnswer(qs[0].row, '#2');
+  assert.match(ans.note, /^Linked to #2 Malek Bay/);
+  // "Malek" was at 15 min but not in the last screenshot → disconnected
+  assert.equal(env.row('2026-10-05', 'C3', '12').Status, 'Absent');
+  assert.equal(env.row('2026-10-05', 'C3', '12')['Left early'], 'Yes');
+
+  env.gas.apiSetStart('C3', '2026-10-05', '6:30');
+  assert.equal(JSON.parse(JSON.stringify(env.gas.apiSession('C3', '2026-10-05'))).start, '6:30 PM');
+
+  // the question is answered, so the follow-up for this class is released; it can be marked as sent
+  const f = JSON.parse(JSON.stringify(env.gas.apiFollowups()));
+  assert.equal(f.length, 1);
+  assert.equal(f[0].Students, 'Malek Bay');
+  env.gas.apiFollowupDone(f[0].row);
+  assert.equal(env.gas.apiFollowups().length, 0);
+});

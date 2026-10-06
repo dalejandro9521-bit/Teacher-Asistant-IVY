@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1f2933; --ink2: #52606d; --ink3: #7b8794; --line: #e4e7eb; --bg: #f5f7fa; --card: #ffffff;
+    --brand: #1d3f72; --brand2: #2f5ea8; --brand-soft: #e8eef8;
+    --p: #137333; --p-bg: #e6f4ea; --t: #a05a00; --t-bg: #fef3d6; --a: #c5221f; --a-bg: #fce8e6;
+    --e: #1967d2; --e-bg: #e8f0fe; --warn: #b06000; --warn-bg: #fff4e5;
+    --radius: 10px; --shadow: 0 1px 2px rgba(16,24,40,.06), 0 1px 3px rgba(16,24,40,.08);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { font-family: Inter, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size: 14px; color: var(--ink); background: var(--bg); }
+  button { font: inherit; cursor: pointer; }
+  input { font: inherit; }
+  .app { display: grid; grid-template-columns: 232px 1fr; height: 100vh; }
+
+  /* sidebar */
+  nav { background: var(--brand); color: #fff; display: flex; flex-direction: column; padding: 18px 12px; gap: 2px; overflow-y: auto; }
+  .logo { font-weight: 700; font-size: 16px; padding: 4px 10px 2px; letter-spacing: .2px; }
+  .logo-sub { font-size: 12px; opacity: .7; padding: 0 10px 16px; }
+  .nav-h { font-size: 11px; text-transform: uppercase; letter-spacing: .8px; opacity: .55; padding: 14px 10px 6px; }
+  .nav-i { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; border: 0; background: transparent; color: #fff;
+    text-align: left; padding: 9px 10px; border-radius: 8px; opacity: .88; }
+  .nav-i:hover { background: rgba(255,255,255,.08); opacity: 1; }
+  .nav-i.on { background: rgba(255,255,255,.16); opacity: 1; font-weight: 600; }
+  .nav-i small { display: block; font-size: 11px; opacity: .7; font-weight: 400; }
+  .badge { min-width: 22px; height: 20px; padding: 0 7px; border-radius: 10px; background: #fff; color: var(--brand); font-size: 12px; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center; }
+  .badge.alert { background: #ffb4a8; color: #5c1009; }
+  .nav-foot { margin-top: auto; padding: 14px 10px 0; font-size: 12px; opacity: .6; }
+
+  /* main */
+  main { overflow-y: auto; padding: 26px 32px 60px; }
+  .crumbs { font-size: 13px; color: var(--ink3); margin-bottom: 6px; }
+  .crumbs a { color: var(--brand2); cursor: pointer; text-decoration: none; }
+  .crumbs a:hover { text-decoration: underline; }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: 700; }
+  .sub { color: var(--ink2); margin: 0 0 20px; }
+  h2 { font-size: 15px; margin: 26px 0 10px; font-weight: 600; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .spacer { flex: 1; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); }
+  .pad { padding: 16px 18px; }
+  .muted { color: var(--ink3); }
+  .small { font-size: 12px; }
+
+  .btn { border: 1px solid var(--line); background: #fff; color: var(--ink); padding: 8px 14px; border-radius: 8px; font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { border-color: #cbd2d9; background: #fafbfc; }
+  .btn.primary { background: var(--brand2); border-color: var(--brand2); color: #fff; }
+  .btn.primary:hover { background: var(--brand); }
+  .btn.ghost { border-color: transparent; background: transparent; color: var(--brand2); padding: 6px 8px; }
+  .btn.ghost:hover { background: var(--brand-soft); }
+  .btn.sm { padding: 5px 10px; font-size: 13px; }
+  .btn[disabled] { opacity: .55; cursor: default; }
+
+  /* KPIs */
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .kpi { padding: 14px 18px; }
+  .kpi .n { font-size: 26px; font-weight: 700; line-height: 1.2; }
+  .kpi .l { color: var(--ink2); font-size: 13px; }
+  .kpi.alert .n { color: var(--a); }
+  .kpi.warn .n { color: var(--warn); }
+  .kpi.click { cursor: pointer; }
+  .kpi.click:hover { border-color: #cbd2d9; }
+
+  /* class cards */
+  .classes { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; }
+  .cls { padding: 16px 18px; cursor: pointer; transition: border-color .15s; }
+  .cls:hover { border-color: var(--brand2); }
+  .cls .code { font-size: 12px; font-weight: 600; color: var(--brand2); letter-spacing: .3px; }
+  .cls .name { font-weight: 600; font-size: 15px; margin: 2px 0 4px; }
+  .cls .when { color: var(--ink2); font-size: 13px; }
+  .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 12px; background: #eef1f4; color: var(--ink2); white-space: nowrap; }
+  .chip.zoom { background: var(--e-bg); color: var(--e); }
+  .chip.room { background: #f0ebfa; color: #6b3fa0; }
+  .chip.warn { background: var(--warn-bg); color: var(--warn); }
+  .chip.bad { background: var(--a-bg); color: var(--a); }
+  .chip.good { background: var(--p-bg); color: var(--p); }
+  .bar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: #eef1f4; margin: 12px 0 6px; }
+  .bar span { display: block; }
+  .legend { display: flex; gap: 12px; font-size: 12px; color: var(--ink2); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; vertical-align: 0; }
+
+  /* status cells */
+  .st { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 24px; padding: 0 6px; border-radius: 6px; font-weight: 700; font-size: 12px; }
+  .st.P { background: var(--p-bg); color: var(--p); }
+  .st.T { background: var(--t-bg); color: var(--t); }
+  .st.A { background: var(--a-bg); color: var(--a); }
+  .st.E { background: var(--e-bg); color: var(--e); }
+  .st.none { color: #c3cad1; }
+  .st .left { font-size: 10px; margin-left: 2px; }
+
+  /* tables */
+  .tbl-wrap { overflow: auto; max-height: calc(100vh - 260px); }
+  table { border-collapse: separate; border-spacing: 0; width: 100%; }
+  th { position: sticky; top: 0; background: #f9fafb; z-index: 2; text-align: left; font-size: 12px; font-weight: 600; color: var(--ink2);
+    padding: 9px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 7px 10px; border-bottom: 1px solid #f0f2f4; vertical-align: middle; }
+  tr:hover td { background: #fafbfc; }
+  td.num, th.num { text-align: center; }
+  td.sticky, th.sticky { position: sticky; left: 0; background: #fff; z-index: 1; }
+  th.sticky { z-index: 3; background: #f9fafb; }
+  td.sticky2, th.sticky2 { position: sticky; left: 44px; background: #fff; z-index: 1; min-width: 210px; }
+  th.sticky2 { z-index: 3; background: #f9fafb; }
+  .wk { cursor: pointer; color: var(--brand2); }
+  .wk:hover { text-decoration: underline; }
+
+  .toolbar { display: flex; gap: 10px; align-items: center; margin: 12px 0; flex-wrap: wrap; }
+  .search { border: 1px solid var(--line); border-radius: 8px; padding: 8px 12px; width: 260px; background: #fff; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
+  .seg button { border: 0; background: transparent; padding: 7px 12px; color: var(--ink2); font-size: 13px; }
+  .seg button.on { background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .seg button + button { border-left: 1px solid var(--line); }
+
+  .sessions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .sess { padding: 10px 14px; cursor: pointer; min-width: 150px; }
+  .sess:hover { border-color: var(--brand2); }
+  .sess b { display: block; }
+
+  /* session view */
+  .two { display: grid; grid-template-columns: minmax(380px, 1fr) minmax(420px, 1.15fr); gap: 16px; align-items: start; }
+  .stats { display: flex; gap: 10px; flex-wrap: wrap; }
+  .stat { padding: 10px 16px; min-width: 110px; }
+  .stat .n { font-size: 22px; font-weight: 700; }
+  .stat.P .n { color: var(--p); } .stat.T .n { color: var(--t); } .stat.A .n { color: var(--a); }
+  .startbox { display: flex; gap: 8px; align-items: center; }
+  .startbox input { width: 110px; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+  .note { color: var(--ink2); font-size: 12px; }
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); padding: 0 14px; }
+  .tabs button { border: 0; background: transparent; padding: 11px 12px; color: var(--ink2); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+  .tabs button.on { color: var(--brand); border-bottom-color: var(--brand2); font-weight: 600; }
+  .shot { border: 1px solid var(--line); border-radius: 8px; margin: 12px 14px; }
+  .shot-h { padding: 8px 12px; background: #f9fafb; border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--ink2); display: flex; justify-content: space-between; }
+  .line { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; padding: 6px 12px; border-bottom: 1px solid #f3f4f6; align-items: center; font-size: 13px; }
+  .line:last-child { border-bottom: 0; }
+  .line .ico { font-weight: 700; text-align: center; }
+  .line.match .ico { color: var(--p); } .line.doubt .ico { color: var(--warn); } .line.unknown .ico { color: var(--a); } .line.ignored .ico, .line.noise .ico { color: var(--ink3); }
+  .line.noise { color: var(--ink3); }
+  .line .who { font-size: 12px; color: var(--ink2); text-align: right; }
+  .line .kind { font-size: 10px; text-transform: uppercase; letter-spacing: .5px; color: var(--ink3); margin-right: 6px; }
+
+  /* questions & follow-ups */
+  .q { padding: 16px 18px; margin-bottom: 12px; }
+  .q .seen { font-size: 17px; font-weight: 600; }
+  .q .opts { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; align-items: center; }
+  .q input { border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; width: 220px; }
+  .fu { padding: 16px 18px; margin-bottom: 12px; }
+  .fu .who { background: var(--brand-soft); border-radius: 8px; padding: 10px 12px; margin: 10px 0; }
+  .fu .who b { color: var(--brand); }
+  .fu pre { white-space: pre-wrap; font-family: inherit; font-size: 13px; background: #f9fafb; border: 1px solid var(--line); border-radius: 8px; padding: 12px; max-height: 220px; overflow: auto; margin: 8px 0 0; }
+  .vis { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  .empty { text-align: center; padding: 48px 20px; color: var(--ink3); }
+  .empty b { display: block; color: var(--ink2); font-size: 15px; margin-bottom: 4px; }
+
+  /* feedback */
+  .loading { position: fixed; top: 0; left: 232px; right: 0; height: 3px; background: linear-gradient(90deg, var(--brand2) 0 40%, transparent 40%); background-size: 200% 100%; animation: load 1s linear infinite; display: none; z-index: 50; }
+  .loading.on { display: block; }
+  @keyframes load { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+  .toast { position: fixed; bottom: 22px; right: 22px; background: #1f2933; color: #fff; padding: 12px 16px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.18);
+    max-width: 440px; font-size: 13px; opacity: 0; transform: translateY(10px); transition: all .2s; pointer-events: none; z-index: 60; }
+  .toast.on { opacity: 1; transform: none; }
+  .toast.err { background: var(--a); }
+  .skeleton { height: 90px; border-radius: var(--radius); background: linear-gradient(90deg, #eef1f4, #f7f8fa, #eef1f4); background-size: 200% 100%; animation: load 1.2s linear infinite; }
+  .help { background: var(--brand-soft); border-radius: 8px; padding: 10px 14px; color: var(--brand); font-size: 13px; margin-bottom: 14px; }
+  .log td { font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <nav id="nav"></nav>
+  <main id="main"><div class="skeleton"></div></main>
+</div>
+<div class="loading" id="loading"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------- helpers ---------- */
+var S = { view: 'home', classId: null, date: null, overview: null, filter: 'all', search: '', ocrTab: 'present', showNoise: false };
+var LETTER_NAME = { P: 'Present', T: 'Tardy', A: 'Absent', E: 'Excused' };
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
+function $(id) { return document.getElementById(id); }
+var pending = 0;
+function busy(on) { pending += on ? 1 : -1; $('loading').classList.toggle('on', pending > 0); }
+function toast(msg, err) {
+  var t = $('toast'); t.textContent = msg; t.className = 'toast on' + (err ? ' err' : '');
+  clearTimeout(toast.t); toast.t = setTimeout(function () { t.className = 'toast' + (err ? ' err' : ''); }, err ? 7000 : 3500);
+}
+/** google.script.run as a promise, with the loading bar and error messages. */
+function call(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  busy(true);
+  return new Promise(function (ok, fail) {
+    google.script.run.withSuccessHandler(function (r) { busy(false); ok(r); })
+      .withFailureHandler(function (e) { busy(false); toast('Something went wrong: ' + (e && e.message || e), true); fail(e); })[fn].apply(null, args);
+  });
+}
+function shortDate(d) {
+  if (!d) return '';
+  var p = d.split('-'), m = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  return m[+p[1] - 1] + ' ' + (+p[2]);
+}
+function st(letter, left, title) {
+  if (!letter) return '<span class="st none" title="No record">·</span>';
+  return '<span class="st ' + letter + '" title="' + esc(title || LETTER_NAME[letter] || '') + '">' + letter + (left ? '<span class="left">↗</span>' : '') + '</span>';
+}
+function stateChip(state, label) {
+  var cls = state === 'failing' ? 'bad' : state === 'at-limit' ? 'bad' : state === 'warning' ? 'warn' : 'good';
+  return '<span class="chip ' + cls + '">' + esc(label) + '</span>';
+}
+function modeChip(mode) { return /zoom/i.test(mode) ? '<span class="chip zoom">Zoom</span>' : '<span class="chip room">' + esc(mode || 'In person') + '</span>'; }
+function copy(text, what) {
+  var done = function () { toast((what || 'Text') + ' copied'); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, fallback); else fallback();
+  function fallback() { var t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); document.execCommand('copy'); t.remove(); done(); }
+}
+
+/* ---------- navigation ---------- */
+function go(view, params) {
+  S.view = view; Object.assign(S, params || {});
+  if (view !== 'session') S.ocrTab = 'present';
+  render();
+}
+function renderNav() {
+  var o = S.overview || { classes: [], openQuestions: 0, pendingFollowups: 0 };
+  var h = '<div class="logo">TA Attendance</div><div class="logo-sub">' + (o.week ? 'Week ' + o.week + ' · ' : '') + esc(shortDate(o.today)) + '</div>';
+  h += item('home', 'Home', '', '');
+  h += item('review', 'Questions', o.openQuestions ? '<span class="badge alert">' + o.openQuestions + '</span>' : '', '');
+  h += item('followups', 'Follow-ups', o.pendingFollowups ? '<span class="badge">' + o.pendingFollowups + '</span>' : '', '');
+  h += '<div class="nav-h">Classes</div>';
+  o.classes.forEach(function (c) {
+    var on = (S.view === 'class' || S.view === 'session') && S.classId === c.id;
+    h += '<button class="nav-i' + (on ? ' on' : '') + '" data-go="class" data-class="' + esc(c.id) + '"><span>' + esc(c.course.split(':')[0]) +
+      '<small>' + esc(c.day) + ' · ' + esc(c.time) + '</small></span>' + (c.questions ? '<span class="badge alert">' + c.questions + '</span>' : '') + '</button>';
+  });
+  h += '<div class="nav-h">More</div>' + item('activity', 'Activity log', '', '');
+  h += '<div class="nav-foot">Data stays in this Google account.</div>';
+  $('nav').innerHTML = h;
+  function item(v, label, extra) {
+    return '<button class="nav-i' + (S.view === v ? ' on' : '') + '" data-go="' + v + '"><span>' + label + '</span>' + extra + '</button>';
+  }
+}
+document.addEventListener('click', function (e) {
+  var b = e.target.closest('[data-go]');
+  if (b) { go(b.getAttribute('data-go'), { classId: b.getAttribute('data-class') || S.classId, date: b.getAttribute('data-date') || S.date }); return; }
+  var a = e.target.closest('[data-act]');
+  if (a && ACTIONS[a.getAttribute('data-act')]) ACTIONS[a.getAttribute('data-act')](a, e);
+});
+
+function render() {
+  renderNav();
+  $('main').innerHTML = '<div class="skeleton"></div>';
+  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity };
+  (views[S.view] || viewHome)();
+}
+function refreshOverview() {
+  return call('apiOverview').then(function (o) { S.overview = o; renderNav(); return o; });
+}
+
+/* ---------- Home ---------- */
+function viewHome() {
+  refreshOverview().then(function (o) {
+    var losing = 0, limit = 0;
+    o.classes.forEach(function (c) { losing += c.states.failing; limit += c.states['at-limit']; });
+    var h = '<div class="row"><div><h1>Good ' + greeting() + ', Diego</h1><p class="sub">' + (o.week ? 'Week ' + o.week + ' of 10 · ' : '') + esc(longToday(o.today)) + '</p></div><div class="spacer"></div>' +
+      (o.inboxUrl ? '<a class="btn" href="' + esc(o.inboxUrl) + '" target="_blank">Open TA Inbox</a>' : '') +
+      '<button class="btn primary" data-act="process">Process inbox now</button></div>';
+    h += '<div class="kpis">' +
+      kpi(o.openQuestions, 'Names to confirm', o.openQuestions ? 'warn' : '', 'review') +
+      kpi(o.pendingFollowups, 'Follow-ups to send in Populi', o.pendingFollowups ? 'warn' : '', 'followups') +
+      kpi(limit, 'Students with no absences left', limit ? 'warn' : '', '') +
+      kpi(losing, 'Students below 80%', losing ? 'alert' : '', '') + '</div>';
+    h += '<h2>Your classes</h2><div class="classes">' + o.classes.map(classCard).join('') + '</div>';
+    if (o.log.length) {
+      h += '<h2>Latest activity</h2><div class="card">' + logTable(o.log.slice(0, 5)) + '</div>';
+    }
+    $('main').innerHTML = h;
+  });
+  function kpi(n, label, cls, go) {
+    return '<div class="card kpi ' + cls + (go ? ' click' : '') + '"' + (go ? ' data-go="' + go + '"' : '') + '><div class="n">' + n + '</div><div class="l">' + label + '</div></div>';
+  }
+}
+function classCard(c) {
+  var total = c.lastCounts.P + c.lastCounts.T + c.lastCounts.A + c.lastCounts.E;
+  var pct = function (n) { return total ? (n * 100 / total) + '%' : '0'; };
+  var parts = c.course.split(':');
+  var h = '<div class="card cls" data-go="class" data-class="' + esc(c.id) + '">' +
+    '<div class="row"><span class="code">' + esc(parts[0]) + '</span><div class="spacer"></div>' + modeChip(c.mode) + '</div>' +
+    '<div class="name">' + esc((parts[1] || parts[0]).trim()) + '</div>' +
+    '<div class="when">' + esc(c.day) + ' · ' + esc(c.time) + ' · ' + c.students + ' students</div>';
+  if (total) {
+    h += '<div class="bar"><span style="width:' + pct(c.lastCounts.P) + ';background:var(--p)"></span><span style="width:' + pct(c.lastCounts.T) + ';background:#f2a600"></span>' +
+      '<span style="width:' + pct(c.lastCounts.A) + ';background:var(--a)"></span><span style="width:' + pct(c.lastCounts.E) + ';background:var(--e)"></span></div>' +
+      '<div class="legend"><span><i class="dot" style="background:var(--p)"></i>' + c.lastCounts.P + ' present</span><span><i class="dot" style="background:#f2a600"></i>' + c.lastCounts.T +
+      ' tardy</span><span><i class="dot" style="background:var(--a)"></i>' + c.lastCounts.A + ' absent</span></div>' +
+      '<div class="small muted" style="margin-top:6px">Last class: ' + esc(shortDate(c.last)) + ' · ' + c.sessions + ' class' + (c.sessions === 1 ? '' : 'es') + ' recorded</div>';
+  } else {
+    h += '<div class="small muted" style="margin-top:14px">No attendance recorded yet.</div>';
+  }
+  var flags = [];
+  if (c.questions) flags.push('<span class="chip warn">' + c.questions + ' to confirm</span>');
+  if (c.states.failing) flags.push('<span class="chip bad">' + c.states.failing + ' below 80%</span>');
+  if (c.states['at-limit']) flags.push('<span class="chip bad">' + c.states['at-limit'] + ' at the limit</span>');
+  if (c.states.warning) flags.push('<span class="chip warn">' + c.states.warning + ' with 1 left</span>');
+  if (flags.length) h += '<div class="row" style="margin-top:10px;gap:6px">' + flags.join('') + '</div>';
+  return h + '</div>';
+}
+function greeting() { var h = new Date().getHours(); return h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'; }
+function longToday(d) {
+  if (!d) return '';
+  var dt = new Date(d + 'T12:00:00');
+  return dt.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+/* ---------- Class ---------- */
+function viewClass() {
+  call('apiClass', S.classId).then(function (d) {
+    S.cls = d;
+    var h = '<div class="crumbs"><a data-go="home">Home</a> / ' + esc(d.cls.course.split(':')[0]) + '</div>' +
+      '<div class="row"><div><h1>' + esc(d.cls.course) + '</h1><p class="sub">' + esc(d.cls.day) + ' · ' + esc(d.cls.time) + ' · ' + modeChip(d.cls.mode) + ' · ' + d.students.length + ' students in Populi order</p></div></div>';
+    if (d.sessions.length) {
+      h += '<h2>Classes recorded</h2><div class="sessions">' + d.sessions.map(function (s) {
+        return '<div class="card sess" data-go="session" data-date="' + esc(s.date) + '"><b>Week ' + (s.week || '?') + ' · ' + esc(shortDate(s.date)) + '</b>' +
+          '<span class="small muted">Start ' + esc(s.start) + '</span>' + (s.questions ? ' <span class="chip warn">' + s.questions + ' to confirm</span>' : '') + '</div>';
+      }).join('') + '</div>';
+    } else {
+      h += '<div class="help">No attendance yet for this class. Drop the Populi export or the Zoom screenshot folder in TA Inbox, then press "Process inbox now" on Home.</div>';
+    }
+    h += '<div class="toolbar"><input class="search" id="search" placeholder="Search a student…" value="' + esc(S.search) + '">' +
+      '<div class="seg" id="seg">' + ['all', 'risk', 'absent'].map(function (f) {
+        return '<button class="' + (S.filter === f ? 'on' : '') + '" data-act="filter" data-f="' + f + '">' + { all: 'Everyone', risk: 'At risk', absent: 'Missed a class' }[f] + '</button>';
+      }).join('') + '</div><div class="spacer"></div><span class="small muted">' + st('P') + ' present ' + st('T') + ' tardy ' + st('A') + ' absent ' + st('A', true) + ' left early ' + st('E') + ' excused</span></div>';
+    h += '<div class="card tbl-wrap" id="classTable"></div>';
+    $('main').innerHTML = h;
+    drawClassTable();
+    $('search').addEventListener('input', function (e) { S.search = e.target.value; drawClassTable(); });
+  });
+}
+function drawClassTable() {
+  var d = S.cls, q = S.search.trim().toLowerCase();
+  var rows = d.students.filter(function (s) {
+    if (q && (s.name + ' ' + s.order + ' ' + (s.aliases || []).join(' ')).toLowerCase().indexOf(q) < 0) return false;
+    if (S.filter === 'risk') return s.state !== 'ok';
+    if (S.filter === 'absent') return s.effective > 0 || s.tardies > 0;
+    return true;
+  });
+  var h = '<table><thead><tr><th class="sticky num">#</th><th class="sticky2">Student</th>' +
+    d.sessions.map(function (s) { return '<th class="num"><span class="wk" data-go="session" data-date="' + esc(s.date) + '">W' + (s.week || '?') + '<br><span class="muted">' + esc(shortDate(s.date)) + '</span></span></th>'; }).join('') +
+    '<th class="num">Absences</th><th class="num">Tardies</th><th class="num">Counted</th><th class="num">Left</th><th class="num">Attendance</th><th>Status</th></tr></thead><tbody>';
+  rows.forEach(function (s) {
+    h += '<tr><td class="sticky num muted">' + (s.order || '') + '</td><td class="sticky2"><b style="font-weight:500">' + esc(s.name) + '</b>' +
+      (s.aliases && s.aliases.length ? '<div class="small muted">Zoom: ' + esc(s.aliases.join(', ')) + '</div>' : '') + '</td>' +
+      s.weeks.map(function (w) { return '<td class="num">' + (w ? st(w.s, w.left, (LETTER_NAME[w.s] || '') + (w.note ? ' — ' + w.note : '')) : st('')) + '</td>'; }).join('') +
+      '<td class="num">' + s.absences + '</td><td class="num">' + s.tardies + '</td><td class="num"><b>' + s.effective + '</b></td><td class="num">' + s.remaining + '</td>' +
+      '<td class="num">' + s.pct + '%</td><td>' + stateChip(s.state, s.stateLabel) + '</td></tr>';
+  });
+  if (!rows.length) h += '<tr><td colspan="99" class="empty">No students match.</td></tr>';
+  $('classTable').innerHTML = h + '</tbody></table>';
+}
+
+/* ---------- Session (one class, one date) ---------- */
+function viewSession() {
+  call('apiSession', S.classId, S.date).then(function (d) {
+    S.sess = d;
+    var c = { P: 0, T: 0, A: 0, E: 0, left: 0, none: 0 };
+    d.students.forEach(function (s) { var k = (s.status || '').charAt(0); if (k in c) c[k]++; else c.none++; if (s.left) c.left++; });
+    var open = d.questions.filter(function (q) { return !q.Done; });
+    var h = '<div class="crumbs"><a data-go="home">Home</a> / <a data-go="class" data-class="' + esc(d.cls.id) + '">' + esc(d.cls.course.split(':')[0]) + '</a> / ' + esc(shortDate(d.date)) + '</div>' +
+      '<div class="row"><div><h1>' + esc(d.label) + '</h1><p class="sub">' + esc(d.cls.course) + ' · ' + esc(d.source || 'No data yet') + '</p></div><div class="spacer"></div>' +
+      '<div class="card pad startbox"><span class="small muted">Class really started at</span><input id="startIn" value="' + esc(d.start) + '"><button class="btn sm primary" data-act="saveStart">Save &amp; re-check</button>' +
+      '<span class="small muted">(scheduled ' + esc(d.scheduled) + ')</span></div></div>';
+    h += '<div class="stats">' + stat('P', c.P, 'Present') + stat('T', c.T, 'Tardy') + stat('A', c.A, 'Absent') +
+      '<div class="card stat"><div class="n">' + c.left + '</div><div class="small muted">Disconnected before the end</div></div>' +
+      (open.length ? '<div class="card stat" style="border-color:#f5c26b"><div class="n" style="color:var(--warn)">' + open.length + '</div><div class="small muted">Names to confirm</div></div>' : '') + '</div>';
+    if (open.length) {
+      h += '<h2>Confirm these names <span class="muted small">— follow-ups for this class wait until you answer</span></h2>' + open.map(questionCard).join('');
+    }
+    h += '<div class="two" style="margin-top:18px"><div class="card"><div class="tabs"><button class="on">Students (' + d.students.length + ')</button></div><div class="tbl-wrap" style="max-height:none">' + sessionTable(d) + '</div></div>';
+    h += '<div class="card" id="ocrCard">' + ocrPanel(d) + '</div></div>';
+    $('main').innerHTML = h;
+  });
+  function stat(k, n, l) { return '<div class="card stat ' + k + '"><div class="n">' + n + '</div><div class="small muted">' + l + '</div></div>'; }
+}
+function sessionTable(d) {
+  var h = '<table><thead><tr><th class="num">#</th><th>Student</th><th class="num">Result</th><th>Why</th></tr></thead><tbody>';
+  d.students.forEach(function (s) {
+    var k = (s.status || '').charAt(0);
+    h += '<tr><td class="num muted">' + (s.order || '') + '</td><td style="white-space:nowrap">' + esc(s.name) + '</td><td class="num">' + st(k, s.left) + '</td><td class="note">' + esc(s.notes || (k === 'P' ? '' : s.source || '')) + '</td></tr>';
+  });
+  return h + '</tbody></table>';
+}
+function ocrPanel(d) {
+  if (!d.ocr) {
+    return '<div class="tabs"><button class="on">What the screenshots said</button></div><div class="empty"><b>No screenshot text for this class</b>' +
+      (d.ocrError ? esc(d.ocrError) : 'This class came from a Populi export or a Zoom report.') + '</div>';
+  }
+  var names = { present: '15 min', tardy: '31 min', end: 'Last screenshot' };
+  var h = '<div class="tabs">' + ['present', 'tardy', 'end'].map(function (p) {
+    var n = (d.ocr.phases[p] || []).length;
+    return '<button class="' + (S.ocrTab === p ? 'on' : '') + '" data-act="ocrTab" data-p="' + p + '">' + names[p] + ' <span class="muted">(' + n + ')</span></button>';
+  }).join('') + '<div class="spacer"></div><label class="small muted" style="align-self:center"><input type="checkbox" data-act="noise"' + (S.showNoise ? ' checked' : '') + '> show every line</label></div>';
+  var shots = d.ocr.phases[S.ocrTab] || [];
+  if (!shots.length) return h + '<div class="empty"><b>No screenshots in this folder</b>Put them in the "' + names[S.ocrTab] + '" folder.</div>';
+  var icons = { match: '✓', doubt: '?', unknown: '✕', ignored: '–', noise: '·' };
+  // A doubt only becomes a question when one of the possible students was not recognized anyway.
+  var asked = {};
+  (d.questions || []).forEach(function (q) { asked[String(q['Name seen']).toLowerCase()] = true; });
+  shots.forEach(function (lines, i) {
+    var m = lines.filter(function (l) { return l.result === 'match'; }).length;
+    var u = lines.filter(function (l) { return l.result === 'unknown' || l.result === 'doubt'; }).length;
+    h += '<div class="shot"><div class="shot-h"><span>Screenshot ' + (i + 1) + '</span><span>' + m + ' recognized' + (u ? ' · <span style="color:var(--warn)">' + u + ' to check</span>' : '') + '</span></div>';
+    lines.filter(function (l) { return S.showNoise || l.result !== 'noise'; }).forEach(function (l) {
+      var extra = l.kind === 'chat' ? '<span class="kind">chat ' + esc(l.time) + (l.minute != null ? ' · min ' + l.minute : '') + '</span>' : '<span class="kind">video</span>';
+      var who = l.result === 'match' ? esc(l.who) + (l.how === 'similar' ? ' <span class="chip warn">similar</span>' : '') :
+        l.result === 'doubt' ? (asked[firstName(l.text)] ? '<span style="color:var(--warn)">Could be ' + esc(l.who) + '</span>'
+          : '<span class="muted">Could be ' + esc(l.who) + ' — all of them already recognized</span>') :
+        l.result === 'unknown' ? '<span style="color:var(--a)">Not on the roster</span>' : l.result === 'ignored' ? 'ignored' : '';
+      var cls = l.result === 'doubt' && !asked[firstName(l.text)] ? 'ignored' : l.result;
+      h += '<div class="line ' + cls + '"><span class="ico">' + (cls === 'ignored' && l.result === 'doubt' ? '✓' : icons[l.result]) + '</span><span>' + extra + esc(l.text) + '</span><span class="who">' + who + '</span></div>';
+    });
+    h += '</div>';
+  });
+  if (d.folderUrl) h += '<div class="pad small"><a href="' + esc(d.folderUrl) + '" target="_blank">Open the screenshots in Drive</a></div>';
+  return h;
+}
+
+function firstName(text) { return String(text).split(' ← ')[0].toLowerCase(); }
+
+/* ---------- Questions ---------- */
+function questionCard(q) {
+  var sugg = String(q.Suggestions || '').split(' / ').filter(function (s) { return /^#/.test(s); });
+  return '<div class="card q" data-row="' + q.row + '"><div class="row"><div><div class="seen">"' + esc(q['Name seen']) + '"</div>' +
+    '<div class="small muted">' + esc(q.classLabel || q['Class ID']) + ' · ' + esc(shortDate(q.Date)) + ' · seen in: ' + esc(q['Seen in']) + '</div></div></div>' +
+    (q.Notes ? '<div class="small" style="color:var(--a);margin-top:6px">' + esc(q.Notes) + '</div>' : '') +
+    '<div class="opts">' + (sugg.length ? '<span class="small muted">Is it</span>' + sugg.map(function (s) {
+      return '<button class="btn sm" data-act="answer" data-row="' + q.row + '" data-ans="' + esc(s.split(' ')[0]) + '">' + esc(s) + '</button>';
+    }).join('') : '<span class="small muted">No similar name on the roster.</span>') +
+    '<input placeholder="Other: # or name" id="ans' + q.row + '"><button class="btn sm primary" data-act="answerInput" data-row="' + q.row + '">Save</button>' +
+    '<button class="btn sm ghost" data-act="answer" data-row="' + q.row + '" data-ans="ignore">Not a student</button></div></div>';
+}
+function viewReview() {
+  call('apiQuestions').then(function (qs) {
+    var h = '<h1>Names to confirm</h1><p class="sub">When a Zoom name could be two students, or doesn\'t look like anyone, the system asks instead of guessing. Your answer is remembered for next time.</p>';
+    h += qs.length ? qs.map(questionCard).join('') : '<div class="card empty"><b>All clear</b>Every name in the screenshots was recognized.</div>';
+    $('main').innerHTML = h;
+  });
+}
+
+/* ---------- Follow-ups ---------- */
+function viewFollowups() {
+  Promise.all([call('apiFollowups'), S.overview ? Promise.resolve(S.overview) : refreshOverview()]).then(function (r) {
+    var list = r[0];
+    var h = '<h1>Follow-ups to send in Populi</h1><p class="sub">For each one: in the class Roster select the students by #, then Actions → Email selected students. Paste the subject and message, check the visibility boxes and send.</p>';
+    if (!list.length) h += '<div class="card empty"><b>Nothing to send</b>New follow-ups appear here after each class.</div>';
+    list.forEach(function (f) {
+      var vis = String(f['Visibility (check in Populi)'] || '').split(/\s*,\s*/).filter(String);
+      h += '<div class="card fu"><div class="row"><span class="chip ' + (/Absent|LeftEarly/.test(f.Type) ? 'bad' : /Tardy/.test(f.Type) ? 'warn' : '') + '">' + esc(f.Type.replace('Student ', '').replace('LeftEarly', 'Left early')) + '</span>' +
+        '<b>' + esc(f.Class) + '</b><span class="muted">' + esc(shortDate(f['Class date'])) + '</span><div class="spacer"></div>' +
+        '<button class="btn sm primary" data-act="fuDone" data-row="' + f.row + '">Mark as sent</button></div>' +
+        '<div class="who">' + (f['Roster #'] ? 'Select in the Populi roster: <b>#' + esc(f['Roster #'].split(', ').join(', #')) + '</b>' : '<b>' + esc(f.Students) + '</b>') +
+        (f['Roster #'] ? '<div class="small muted" style="margin-top:4px">' + esc(f.Students) + '</div>' : '') + '</div>' +
+        '<div class="row"><b style="font-weight:600">' + esc(f.Subject) + '</b><div class="spacer"></div>' +
+        '<button class="btn sm" data-act="copy" data-what="Subject" data-text="' + esc(f.Subject) + '">Copy subject</button>' +
+        '<button class="btn sm" data-act="copy" data-what="Message" data-text="' + esc(f.Message) + '">Copy message</button></div>' +
+        '<pre>' + esc(f.Message) + '</pre>' +
+        '<div class="vis"><span class="small muted">Visibility:</span>' + vis.map(function (v) { return '<span class="chip">☑ ' + esc(v) + '</span>'; }).join('') + '</div></div>';
+    });
+    $('main').innerHTML = h;
+  });
+}
+
+/* ---------- Activity ---------- */
+function logTable(rows) {
+  return '<table class="log"><thead><tr><th>When</th><th>File</th><th>Class</th><th>Result</th></tr></thead><tbody>' + rows.map(function (r) {
+    return '<tr><td style="white-space:nowrap">' + esc(r.Time) + '</td><td>' + esc(r.File) + '</td><td>' + esc(r.Class) + '</td><td>' + esc(r.Result) + '</td></tr>';
+  }).join('') + '</tbody></table>';
+}
+function viewActivity() {
+  refreshOverview().then(function (o) {
+    $('main').innerHTML = '<h1>Activity log</h1><p class="sub">Every file the system read from TA Inbox, newest first.</p><div class="card">' +
+      (o.log.length ? logTable(o.log) : '<div class="empty"><b>Nothing yet</b>Drop files in TA Inbox.</div>') + '</div>';
+  });
+}
+
+/* ---------- actions ---------- */
+var ACTIONS = {
+  process: function (b) {
+    b.disabled = true; b.textContent = 'Processing…';
+    call('apiProcessNow').then(function (r) {
+      toast(r.busy ? 'Already running in the background. Try again in a minute.' :
+        (r.files ? r.files + ' file(s) read. ' : 'No new files. ') + (r.sent ? r.sent + ' follow-up(s) ready.' : ''));
+      render();
+    }, function () { b.disabled = false; b.textContent = 'Process inbox now'; });
+  },
+  filter: function (b) { S.filter = b.getAttribute('data-f'); document.querySelectorAll('#seg button').forEach(function (x) { x.classList.toggle('on', x === b); }); drawClassTable(); },
+  ocrTab: function (b) { S.ocrTab = b.getAttribute('data-p'); $('ocrCard').innerHTML = ocrPanel(S.sess); },
+  noise: function (b) { S.showNoise = b.checked; $('ocrCard').innerHTML = ocrPanel(S.sess); },
+  saveStart: function () {
+    var v = $('startIn').value;
+    call('apiSetStart', S.classId, S.date, v).then(function () { toast('Start time saved. The class was re-checked.'); refreshOverview(); viewSession(); });
+  },
+  answer: function (b) { answer(b.getAttribute('data-row'), b.getAttribute('data-ans'), b); },
+  answerInput: function (b) {
+    var row = b.getAttribute('data-row'), v = $('ans' + row).value.trim();
+    if (!v) { toast('Type the # or the name first', true); return; }
+    answer(row, v, b);
+  },
+  fuDone: function (b) {
+    b.disabled = true;
+    call('apiFollowupDone', +b.getAttribute('data-row')).then(function () { toast('Marked as sent'); refreshOverview(); viewFollowups(); });
+  },
+  copy: function (b) { copy(b.getAttribute('data-text'), b.getAttribute('data-what')); }
+};
+function answer(row, ans, b) {
+  var card = b.closest('.q'); if (card) card.style.opacity = .5;
+  call('apiAnswer', +row, ans).then(function (r) {
+    if (r && r.note && /^Not found/.test(r.note)) { toast(r.note, true); if (card) card.style.opacity = 1; return; }
+    toast(r && r.note ? r.note.split(' · ')[0] : 'Saved');
+    refreshOverview(); render();
+  }, function () { if (card) card.style.opacity = 1; });
+}
+
+render();
+</script>
+</body>
+</html>

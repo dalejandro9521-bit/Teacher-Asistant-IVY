@@ -3,3 +3,4 @@ node_modules/
 *.csv
 *.xlsx
 .DS_Store
+preview/

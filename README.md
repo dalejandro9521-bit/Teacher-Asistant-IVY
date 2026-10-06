@@ -33,6 +33,7 @@ El reporte del viernes siempre te llega a ti por Gmail.
    - En el editor, abre `appsscript.json` y reemplaza todo con [`src/appsscript.json`](src/appsscript.json).
      Eso pone la hora del Este y activa el servicio **Drive**, que es el que hace el OCR.
    - Abre `Código.gs` y reemplaza todo con [`dist/TA-Attendance.gs`](dist/TA-Attendance.gs): es todo el código en un solo archivo.
+   - Para el **panel**: en Files, **+ → HTML**, nómbralo exactamente `Dashboard` y reemplaza todo con [`dist/Dashboard.html`](dist/Dashboard.html).
 3. Guarda, vuelve a la hoja y recárgala. Aparece el menú **TA Attendance**.
 4. **TA Attendance → Set up / repair sheets**. Acepta los permisos (Sheets, Drive, Gmail). Se crean las hojas y la carpeta **TA Inbox** en tu Drive.
 5. Llena las hojas:
@@ -54,6 +55,16 @@ El reporte del viernes siempre te llega a ti por Gmail.
 6. **TA Attendance → Turn on automations**.
 
 Con [clasp](https://github.com/google/clasp) también puedes subir el código con `clasp push`, usando `rootDir: "src"`.
+
+## El panel
+
+**TA Attendance → Open dashboard** abre un panel con todo en un solo lugar:
+- **Home**: tus clases, la última asistencia de cada una, y qué necesita atención (nombres por confirmar, follow-ups por enviar, estudiantes en riesgo).
+- **Clase**: los estudiantes en el orden de Populi, con una columna por semana (P/T/A/E en colores) y sus totales. Tiene buscador y filtros.
+- **Una clase en una fecha**: el resultado de cada estudiante con el motivo, la **hora real de inicio** editable (se recalcula sola) y, para Zoom,
+  **lo que el OCR leyó en cada screenshot** y a quién asignó cada nombre. Así pruebas si los screenshots funcionan.
+- **Questions**: los nombres con duda, con botones para elegir al estudiante.
+- **Follow-ups**: cada correo con los # a seleccionar en Populi, botones para copiar asunto y mensaje, y las casillas de visibilidad.
 
 ## Uso diario
 

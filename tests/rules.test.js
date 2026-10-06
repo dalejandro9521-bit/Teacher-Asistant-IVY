@@ -311,4 +311,17 @@ test('dist/TA-Attendance.gs is up to date with src/ (run `npm run bundle`)', () 
   const fs = require('fs'), path = require('path');
   const { bundle } = require('../tools/bundle');
   assert.equal(fs.readFileSync(path.join(__dirname, '..', 'dist', 'TA-Attendance.gs'), 'utf8'), bundle());
+  assert.equal(fs.readFileSync(path.join(__dirname, '..', 'dist', 'Dashboard.html'), 'utf8'),
+    fs.readFileSync(path.join(__dirname, '..', 'src', 'Dashboard.html'), 'utf8'));
+});
+
+test('dashboard script has no syntax errors and only calls server functions that exist', () => {
+  const fs = require('fs'), path = require('path');
+  const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'Dashboard.html'), 'utf8');
+  const js = html.match(/<script>([\s\S]*)<\/script>/)[1];
+  new Function(js); // throws on a syntax error
+  const called = [...js.matchAll(/call\('(\w+)'/g)].map(m => m[1]);
+  assert.ok(called.length >= 7);
+  called.forEach(fn => assert.equal(typeof g[fn], 'function', fn + ' is not defined in Code.js'));
+  called.forEach(fn => assert.ok(!fn.endsWith('_'), fn + ': private functions cannot be called from the page'));
 });
