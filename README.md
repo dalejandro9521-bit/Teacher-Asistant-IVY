@@ -60,7 +60,7 @@ Con [clasp](https://github.com/google/clasp) también puedes subir el código co
 1. Exporta la asistencia de la clase desde Populi en **CSV**.
 2. Súbela a **TA Inbox**. Si el sistema no reconoce la clase, pon `[C1]` o `[C2]` en el nombre del archivo.
 
-Si Populi incluye la **hora del escaneo**, el sistema decide Present, Tardy o Absent con la regla de 15 y 30 minutos.
+Si Populi incluye la **hora del escaneo**, el sistema decide Present, Tardy o Absent con la regla de 15 y 30 minutos, contados desde la hora real de inicio (hoja **Sessions**).
 
 **Zoom (C3 HA 105, C4 SB 100). Los screenshots se leen solos, sin IA y sin costo:**
 
@@ -73,7 +73,7 @@ Si Populi incluye la **hora del escaneo**, el sistema decide Present, Tardy o Ab
        3. Absent/    screenshots antes de salir (para saber quién se fue)
    ```
 2. Screenshots en la **vista de galería**, como ya los tomas:
-   - **Cierra el chat antes del screenshot.** Los estudiantes escriben ahí su nombre y quedaría como si siguieran conectados.
+   - En los screenshots de **Present** deja el chat abierto (ahí escriben su nombre). En el último no hace falta.
    - Pon la galería en **49 por pantalla** (Zoom → Settings → Video → "Display up to 49 participants per screen in Gallery View").
      Así son 2 páginas en lugar de 3.
    - Toma un screenshot por página y ponlos todos en la carpeta del momento que corresponde.
@@ -90,9 +90,20 @@ Si Populi incluye la **hora del escaneo**, el sistema decide Present, Tardy o Ab
 
    En Populi (online) solo existe presente o ausente: marca la casilla para P y T y déjala vacía para A.
    La hoja **Grid** está en el mismo orden que Populi.
-4. En el **Inbox log** ves el resultado y los nombres de Zoom que no reconoció.
-   Si alguien se pone otro nombre en Zoom (por ejemplo "iPhone de Ana"), escríbelo una vez en **Students → Zoom names** de ese estudiante y desde ahí lo reconoce siempre.
-   En **Config → Ignore in screenshots** pon tu nombre y el del profesor.
+4. **Chat.** Los estudiantes escriben su nombre al conectarse, y el sistema también lee esos mensajes.
+   La **hora del mensaje** dice cuándo se conectó, contada desde la hora real de inicio.
+   El chat sirve para identificar y para la hora de llegada, pero **no** prueba que alguien siga conectado al final:
+   eso solo lo prueba el video del último screenshot.
+5. **Nombres parecidos.** Reconoce solo cuando el estudiante usa su segundo nombre ("Naomi Ferreira" → Angie Naomy Ferreira Beltran),
+   cambia letras (Z/S, Y/I, V/B, C/S), escribe con errores ("Ixtiyar Qurbanov") o junta todo ("muhammadsharjeelarshad").
+6. **Dudas.** Cuando un nombre puede ser de dos estudiantes ("Malek") o no se parece a nadie ("Lula"), **no adivina**: lo pone en la hoja **Review**.
+   - Escribe el **#** del estudiante (el número de la Grid, el mismo orden de Populi), su nombre, o `ignore` si no es estudiante.
+   - El sistema guarda ese nombre en el estudiante y desde ahí lo reconoce siempre. Recalcula la clase sin volver a leer las imágenes.
+   - Los correos de esa clase **esperan** hasta que respondas todas las dudas.
+7. **Hora real de inicio.** Si el profesor empieza tarde, agrega la hora al nombre de la carpeta
+   (`2. HA 105 - Week 02 - 10.12.26 - start 7pm`) o escríbela en la hoja **Sessions → Actual start**, incluso después.
+   Todos los cortes se mueven: si empieza a las 7:00, present es de 7:00 a 7:15, tardy de 7:16 a 7:30 y absent desde 7:31.
+   Si cambias la hora después, la clase se recalcula sola. Funciona igual para las clases presenciales: la hora del escaneo en Populi se mide desde la hora real.
 
 Para no tener que arrastrar archivos, instala **Google Drive para escritorio** y cambia dónde guarda la Mac los screenshots
 (**Cmd+Shift+5 → Opciones → Otra ubicación**) a la carpeta de la semana en TA Inbox.

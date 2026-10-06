@@ -14,6 +14,9 @@ var SHEETS = {
     'Absences left', 'Attendance %', 'Status'],
   'Follow-ups': ['Created', 'Type', 'Class', 'Class date', 'Roster #', 'Students', 'Count', 'Subject', 'Message',
     'Visibility (check in Populi)', 'Done'],
+  Sessions: ['Class ID', 'Date', 'Scheduled start', 'Actual start', 'Source', 'Source ID', 'Processed with start',
+    'Open questions', 'Updated'],
+  Review: ['Created', 'Class ID', 'Date', 'Name seen', 'Seen in', 'Suggestions', 'Student (# or name, or "ignore")', 'Done', 'Notes'],
   Outbox: ['Time', 'Type', 'To', 'Subject', 'Mode', 'Body'],
   'Inbox log': ['Time', 'File', 'Kind', 'Class', 'Dates', 'Result']
 };
@@ -167,9 +170,12 @@ function tick() {
   withLock_(function () {
     var ctx = load_();
     var log = processInbox_(ctx);
+    rerunSessions_(ctx, answerQuestions_(ctx));
     applyManualFlags_(ctx);
     save_(ctx.att);
     save_(ctx.studentsT);
+    save_(ctx.sessT);
+    save_(ctx.revT);
     var sent = sendPendingNotices_(ctx);
     var office = checkNoId_(ctx);
     save_(ctx.att);
@@ -234,7 +240,7 @@ function processInbox_(ctx) {
   while (files.hasNext()) {
     var file = files.next(), name = file.getName(), res;
     try {
-      res = handleFile_(ctx, name, rowsFromFile_(file), file.getDateCreated());
+      res = handleFile_(ctx, name, rowsFromFile_(file), file.getDateCreated(), file.getId());
       file.moveTo(res.ok ? done : bad);
     } catch (err) {
       res = { ok: false, kind: '?', cls: '', dates: '', msg: 'Error: ' + (err && err.message || err) };
@@ -288,11 +294,22 @@ function handleScreenshotFolder_(ctx, folder) {
   if (!pick.cls) return { ok: false, kind: 'screenshots', cls: '', dates: '', msg: 'Could not tell the class. Put the course code (HA 105) or [C3] in the folder name.' };
   var date = dateFromName_(name);
   if (!date) return { ok: false, kind: 'screenshots', cls: pick.cls.id, dates: '', msg: 'No date in the folder name (e.g. "HA 105 - 10.05.26").' };
-  var images = todo.length;
+  var hint = startFromName_(name, pick.cls);
+  if (hint != null) setSessionStart_(ctx, pick.cls, date, hint, false);
   todo.sort(function (a, b) { return a.file.getName() < b.file.getName() ? -1 : 1; })
     .forEach(function (x) { phases[x.phase].push(ocrText_(x.file)); });
-  var roster = roster_(ctx, pick.cls.id);
-  var res = screenshotStatuses(phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String));
+  // Keep the text so a new start time or Diego's answers can re-run this class without reading the images again.
+  folder.createFile('ocr.json', JSON.stringify({ images: todo.length, phases: phases }), 'application/json');
+  var msg = processScreenshotSession_(ctx, pick.cls, date, phases, folder.getId(), todo.length);
+  return { ok: true, kind: 'screenshots', cls: pick.cls.id, dates: date, msg: msg };
+}
+
+/** Screenshot text of one class → attendance rows, questions for Diego in Review, and the Sessions row. */
+function processScreenshotSession_(ctx, cls, date, phases, folderId, images) {
+  var start = sessionStart_(ctx, cls, date);
+  var roster = roster_(ctx, cls.id);
+  var res = screenshotStatuses(phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
+    { start: start, cfg: ctx.cfg });
   var entries = res.results.map(function (x) {
     return { student: x.student, status: x.status, leftEarly: x.leftEarly, source: 'Zoom screenshots', notes: x.note };
   });
@@ -301,14 +318,16 @@ function handleScreenshotFolder_(ctx, folder) {
       entries.push({ student: s, status: STATUS.A, source: 'Zoom screenshots (not seen)', notes: 'Not in any screenshot' });
     });
   }
-  var c = applyEntries_(ctx, pick.cls, date, entries);
+  var c = applyEntries_(ctx, cls, date, entries);
+  var asked = addQuestions_(ctx, cls, date, res.review);
+  touchSession_(ctx, cls, date, 'Zoom screenshots', folderId, start);
   var p = res.results.filter(function (x) { return x.status === STATUS.P; }).length;
   var t = res.results.filter(function (x) { return x.status === STATUS.T; }).length;
   var gone = res.results.filter(function (x) { return x.leftEarly; }).length;
-  var msg = images + ' screenshot(s): ' + p + ' present, ' + t + ' tardy, ' + (roster.length - p - t) + ' absent of ' + roster.length +
-    ' (' + gone + ' disconnected before the last screenshot). ' + c.kept + ' kept (manual/excused).';
-  if (res.unmatched.length) msg += ' Names not recognized (add them under "Zoom names" in Students): ' + res.unmatched.join('; ') + '.';
-  return { ok: true, kind: 'screenshots', cls: pick.cls.id, dates: date, msg: msg };
+  var msg = images + ' screenshot(s), start ' + minToLabel(start) + ': ' + p + ' present, ' + t + ' tardy, ' + (roster.length - p - t) +
+    ' absent of ' + roster.length + ' (' + gone + ' disconnected before the last screenshot). ' + c.kept + ' kept (manual/excused).';
+  if (asked) msg += ' ' + asked + ' name(s) to confirm in Review; notices for this class wait until you answer.';
+  return msg;
 }
 
 /** Text in an image, using Google Drive's OCR (Advanced Drive service). The temporary Doc is deleted. */
@@ -338,7 +357,7 @@ function rowsFromFile_(file) {
 /**
  * One file → attendance rows. Returns {ok, kind, cls, dates, msg}.
  */
-function handleFile_(ctx, fileName, rows, created) {
+function handleFile_(ctx, fileName, rows, created, fileId) {
   var kind = detectKind(rows), cfg = ctx.cfg;
   if (kind === 'zoom') {
     var z = parseZoom(rows);
@@ -347,7 +366,8 @@ function handleFile_(ctx, fileName, rows, created) {
     if (!pick.cls) return { ok: false, kind: kind, cls: '', dates: '', msg: 'Could not tell the class (' + pick.how + '). Add [C3] (the Class ID) to the file name.' };
     var date = z.date || dateFromName_(fileName) || fmtDate_(created);
     var roster = roster_(ctx, pick.cls.id);
-    var res = zoomStatuses(z, roster, pick.cls, cfg);
+    var zstart = sessionStart_(ctx, pick.cls, date);
+    var res = zoomStatuses(z, roster, { start: zstart, end: pick.cls.end }, cfg);
     var entries = res.results.map(function (x) {
       return { student: x.student, status: x.status, minutesLate: x.minutesLate, leftEarly: x.leftEarly, source: 'Zoom',
         notes: 'Zoom ' + minToLabel(x.join) + '–' + minToLabel(x.leave) + (x.names.length ? ' as "' + x.names.join('", "') + '"' : '') };
@@ -356,6 +376,7 @@ function handleFile_(ctx, fileName, rows, created) {
       res.notSeen.forEach(function (s) { entries.push({ student: s, status: STATUS.A, source: 'Zoom (not in report)' }); });
     }
     var c = applyEntries_(ctx, pick.cls, date, entries);
+    touchSession_(ctx, pick.cls, date, 'Zoom report', fileId, zstart);
     var msg = c.added + ' added, ' + c.updated + ' updated, ' + c.kept + ' kept (manual/excused). Class by ' + pick.how + '.';
     if (res.unmatched.length) msg += ' Names not on the roster: ' + res.unmatched.join('; ') + '.';
     return { ok: true, kind: kind, cls: pick.cls.id, dates: date, msg: msg };
@@ -383,9 +404,10 @@ function handleFile_(ctx, fileName, rows, created) {
   p.records.forEach(function (r) {
     var s = matchStudent({ id: r.id, email: r.email, name: r.name }, rosterNow);
     if (!s) { if (unknown.indexOf(r.name || r.id) < 0) unknown.push(r.name || r.id); return; }
-    var st = r.status, late = r.time != null ? Math.max(0, Math.floor(r.time - cls.start)) : '';
-    // Populi gives the scan time: our 15 / 30 minute rule decides Present vs Tardy vs Absent.
-    if (r.time != null && st !== STATUS.A && st !== STATUS.E) st = classify(r.time - cls.start, cfg);
+    var st0 = sessionStart_(ctx, cls, r.date);
+    var st = r.status, late = r.time != null ? Math.max(0, Math.floor(r.time - st0)) : '';
+    // Populi gives the scan time: our 15 / 30 minute rule (from the real start) decides Present vs Tardy vs Absent.
+    if (r.time != null && st !== STATUS.A && st !== STATUS.E) st = classify(r.time - st0, cfg);
     (byDate[r.date] || (byDate[r.date] = [])).push({ student: s, status: st, minutesLate: late, source: source });
   });
   var tot = { added: 0, updated: 0, kept: 0 }, dates = Object.keys(byDate).sort();
@@ -397,6 +419,7 @@ function handleFile_(ctx, fileName, rows, created) {
       rosterNow.forEach(function (s) { if (!have[s.id]) entries.push({ student: s, status: STATUS.A, source: source + ' (not in file)' }); });
     }
     var c2 = applyEntries_(ctx, cls, d, entries);
+    touchSession_(ctx, cls, d, source, fileId, sessionStart_(ctx, cls, d));
     tot.added += c2.added; tot.updated += c2.updated; tot.kept += c2.kept;
   });
   var m = tot.added + ' added, ' + tot.updated + ' updated, ' + tot.kept + ' kept (manual/excused). Class by ' + pk.how + '.';
@@ -523,6 +546,7 @@ function sendPendingNotices_(ctx) {
     if (t.get(r, 'Notified').indexOf(kind) === 0) return;
     var date = parseDateCell(t.get(r, 'Date'), y);
     if (since && date < since) { t.set(r, 'Notified', kind + ' · not sent (before ' + since + ')'); return; }
+    if (openQuestions_(ctx, t.get(r, 'Class ID'), date)) return; // wait for Diego's answers in Review
     var cls = classById_(ctx, t.get(r, 'Class ID'));
     var s = ctx.students.filter(function (x) { return x.classId === t.get(r, 'Class ID') && x.id === t.get(r, 'Student ID'); })[0];
     // Gmail needs an address; Populi doesn't. Rows without one are tried again on the next run.
@@ -675,6 +699,171 @@ function refreshGrids_(ctx) {
   });
 }
 
+/* ---------- real start time, questions for Diego, re-runs ---------- */
+
+/** "HA 105 - 10.05.26 - start 7pm" / "inicio 7:10" → minutes (afternoon assumed for afternoon/evening classes). */
+function startFromName_(name, cls) {
+  var m = String(name).match(/(?:start|starts|inicio|empez\w*|empieza)\s*(?:at|a las)?\s*(\d{1,2}(?:[:.]\d{2})?\s*(?:[ap]\.?m\.?)?)/i);
+  return m ? startFromText_(m[1], cls) : null;
+}
+
+function startFromText_(text, cls) {
+  var t = String(text || '').trim().replace('.', ':');
+  if (!t) return null;
+  if (!/:/.test(t)) t = t.replace(/^(\d{1,2})/, '$1:00');
+  var min = hmToMin(t);
+  if (min == null) return null;
+  if (!/[ap]/i.test(t) && min < 12 * 60 && cls && cls.start >= 12 * 60) min += 12 * 60; // "7:00" for an evening class
+  return min;
+}
+
+function sessionKey_(classId, date) { return classId + '|' + date; }
+
+function sessionRow_(ctx, cls, date, create) {
+  var t = ctx.sessT, y = yearOf_(ctx);
+  for (var i = 0; i < t.rows.length; i++) {
+    if (t.get(t.rows[i], 'Class ID') === cls.id && parseDateCell(t.get(t.rows[i], 'Date'), y) === date) return t.rows[i];
+  }
+  if (!create) return null;
+  var row = blankRow_(t);
+  t.set(row, 'Class ID', cls.id);
+  t.set(row, 'Date', date);
+  t.set(row, 'Scheduled start', minToLabel(cls.start));
+  t.rows.push(row);
+  return row;
+}
+
+/** The real start of a class on a date: "Actual start" in Sessions, or the scheduled one. */
+function sessionStart_(ctx, cls, date) {
+  var row = sessionRow_(ctx, cls, date, false);
+  var v = row ? startFromText_(ctx.sessT.get(row, 'Actual start'), cls) : null;
+  return v == null ? cls.start : v;
+}
+
+function setSessionStart_(ctx, cls, date, min, overwrite) {
+  var row = sessionRow_(ctx, cls, date, true);
+  if (overwrite || !ctx.sessT.get(row, 'Actual start')) ctx.sessT.set(row, 'Actual start', minToLabel(min));
+}
+
+function touchSession_(ctx, cls, date, source, sourceId, startUsed) {
+  var t = ctx.sessT, row = sessionRow_(ctx, cls, date, true);
+  t.set(row, 'Source', source);
+  if (sourceId) t.set(row, 'Source ID', sourceId);
+  t.set(row, 'Processed with start', minToLabel(startUsed));
+  t.set(row, 'Updated', nowStr_());
+}
+
+/** Unanswered questions for a class and date (notices wait while there are any). */
+function openQuestions_(ctx, classId, date) {
+  var t = ctx.revT, y = yearOf_(ctx);
+  return t.rows.filter(function (r) {
+    return t.get(r, 'Class ID') === classId && parseDateCell(t.get(r, 'Date'), y) === date && !t.get(r, 'Done');
+  }).length;
+}
+
+function addQuestions_(ctx, cls, date, review) {
+  var t = ctx.revT, y = yearOf_(ctx), added = 0;
+  var have = {};
+  t.rows.forEach(function (r) {
+    have[t.get(r, 'Class ID') + '|' + parseDateCell(t.get(r, 'Date'), y) + '|' + normalizeName(t.get(r, 'Name seen'))] = true;
+  });
+  review.forEach(function (q) {
+    var key = cls.id + '|' + date + '|' + normalizeName(q.name);
+    if (have[key]) return;
+    have[key] = true;
+    var row = blankRow_(t);
+    t.set(row, 'Created', nowStr_());
+    t.set(row, 'Class ID', cls.id);
+    t.set(row, 'Date', date);
+    t.set(row, 'Name seen', q.name);
+    t.set(row, 'Seen in', q.seenIn.map(function (p) {
+      return { present: '15 min', tardy: '31 min', end: 'last screenshot', late: 'chat after minute 30' }[p] || p;
+    }).join(', '));
+    t.set(row, 'Suggestions', q.candidates.length
+      ? q.candidates.map(function (s) { return '#' + (s.order || '?') + ' ' + s.name; }).join(' / ')
+      : 'No similar name in the roster');
+    t.rows.push(row);
+    added++;
+  });
+  var srow = sessionRow_(ctx, cls, date, true);
+  ctx.sessT.set(srow, 'Open questions', String(openQuestions_(ctx, cls.id, date)));
+  return added;
+}
+
+/**
+ * Diego's answers in Review: "#12", a name, or "ignore". The Zoom name is saved on that student ("Zoom names")
+ * so it is recognized from now on, and the class is re-run. Returns the sessions to re-run.
+ */
+function answerQuestions_(ctx) {
+  var t = ctx.revT, y = yearOf_(ctx), rerun = {};
+  t.rows.forEach(function (r) {
+    var ans = t.get(r, 'Student (# or name, or "ignore")');
+    if (!ans || t.get(r, 'Done')) return;
+    var classId = t.get(r, 'Class ID'), date = parseDateCell(t.get(r, 'Date'), y), seenName = t.get(r, 'Name seen');
+    if (/^(ignore|ignorar|no|none|-|not a student|no es estudiante)$/i.test(ans)) {
+      var list = String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String);
+      if (list.indexOf(seenName) < 0) { list.push(seenName); ctx.cfg.ignoreNames = list.join('; '); setConfig_('ignoreNames', ctx.cfg.ignoreNames); }
+      t.set(r, 'Done', 'Ignored · ' + nowStr_());
+      rerun[sessionKey_(classId, date)] = true;
+      return;
+    }
+    var roster = roster_(ctx, classId), num = ans.match(/^#?\s*(\d{1,3})$/), s = null;
+    if (num) s = roster.filter(function (x) { return x.order === +num[1]; })[0] || null;
+    if (!s) s = matchStudent({ id: ans, name: ans }, roster);
+    if (!s) { t.set(r, 'Notes', 'Not found in the ' + classId + ' roster. Use the # from the Grid or the full name.'); return; }
+    addAlias_(ctx, s, seenName);
+    t.set(r, 'Done', 'Linked to #' + (s.order || '?') + ' ' + s.name + ' · ' + nowStr_());
+    t.set(r, 'Notes', '');
+    rerun[sessionKey_(classId, date)] = true;
+  });
+  return rerun;
+}
+
+function addAlias_(ctx, student, alias) {
+  var t = ctx.studentsT, row = t.rows[student.row];
+  if (!row || normalizeName(alias) === normalizeName(student.name)) return;
+  var list = t.get(row, 'Zoom names').split(/\s*;\s*/).filter(String);
+  if (list.map(normalizeName).indexOf(normalizeName(alias)) < 0) list.push(alias);
+  t.set(row, 'Zoom names', list.join('; '));
+  ctx.students = studentsFrom_(t);
+}
+
+/** Re-run classes whose start time changed in Sessions, or whose questions Diego answered. */
+function rerunSessions_(ctx, rerun) {
+  var t = ctx.sessT, y = yearOf_(ctx), done = {}, n = 0;
+  t.rows.slice().forEach(function (r) {
+    var cls = classById_(ctx, t.get(r, 'Class ID')), date = parseDateCell(t.get(r, 'Date'), y);
+    var id = t.get(r, 'Source ID');
+    if (!cls || !id) return;
+    var start = sessionStart_(ctx, cls, date);
+    var changed = t.get(r, 'Processed with start') && startFromText_(t.get(r, 'Processed with start'), cls) !== start;
+    if (!changed && !rerun[sessionKey_(cls.id, date)]) return;
+    if (done[id]) return;
+    done[id] = true;
+    try {
+      if (t.get(r, 'Source') === 'Zoom screenshots') {
+        var folder = DriveApp.getFolderById(id), it = folder.getFilesByName('ocr.json');
+        if (!it.hasNext()) return;
+        var saved = JSON.parse(it.next().getBlob().getDataAsString());
+        var msg = processScreenshotSession_(ctx, cls, date, saved.phases, id, saved.images);
+        appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (re-run)', 'screenshots', cls.id, date, msg]);
+      } else {
+        var file = DriveApp.getFileById(id);
+        var res = handleFile_(ctx, file.getName(), rowsFromFile_(file), file.getDateCreated(), id);
+        appendRow_('Inbox log', [nowStr_(), file.getName() + ' (re-run)', res.kind, res.cls, res.dates, res.msg]);
+      }
+      n++;
+    } catch (err) {
+      appendRow_('Inbox log', [nowStr_(), id + ' (re-run)', '', cls.id, date, 'Error: ' + (err && err.message || err)]);
+    }
+  });
+  // Refresh the open-question counts.
+  t.rows.forEach(function (r) {
+    t.set(r, 'Open questions', String(openQuestions_(ctx, t.get(r, 'Class ID'), parseDateCell(t.get(r, 'Date'), y))));
+  });
+  return n;
+}
+
 /* ---------- data helpers ---------- */
 
 function ss_() { return SpreadsheetApp.getActive(); }
@@ -774,6 +963,8 @@ function load_() {
   ctx.studentsT = table_('Students');
   ctx.students = studentsFrom_(ctx.studentsT);
   ctx.att = table_('Attendance');
+  ctx.sessT = table_('Sessions');
+  ctx.revT = table_('Review');
   return ctx;
 }
 

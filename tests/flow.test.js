@@ -376,12 +376,84 @@ test('screenshot folder in TA Inbox → OCR → attendance, aliases remembered, 
   const log = env.sheet('Inbox log').objects().at(-1);
   assert.equal(log.Kind, 'screenshots');
   assert.equal(log.Dates, '2026-10-05');
-  assert.match(log.Result, /3 screenshot\(s\): 1 present, 1 tardy, 3 absent of 5/);
-  assert.match(log.Result, /Names not recognized .*: Unknown Person\./);
+  assert.match(log.Result, /3 screenshot\(s\), start 6:00 PM: 1 present, 1 tardy, 3 absent of 5/);
+  assert.match(log.Result, /1 name\(s\) to confirm in Review/);
+  assert.equal(env.sheet('Review').objects()[0]['Name seen'], 'Unknown Person');
   assert.doesNotMatch(log.Result, /Sam Prof/);
   // Grid ready to tick Populi's participation boxes in the same order
   assert.deepEqual(env.sheet('Grid C3').data.slice(1).map(r => r.slice(0, 3)), [
     ['1', 'Mara Alba', 'P'], ['2', 'Teo Arce', 'T'], ['3', 'Quinn Alder', 'A (left)'],
     ['4', 'Moe Allen', 'A'], ['5', 'Zed Withdrawn', 'A']
   ]);
+});
+
+test('late start, a question in Review, notices on hold until answered, start edited in Sessions → re-run', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.sheet('Classes').put(4, 2, 'HA 105: Introduction to Ethics'); // C3, scheduled 6:00 PM
+  env.inbox().addFile('HA 105 roster.csv', [
+    'Student ID,Populi Name,Course Abbrv,Email,Type',
+    ',Pat Prof,HA 105,p@ivy.edu,faculty',
+    '11,Malek Abu,HA 105,m1@ivy.edu,student',
+    '12,Malek Bay,HA 105,m2@ivy.edu,student',
+    '13,Angie Naomy Ferreira Beltran,HA 105,an@ivy.edu,student',
+    '14,Vale Cisneros,HA 105,vc@ivy.edu,student'
+  ].join('\n'));
+  env.gas.tick();
+  const week = env.inbox().createFolder('2. HA 105 - Week 02 - 10.12.26 - start 7pm');
+  const chat = ['Everyone', 'Naomi 7:04 PM', 'Naomi Ferreira', 'Malek 7:12 PM', 'Malek', 'Vale 7:22 PM', 'Vale Sisneros'].join('\n');
+  week.createFolder('1. Present').addImage('a.png', 'Malek Abu\nPat Prof\n' + chat);
+  week.createFolder('2. Tardy').addImage('b.png', 'Malek Abu\nNaomi Ferreira\n' + chat);
+  week.createFolder('3. Absent').addImage('c.png', 'Malek Abu\nNaomi Ferreira\nVale Sisneros\nmalek b iphone');
+  env.setNow('2026-10-13T01:00:00Z');
+  env.gas.tick();
+  const row = n => env.row('2026-10-12', 'C3', n);
+  const sess = () => env.sheet('Sessions').objects().find(r => r['Class ID'] === 'C3' && r.Date === '2026-10-12');
+  assert.equal(sess()['Actual start'], '7:00 PM');                 // from "start 7pm" in the folder name
+  assert.equal(row('13').Status, 'Present');                       // chat 7:04 → minute 4 from 7:00
+  assert.equal(row('14').Status, 'Tardy');                         // chat 7:22 → minute 22
+  assert.equal(row('11').Status, 'Present');
+  // "Malek" in chat and "malek b iphone" could be Malek Bay → asked, not guessed
+  const q = env.sheet('Review').objects();
+  assert.deepEqual(q.map(x => x['Name seen']).sort(), ['Malek', 'malek b iphone']);
+  assert.match(q.find(x => x['Name seen'] === 'Malek').Suggestions, /#2 Malek Bay/);
+  assert.equal(row('12').Status, 'Absent');
+  assert.equal(sess()['Open questions'], '2');
+  assert.equal(env.sheet('Follow-ups').objects().filter(f => f['Class date'] === '2026-10-12').length, 0, 'notices wait');
+
+  // Diego answers: both are Malek Bay (#2)
+  const rv = env.sheet('Review'), h = rv.data[0];
+  const ansCol = h.indexOf('Student (# or name, or "ignore")') + 1;
+  rv.data.forEach((r, i) => { if (i) rv.put(i + 1, ansCol, '#2'); });
+  env.gas.tick();
+  assert.equal(row('12').Status, 'Present');                       // re-run with the answers
+  assert.match(env.sheet('Students').objects().find(s => s['Student ID'] === '12')['Zoom names'], /Malek; malek b iphone/);
+  assert.ok(env.sheet('Review').objects().every(r => /^Linked to #2 Malek Bay/.test(r.Done)));
+  assert.equal(sess()['Open questions'], '0');
+
+  // The start was really 6:50 → Diego edits Actual start; Vale (7:22) is now minute 32 → Absent
+  const ss = env.sheet('Sessions'), sh = ss.data[0];
+  const si = ss.data.findIndex(r => r[sh.indexOf('Class ID')] === 'C3' && r[sh.indexOf('Date')] === '2026-10-12');
+  ss.put(si + 1, sh.indexOf('Actual start') + 1, '6:50');
+  env.gas.tick();
+  assert.equal(sess()['Processed with start'], '6:50 PM');
+  assert.equal(row('14').Status, 'Absent');
+  assert.match(row('14').Notes, /Joined after minute 30 \(chat 7:22 PM\)/);
+  assert.equal(env.ocr.calls, 3, 're-runs use the saved text, no new OCR');
+  // follow-ups now exist for this class
+  assert.ok(env.sheet('Follow-ups').objects().some(f => f['Class date'] === '2026-10-12' && /Vale Cisneros/.test(f.Students)));
+});
+
+test('in person: the real start time from Sessions moves the 15 / 30 minute cut-offs', () => {
+  const env = setupTerm();
+  env.sheet('Sessions').appendRow(['C1', '2026-10-05', '9:00 AM', '9:30 AM']); // class started 30 min late
+  env.inbox().addFile('ENG [C1].csv', [
+    'Student ID,Name,Email,Date,Status,Check-in Time',
+    '1,Ana Uno,a@ivy.edu,10/5/2026,Present,9:40 AM',
+    '2,Beto Dos,b@ivy.edu,10/5/2026,Present,9:50 AM',
+    '3,Caro Tres,c@ivy.edu,10/5/2026,Present,10:05 AM'
+  ].join('\n'));
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C1', '1').Status, 'Present');  // minute 10
+  assert.equal(env.row('2026-10-05', 'C1', '2').Status, 'Tardy');    // minute 20
+  assert.equal(env.row('2026-10-05', 'C1', '3').Status, 'Absent');   // minute 35
 });

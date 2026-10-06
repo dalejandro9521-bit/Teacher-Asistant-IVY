@@ -15,6 +15,12 @@ Attendance automation for Diego, a Teacher Assistant (dgomez230@ivy.edu). Talk t
 - Zoom (Diego stays 1 hour): screenshots at 15 min (present), 31 min (tardy) and before leaving (the "Absent" folder).
   Seen at 15 → Present even if missing at 31, if the last shot confirms. Seen earlier but not in the last shot →
   Absent with a note. Only in the last shot, or never → Absent. Populi online only has present/absent (P and T = ticked).
+- Chat: students type their name when they join; the message time (from the real start) says Present/Tardy/after 30.
+  Chat never proves someone is still connected at the end (it stays on screen).
+- Real start per class and date: "Sessions → Actual start" or "start 7pm" in the folder name. All cut-offs move.
+- Names: exact or clearly similar (second name, Z/S, typos) → automatic; two possible students or weak → "Review"
+  sheet; Diego answers with the # (Populi order), the name or "ignore"; the Zoom name is saved as an alias and the class
+  re-runs from the saved OCR text (ocr.json). Notices for that class wait while questions are open.
 
 ## Classes
 C1 HA 103 Mon 9:00–1:00 (Room 300) · C2 OT 215 Mon 1:30–5:30 (Room 304) · C3 HA 105 Mon 6–10 pm Zoom ·

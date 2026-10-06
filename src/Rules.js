@@ -251,3 +251,90 @@ function dueReminders(assignments, todayStr) {
   });
   return out;
 }
+
+/* ---------- fuzzy names: second names, Z/S, typos ---------- */
+
+/** Spelling-insensitive form of a name word: z→s, y→i, v→b, ph→f, k/q→c, no h, no double letters. */
+function soundKey(w) {
+  return normalizeName(w).replace(/ph/g, 'f').replace(/z/g, 's').replace(/y/g, 'i').replace(/v/g, 'b')
+    .replace(/[kq]/g, 'c').replace(/h/g, '').replace(/(.)\1+/g, '$1');
+}
+
+function editDistance(a, b) {
+  if (a === b) return 0;
+  var prev = [], cur, i, j;
+  for (j = 0; j <= b.length; j++) prev[j] = j;
+  for (i = 1; i <= a.length; i++) {
+    cur = [i];
+    for (j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** 1 = same word, 0.8 = same sound or one/two letters off, 0.6 = cut-off word ("Sharj…"), 0 = different. */
+function wordScore(a, b) {
+  if (a === b) return 1;
+  var ka = soundKey(a), kb = soundKey(b);
+  if (ka && ka === kb) return 0.8;
+  var n = Math.min(ka.length, kb.length);
+  if (n >= 4 && editDistance(ka, kb) <= (n >= 7 ? 2 : 1)) return 0.8;
+  if (a.length >= 4 && b.indexOf(a) === 0) return 0.6;
+  return 0;
+}
+
+var NAME_NOISE_ = /^(guest|host|co|cohost|me|iphone|ipad|android|galaxy|samsung|phone|laptop|pc|mac|macbook|zoom|user|de|del|la|el|y|the|of)$/;
+
+/**
+ * Who a Zoom/chat name could be, best first: [{student, score}].
+ * The score adds up how well each word of the name matches a different word of the student's name, so a student
+ * who uses only a second name ("Naomy Ferreira" for "Angie Naomy Ferreira Beltran") still scores high.
+ */
+function nameCandidates(probe, roster) {
+  var words = normalizeName(String(probe || '').replace(/\(.*?\)/g, ' ')).split(' ')
+    .filter(function (w) { return w.length >= 2 && !/^\d+$/.test(w) && !NAME_NOISE_.test(w); });
+  if (!words.length) return [];
+  var joined = words.join('');
+  var out = [];
+  roster.forEach(function (s) {
+    var sw = normalizeName(s.name).split(' ').filter(String), used = {}, score = 0, hits = 0;
+    words.forEach(function (w) {
+      var best = 0, bi = -1;
+      sw.forEach(function (x, i) {
+        if (used[i]) return;
+        var sc = wordScore(w, x);
+        if (sc > best) { best = sc; bi = i; }
+      });
+      if (bi >= 0) { used[bi] = true; score += best; hits++; }
+    });
+    // Name written all together: "muhammadsharjeelarshad"
+    if (words.length === 1 && joined.length >= 10) {
+      var all = soundKey(sw.join(''));
+      if (editDistance(soundKey(joined), all) <= 2) { score = Math.max(score, 1.8); hits = 2; }
+    }
+    if (score > 0) out.push({ student: s, score: Math.round(score * 10) / 10, hits: hits, words: words.length });
+  });
+  return out.sort(function (a, b) { return b.score - a.score; });
+}
+
+/**
+ * A name from a screenshot → {student, how} when sure, {doubt:[students]} when it could be more than one or the match
+ * is weak (Diego decides), or null when nobody is close.
+ * Sure = the exact rules of matchStudent, or two words matching well and clearly ahead of anyone else.
+ */
+function resolveName(probe, roster) {
+  var exact = matchStudent({ name: probe }, roster);
+  if (exact) return { student: exact, how: 'exact' };
+  var c = nameCandidates(probe, roster);
+  if (!c.length) return null;
+  var top = c[0], second = c[1];
+  var strong = top.hits >= 2 && top.score >= 1.6;
+  var clear = !second || second.score <= top.score - 0.8;
+  if (strong && clear) return { student: top.student, how: 'similar' };
+  var close = c.filter(function (x) { return x.score >= Math.max(0.6, top.score - 0.8); }).slice(0, 3);
+  // A single cut-off or misspelt word is too little to suggest anyone.
+  if (top.score < 0.8) return null;
+  return { doubt: close.map(function (x) { return x.student; }) };
+}

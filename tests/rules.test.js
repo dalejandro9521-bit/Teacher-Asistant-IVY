@@ -209,7 +209,7 @@ test('screenshot folders and OCR text of the Zoom participant list', () => {
   }, roster, ['Diego Gomez']);
   const by = Object.fromEntries(r.results.map(x => [x.student.id, x.status + (x.leftEarly ? ' (left)' : '')]));
   assert.deepEqual(plain(by), { 1001: 'Present', 1002: 'Tardy', 1003: 'Present', 1004: 'Absent (left)' });
-  assert.deepEqual(plain(r.unmatched), ['Mystery Guy']);
+  assert.deepEqual(plain(r.review.map(q => [q.name, q.seenIn, q.candidates.length])), [['Mystery Guy', ['tardy'], 0]]);
   // no "end" screenshots → nobody is marked as leaving early
   const r2 = g.screenshotStatuses({ present: [shot(['David Kim'])] }, roster, []);
   assert.equal(r2.results[0].status, 'Present');
@@ -236,7 +236,7 @@ test('Diego\'s online rules: 15 min, 31 min and the 1-hour screenshot', () => {
   assert.deepEqual(plain(r.notSeen.map(s => s.id)), ['f']);
 });
 
-test('names as Zoom shows them (partial, joined, first name only); chat lines with times are skipped', () => {
+test('names as Zoom shows them (partial, joined, first name only)', () => {
   const ro = [
     { id: '1', name: 'Lina Mora Bastidas' }, { id: '2', name: 'Suda Kaew-ngam' }, { id: '3', name: 'Lara Ivanova' },
     { id: '4', name: 'Omar Ali Khan' }, { id: '5', name: 'Omar Saad Khan' }, { id: '6', name: 'Mina Aksoy' }
@@ -247,9 +247,9 @@ test('names as Zoom shows them (partial, joined, first name only); chat lines wi
   assert.equal(g.matchStudent({ name: 'Mina Deniz Aksoy' }, ro).id, '6');
   assert.equal(g.matchStudent({ name: 'Omar Khan' }, ro), null);   // two of them: never guess
   assert.equal(g.matchStudent({ name: 'Omar' }, ro), null);
-  const r = g.screenshotStatuses({ present: ['Lara\nMina 6:44 PM\nProfessor Smith\nLulu'] }, ro, []);
+  const r = g.screenshotStatuses({ present: ['Lara\nProfessor Smith\nLulu'] }, ro, []);
   assert.deepEqual(plain(r.results.map(x => x.student.id)), ['3']);
-  assert.deepEqual(plain(r.unmatched), ['Lulu']);
+  assert.deepEqual(plain(r.review.map(q => q.name)), ['Lulu']);
 });
 
 test('Populi roster export: real column layout, professors and the TA skipped, Populi order kept', () => {
@@ -265,4 +265,44 @@ test('Populi roster export: real column layout, professors and the TA skipped, P
   assert.equal(g.parsePopuli(rows, 2026).course, 'HA 105');
   assert.deepEqual(plain(g.parseRoster(rows).map(s => [s.id, s.name, s.email])),
     [['2026000002', 'Zoe Zeta', 'zz26@ivy.edu'], ['2026000003', 'Al Alpha', 'aa26@ivy.edu']]);
+});
+
+test('similar names: second names, Z/S, typos, written together; two possible students → a question', () => {
+  const ro = [
+    { id: '1', name: 'Angie Naomy Ferreira Beltran', order: 1 }, { id: '2', name: 'Ikhtiyar Gurbanov', order: 2 },
+    { id: '3', name: 'Valentina Cisneros Cruces', order: 3 }, { id: '4', name: 'Diego Marquez Alvarado', order: 4 },
+    { id: '5', name: 'Muhammed Sharjeel Arshad', order: 5 }, { id: '6', name: 'Malek Abu', order: 6 }, { id: '7', name: 'Malek Bay', order: 7 },
+    { id: '8', name: 'Jessica Da Silva', order: 8 }
+  ];
+  const who = n => { const r = g.resolveName(n, ro); return r ? (r.student ? r.student.id : 'doubt:' + r.doubt.map(s => s.id).join(',')) : null; };
+  assert.equal(who('Naomi Ferreira'), '1');          // second name + i/y
+  assert.equal(who('Ixtiyar Qurbanov'), '2');        // typo in both words
+  assert.equal(who('Valentina Sisneros'), '3');      // S instead of C
+  assert.equal(who('Diego Marques'), '4');           // S instead of Z
+  assert.equal(who('muhammadsharjeelarshad'), '5');  // all together, a instead of e
+  assert.equal(who('Jesica Da Silba'), '8');
+  assert.equal(who('Malek'), 'doubt:6,7');           // two Maleks → ask Diego
+  assert.equal(who('Naomy'), 'doubt:1');             // one word only → ask
+  assert.equal(who('Lulu'), null);
+  assert.equal(who('Mute'), null);
+});
+
+test('chat: the message time decides, from the real start of class', () => {
+  const ro = [{ id: 'a', name: 'Ana Uno' }, { id: 'b', name: 'Beto Dos' }, { id: 'c', name: 'Caro Tres' }, { id: 'd', name: 'Dani Cuatro' }];
+  const chat = ['Everyone', 'Ana 7:05 PM', 'Ana Uno', 'Beto 7:20 PM', 'Beto Dos', 'Caro 7:40 PM', 'Caro Tres', 'Type message here...'].join('\n');
+  const tiles = n => n.join('\n');
+  // Class scheduled at 6:00 PM but the professor started at 7:00 PM
+  const r = g.screenshotStatuses({ present: [chat], end: [tiles(['Ana Uno', 'Beto Dos', 'Caro Tres'])] }, ro, [], { start: 19 * 60 });
+  const by = Object.fromEntries(r.results.map(x => [x.student.id, [x.status, x.note]]));
+  assert.deepEqual(plain(by.a), ['Present', 'Name in chat (chat 7:05 PM)']);
+  assert.deepEqual(plain(by.b), ['Tardy', 'Name in chat (chat 7:20 PM)']);
+  assert.equal(by.c[0], 'Absent'); assert.match(by.c[1], /Joined after minute 30 \(chat 7:40 PM\)/);
+  assert.deepEqual(plain(r.notSeen.map(s => s.id)), ['d']);
+  // The chat stays on screen: it never proves someone is still there at the end
+  const r2 = g.screenshotStatuses({ present: [chat], end: [chat] }, ro, [], { start: 19 * 60 });
+  assert.ok(r2.results.filter(x => x.student.id !== 'c').every(x => x.status === 'Absent' && x.leftEarly));
+  // "Malek" is not asked when every Malek was recognized anyway
+  const ro2 = [{ id: 'm1', name: 'Malek Abu' }, { id: 'm2', name: 'Malek Bay' }];
+  assert.equal(g.screenshotStatuses({ present: ['Malek Abu\nMalek Bay\nMalek'] }, ro2, []).review.length, 0);
+  assert.equal(g.screenshotStatuses({ present: ['Malek Abu\nMalek'] }, ro2, []).review.length, 1);
 });

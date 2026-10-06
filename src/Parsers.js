@@ -301,7 +301,29 @@ function screenshotPhase(folderName) {
   return '';
 }
 
-var ZOOM_UI_WORDS_ = /\b(professor|prof|teacher|instructor|everyone|screen|mute|unmute|participants?|invite|waiting room|chat|raise|lower|hand|reactions?|share|record|security|breakout|apps|whiteboard|leave|end|more|rename|search|in the meeting|host|co-host|guest|me|video|audio|view|speaker|gallery|zoom|meeting|minutes?)\b/;
+var ZOOM_UI_WORDS_ = /\b(professor|prof|teacher|instructor|everyone|screen|type message|message|who can see|new chat|to|mute|unmute|participants?|invite|waiting room|chat|raise|lower|hand|reactions?|share|record|security|breakout|apps|whiteboard|leave|end|more|rename|search|in the meeting|host|co-host|guest|me|video|audio|view|speaker|gallery|zoom|meeting|minutes?)\b/;
+
+/** Chat header as OCR reads it: "Maide 6:44 PM", "From Ana Lopez to Everyone 6:02 PM". */
+var CHAT_HEADER_ = /^(?:from\s+)?(.{2,60}?)(?:\s+to\s+(?:everyone|me|all)\b.*?)?\s+(\d{1,2}:\d{2}\s*[AaPp]\.?\s*[Mm]\.?)\s*$/;
+
+/**
+ * One screenshot's OCR text → names on video tiles and chat messages.
+ * A chat message is the header line (sender + time) and the line under it (what the student typed: their name).
+ * → {tiles:[name], chat:[{names:[typed, sender], time}]}
+ */
+function readScreenshotText(text) {
+  var lines = String(text || '').split(/\r?\n/).map(function (l) { return l.replace(/[|•·]/g, ' ').trim(); })
+    .filter(String);
+  var out = { tiles: [], chat: [] };
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(CHAT_HEADER_);
+    if (m) {
+      var next = lines[i + 1] && !CHAT_HEADER_.test(lines[i + 1]) ? lines[++i] : '';
+      out.chat.push({ names: [next, m[1]].filter(String), time: hmToMin(m[2]) });
+    } else if (!/^\d{1,2}:\d{2}/.test(lines[i])) out.tiles.push(lines[i]);
+  }
+  return out;
+}
 
 /**
  * Text read (OCR) from the screenshots of each moment → status per roster student. Diego's rules for Zoom:
@@ -310,43 +332,87 @@ var ZOOM_UI_WORDS_ = /\b(professor|prof|teacher|instructor|everyone|screen|mute|
  * - First seen in tardy → Tardy (if still there at the end).
  * - Seen earlier but not in the end shot → Absent (disconnected), with a note.
  * - Only in the end shot (joined after minute 30) or never seen → Absent.
+ * - Chat: what the student typed (their name) and the message time say when they joined, measured from the
+ *   real start of class (opts.start, minutes). Chat never proves someone is still connected at the end.
+ * Names: exact or clearly similar → that student; two possible students or a weak match → review (Diego decides).
  * Without end shots, nobody is marked as disconnected.
- * phases: {present:[text], tardy:[text], end:[text]} — one text per screenshot. ignore: names that are not students.
- * Returns {results:[{student, status, leftEarly, note}], notSeen:[students], unmatched:[lines that look like names]}.
+ * phases: {present:[text], tardy:[text], end:[text]} (one OCR text per screenshot); ignore: names that are not students;
+ * opts: {start, cfg}.
+ * Returns {results:[{student, status, leftEarly, note}], notSeen:[students], review:[{name, seenIn:[...], candidates:[students]}]}.
  */
-function screenshotStatuses(phases, roster, ignore) {
-  var seen = { present: {}, tardy: {}, end: {} }, unmatched = [];
+function screenshotStatuses(phases, roster, ignore, opts) {
+  opts = opts || {};
+  var c = rulesConfig_(opts.cfg), start = opts.start;
+  var seen = { present: {}, tardy: {}, end: {}, late: {} }, chatAt = {}, review = {}, order = [];
   var skip = (ignore || []).map(function (n) { return { id: n, name: n }; });
+
+  function note(name, ph, r) {
+    var key = normalizeName(name);
+    if (!review[key]) { review[key] = { name: name, seenIn: [], candidates: r ? r.doubt : [] }; order.push(key); }
+    if (review[key].seenIn.indexOf(ph) < 0) review[key].seenIn.push(ph);
+  }
+  function see(names, ph, time) {
+    var doubt = null, unknown = null;
+    for (var i = 0; i < names.length; i++) {
+      var r = resolveName(names[i], roster);
+      if (r && r.student) {
+        seen[ph][r.student.id] = true;
+        if (time != null && !(r.student.id in chatAt)) chatAt[r.student.id] = time;
+        return;
+      }
+      if (skip.length && (matchStudent({ name: names[i] }, skip) || nameCandidates(names[i], skip).some(function (x) { return x.score >= 1; }))) return;
+      if (r && r.doubt && !doubt) doubt = { name: names[i], r: r };
+      else if (!r && !unknown && looksLikeName_(names[i])) unknown = names[i];
+    }
+    if (doubt) note(doubt.name, ph, doubt.r);
+    else if (unknown) note(unknown, ph, null);
+  }
+
   ['present', 'tardy', 'end'].forEach(function (ph) {
     (phases[ph] || []).forEach(function (text) {
-      String(text || '').split(/\r?\n/).forEach(function (line) {
-        var clean = line.replace(/[|•·]/g, ' ').trim();
-        if (!clean || /\d{1,2}:\d{2}\s*[AaPp][Mm]/.test(clean)) return; // chat "Name 6:44 PM" lines, clocks
-        var s = matchStudent({ name: clean }, roster);
-        if (s) { seen[ph][s.id] = true; return; }
-        if (skip.length && matchStudent({ name: clean }, skip)) return;
-        var words = normalizeName(clean.replace(/\(.*?\)/g, '')).split(' ').filter(function (w) { return /[a-z]{2}/.test(w); });
-        if (words.length >= 1 && words.length <= 5 && !ZOOM_UI_WORDS_.test(normalizeName(clean)) && unmatched.indexOf(clean) < 0) unmatched.push(clean);
+      var shot = readScreenshotText(text);
+      shot.tiles.forEach(function (t) { see([t], ph); });
+      shot.chat.forEach(function (m) {
+        // The message time decides; without a start time, the folder does (but chat never counts as "still there").
+        var when = start != null && m.time != null ? classify(m.time - start, c) : (ph === 'end' ? '' : ph === 'present' ? STATUS.P : STATUS.T);
+        var cph = when === STATUS.P ? 'present' : when === STATUS.T ? 'tardy' : 'late';
+        see(m.names, cph, m.time);
       });
     });
   });
+
   var hasEnd = (phases.end || []).some(function (t) { return String(t || '').trim(); });
+  var hasTardy = (phases.tardy || []).some(function (t) { return String(t || '').trim(); });
   var results = [], notSeen = [];
   roster.forEach(function (s) {
     var p = seen.present[s.id], t = seen.tardy[s.id], e = seen.end[s.id];
     var r = { student: s, status: '', leftEarly: false, note: '' };
+    var chat = s.id in chatAt ? ' (chat ' + minToLabel(chatAt[s.id]) + ')' : '';
     if (p || t) {
       r.status = p ? STATUS.P : STATUS.T;
       if (hasEnd && !e) {
         r.status = STATUS.A; r.leftEarly = true;
         r.note = (p && t ? 'In the 15 and 31 minute screenshots' : p ? 'Only in the 15 minute screenshot' : 'Tardy (31 minute screenshot)') +
-          ', not in the last screenshot: disconnected before the 1-hour check';
-      } else if (p && !t && e) r.note = 'Not in the 31 minute screenshot; confirmed in the last one';
-    } else if (e) {
+          chat + ', not in the last screenshot: disconnected before the 1-hour check';
+      } else if (p && !t && e && hasTardy) r.note = 'Not in the 31 minute screenshot; confirmed in the last one' + chat;
+      else if (chat) r.note = 'Name in chat' + chat;
+    } else if (e || seen.late[s.id]) {
       r.status = STATUS.A;
-      r.note = 'Joined after minute 30 (only in the last screenshot)';
+      r.note = 'Joined after minute 30' + chat + (e && !chat ? ' (only in the last screenshot)' : '');
     } else { notSeen.push(s); return; }
     results.push(r);
   });
-  return { results: results, notSeen: notSeen, unmatched: unmatched };
+  // Don't ask about "Malek" if every possible Malek was already recognized in those screenshots.
+  var questions = order.map(function (k) { return review[k]; }).filter(function (q) {
+    return !q.candidates.length || !q.candidates.every(function (s) {
+      return q.seenIn.every(function (ph) { return seen[ph][s.id]; });
+    });
+  });
+  return { results: results, notSeen: notSeen, review: questions };
+}
+
+function looksLikeName_(line) {
+  var n = normalizeName(String(line).replace(/\(.*?\)/g, ' '));
+  var words = n.split(' ').filter(function (w) { return /[a-z]{2}/.test(w); });
+  return words.length >= 1 && words.length <= 5 && n.length <= 45 && !ZOOM_UI_WORDS_.test(n);
 }

@@ -109,6 +109,8 @@ function makeEnv(opts) {
       if (this.parent) this.parent.folders = this.parent.folders.filter(f => f !== this);
       folder.folders.push(this); this.parent = folder;
     }
+    createFile(name, content, mime) { return this.addFile(name, content, mime || 'text/plain'); }
+    getFilesByName(n) { return iter(this.files.filter(f => f.name === n)); }
     // test helper: a screenshot whose "pixels" are the text Zoom shows
     addImage(name, text) { return this.addFile(name, text, 'image/png'); }
     getId() { return this.id; }
@@ -140,7 +142,7 @@ function makeEnv(opts) {
   const DriveApp = {
     createFolder: n => { const f = new Folder(n, null); rootFolders.push(f); return f; },
     getFolderById: id => { if (!drive.byId[id]) throw new Error('no folder ' + id); return drive.byId[id]; },
-    getFileById: id => ({ setTrashed: () => { drive.docs[id].trashed = true; } })
+    getFileById: id => drive.byId[id] || ({ setTrashed: () => { drive.docs[id].trashed = true; } })
   };
   // Advanced Drive service (v3): converting an image to a Google Doc runs OCR. Here the image content is its text.
   drive.docs = {};
