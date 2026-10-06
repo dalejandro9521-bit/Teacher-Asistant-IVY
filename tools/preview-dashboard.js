@@ -37,12 +37,14 @@ const api = {};
 api.apiClass = { C3: JSON.parse(JSON.stringify(g.apiClass('C3'))), C1: JSON.parse(JSON.stringify(g.apiClass('C1'))) };
 api.apiSession = JSON.parse(JSON.stringify(g.apiSession('C3', '2026-10-05')));
 api.apiReportWeeks = JSON.parse(JSON.stringify(g.apiReportWeeks()));
+api.apiStudent = JSON.parse(JSON.stringify(g.apiStudent('C3', '104')));
+api.apiSetRecord = { status: 'Absent', left: true, noId: false, excuse: 'Received', notes: '', effective: 1, remaining: 1, pct: 90, stateLabel: '1 absence left', state: 'warning' };
 api.apiWeeklyReport = JSON.parse(JSON.stringify(g.apiWeeklyReport(1)));
 
 const stub = `window.__API = ${JSON.stringify(api)};
 window.google = { script: { run: (function make(ok, fail) {
   const r = { withSuccessHandler: f => make(f, fail), withFailureHandler: f => make(ok, f) };
-  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf'].forEach(n => {
+  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone'].forEach(n => {
     r[n] = (...a) => setTimeout(() => { let v = window.__API[n]; if (n === 'apiClass') v = v[a[0]] || v.C3; if (n === 'apiProcessNow') v = { files: 0, sent: 0 };
       if (n === 'apiAnswer') v = { note: 'Linked to #12 Malek Bay' }; ok(v === undefined ? true : v); }, 50);
   });
@@ -61,8 +63,12 @@ window.google = { script: { run: (function make(ok, fail) {
   const shot = async (name) => { await page.waitForTimeout(400); await page.screenshot({ path: path.join(out, name + '.png') }); };
   await shot('1-home');
   await page.click('.cls[data-class="C3"]'); await shot('2-class');
-  await page.click('.sess'); await shot('3-session');
+  await page.click('.wt.ok'); await shot('3-session');
   await page.click('[data-act="ocrTab"][data-p="end"]'); await shot('4-session-last-screenshot');
+  await page.click('[data-go="class"][data-class="C3"]'); await page.waitForTimeout(300); await page.click('.wt.ok'); await page.waitForTimeout(400);
+  await page.locator('.more').first().click(); await shot('3b-session-menu');
+  await page.click('[data-act="rec"][data-change*="excuse"]'); await shot('3c-session-after-edit');
+  await page.click('.name-link'); await shot('3d-student');
   await page.click('[data-go="review"]'); await shot('5-questions');
   await page.click('[data-go="followups"]'); await shot('6-followups');
   await page.click('[data-go="reports"]'); await shot('7-weekly-report');

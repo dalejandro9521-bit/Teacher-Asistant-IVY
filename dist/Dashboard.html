@@ -181,6 +181,46 @@
   .wkbtn .now { display: inline-block; font-size: 10px; font-weight: 700; color: var(--brand2); }
   .wkbtn.on .now { color: #fff; }
   .report { padding: 28px 34px; }
+  /* to-do */
+  .todo { padding: 4px 0; }
+  .task { display: grid; grid-template-columns: 34px 1fr auto; gap: 12px; align-items: center; padding: 12px 18px; border-bottom: 1px solid #f0f2f4; cursor: pointer; }
+  .task:last-child { border-bottom: 0; }
+  .task:hover { background: #fafbfc; }
+  .task .ic { width: 34px; height: 34px; border-radius: 9px; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 15px; }
+  .task.question .ic { background: var(--warn-bg); color: var(--warn); }
+  .task.load .ic { background: var(--a-bg); color: var(--a); }
+  .task.followup .ic { background: var(--brand-soft); color: var(--brand2); }
+  .task.excuse .ic { background: var(--e-bg); color: var(--e); }
+  .task.populi .ic { background: #f0ebfa; color: #6b3fa0; }
+  .task b { font-weight: 600; }
+  .alldone { padding: 22px; text-align: center; color: var(--p); font-weight: 600; }
+  /* week tiles */
+  .wtiles { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; }
+  .wt { padding: 12px 14px; cursor: pointer; border-left: 4px solid var(--line); }
+  .wt:hover { border-color: var(--brand2); }
+  .wt.ok { border-left-color: var(--p); } .wt.missing { border-left-color: var(--a); } .wt.future { opacity: .55; }
+  .wt b { display: block; } .wt .small { margin-top: 3px; }
+  /* quick status buttons */
+  .pick { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .pick button { border: 0; background: #fff; width: 32px; height: 28px; font-weight: 700; font-size: 12px; color: #9aa5b1; }
+  .pick button + button { border-left: 1px solid var(--line); }
+  .pick button:hover { background: #f5f7fa; color: var(--ink); }
+  .pick button.on.P { background: var(--p-bg); color: var(--p); } .pick button.on.T { background: var(--t-bg); color: var(--t); }
+  .pick button.on.A { background: var(--a-bg); color: var(--a); } .pick button.on.E { background: var(--e-bg); color: var(--e); }
+  .flag { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 10px; margin: 1px 3px 1px 0; background: #eef1f4; color: var(--ink2); white-space: nowrap; }
+  .flag.a { background: var(--a-bg); color: var(--a); } .flag.e { background: var(--e-bg); color: var(--e); } .flag.w { background: var(--warn-bg); color: var(--warn); }
+  .more { border: 0; background: transparent; width: 30px; height: 28px; border-radius: 6px; color: var(--ink2); font-size: 18px; line-height: 1; }
+  .more:hover { background: #eef1f4; }
+  .menu { position: fixed; z-index: 70; background: #fff; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.14); padding: 6px; min-width: 250px; display: none; }
+  .menu.on { display: block; }
+  .menu button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: 6px; }
+  .menu button:hover { background: #f5f7fa; }
+  .menu .sep { height: 1px; background: var(--line); margin: 5px 4px; }
+  .menu .h { font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--ink3); padding: 6px 10px 2px; }
+  .actionbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 14px 0; }
+  .name-link { cursor: pointer; }
+  .name-link:hover { color: var(--brand2); text-decoration: underline; }
+  .changed { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 13px; }
   .report table { width: auto; }
 </style>
 </head>
@@ -191,6 +231,7 @@
 </div>
 <div class="loading" id="loading"></div>
 <div class="toast" id="toast"></div>
+<div class="menu" id="menu"></div>
 
 <script>
 /* ---------- helpers ---------- */
@@ -249,7 +290,7 @@ function renderNav() {
   h += item('reports', 'Weekly reports', '', '');
   h += '<div class="nav-h">Classes</div>';
   o.classes.forEach(function (c) {
-    var on = (S.view === 'class' || S.view === 'session') && S.classId === c.id;
+    var on = (S.view === 'class' || S.view === 'session' || S.view === 'student') && S.classId === c.id;
     h += '<button class="nav-i' + (on ? ' on' : '') + '" data-go="class" data-class="' + esc(c.id) + '"><span>' + esc(c.course.split(':')[0]) +
       '<small>' + esc(c.day) + ' · ' + esc(c.time) + '</small></span>' + (c.questions ? '<span class="badge alert">' + c.questions + '</span>' : '') + '</button>';
   });
@@ -262,7 +303,12 @@ function renderNav() {
 }
 document.addEventListener('click', function (e) {
   var b = e.target.closest('[data-go]');
-  if (b) { go(b.getAttribute('data-go'), { classId: b.getAttribute('data-class') || S.classId, date: b.getAttribute('data-date') || S.date }); return; }
+  if (!e.target.closest('#menu') && !e.target.closest('[data-act="menu"]')) $('menu').classList.remove('on');
+  if (b) {
+    go(b.getAttribute('data-go'), { classId: b.getAttribute('data-class') || S.classId, date: b.getAttribute('data-date') || S.date,
+      studentId: b.getAttribute('data-sid') || S.studentId });
+    return;
+  }
   var a = e.target.closest('[data-act]');
   if (a && ACTIONS[a.getAttribute('data-act')]) ACTIONS[a.getAttribute('data-act')](a, e);
 });
@@ -270,7 +316,7 @@ document.addEventListener('click', function (e) {
 function render() {
   renderNav();
   $('main').innerHTML = '<div class="skeleton"></div>';
-  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity, reports: viewReports };
+  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity, reports: viewReports, student: viewStudent };
   (views[S.view] || viewHome)();
 }
 function refreshOverview() {
@@ -285,7 +331,9 @@ function viewHome() {
     var h = '<div class="row"><div><h1>Good ' + greeting() + ', Diego</h1><p class="sub">' + (o.week ? 'Week ' + o.week + ' of 10 · ' : '') + esc(longToday(o.today)) + '</p></div><div class="spacer"></div>' +
       (o.inboxUrl ? '<a class="btn" href="' + esc(o.inboxUrl) + '" target="_blank">Open TA Inbox</a>' : '') +
       '<button class="btn primary" data-act="process">Process inbox now</button></div>';
-    h += '<div class="kpis">' +
+    h += '<h2 style="margin-top:6px">To do' + (o.tasks.length ? ' <span class="muted small">(' + o.tasks.length + ')</span>' : '') + '</h2><div class="card todo">' +
+      (o.tasks.length ? o.tasks.map(taskRow).join('') : '<div class="alldone">✓ All caught up. Nothing pending.</div>') + '</div>';
+    h += '<h2>At a glance</h2><div class="kpis">' +
       kpi(o.openQuestions, 'Names to confirm', o.openQuestions ? 'warn' : '', 'review') +
       kpi(o.pendingFollowups, 'Follow-ups to send in Populi', o.pendingFollowups ? 'warn' : '', 'followups') +
       kpi(limit, 'Students with no absences left', limit ? 'warn' : '', '') +
@@ -299,6 +347,13 @@ function viewHome() {
   function kpi(n, label, cls, go) {
     return '<div class="card kpi ' + cls + (go ? ' click' : '') + '"' + (go ? ' data-go="' + go + '"' : '') + '><div class="n">' + n + '</div><div class="l">' + label + '</div></div>';
   }
+}
+function taskRow(t) {
+  var icon = { question: '?', load: '!', followup: '✉', excuse: '+', populi: '☑' }[t.type] || '•';
+  var g = t.go || {};
+  return '<div class="task ' + t.type + '" data-go="' + esc(g.view || 'home') + '"' + (g.classId ? ' data-class="' + esc(g.classId) + '"' : '') +
+    (g.date ? ' data-date="' + esc(g.date) + '"' : '') + (g.studentId ? ' data-sid="' + esc(g.studentId) + '"' : '') + '>' +
+    '<span class="ic">' + icon + '</span><span><b>' + esc(t.text) + '</b><div class="small muted">' + esc(t.sub || '') + '</div></span><span class="btn sm">Open</span></div>';
 }
 function classCard(c) {
   var total = c.lastCounts.P + c.lastCounts.T + c.lastCounts.A + c.lastCounts.E;
@@ -338,14 +393,15 @@ function viewClass() {
     S.cls = d;
     var h = '<div class="crumbs"><a data-go="home">Home</a> / ' + esc(d.cls.course.split(':')[0]) + '</div>' +
       '<div class="row"><div><h1>' + esc(d.cls.course) + '</h1><p class="sub">' + esc(d.cls.day) + ' · ' + esc(d.cls.time) + ' · ' + modeChip(d.cls.mode) + ' · ' + d.students.length + ' students in Populi order</p></div></div>';
-    if (d.sessions.length) {
-      h += '<h2>Classes recorded</h2><div class="sessions">' + d.sessions.map(function (s) {
-        return '<div class="card sess" data-go="session" data-date="' + esc(s.date) + '"><b>Week ' + (s.week || '?') + ' · ' + esc(shortDate(s.date)) + '</b>' +
-          '<span class="small muted">Start ' + esc(s.start) + '</span>' + (s.questions ? ' <span class="chip warn">' + s.questions + ' to confirm</span>' : '') + '</div>';
-      }).join('') + '</div>';
-    } else {
-      h += '<div class="help">No attendance yet for this class. Drop the Populi export or the Zoom screenshot folder in TA Inbox, then press "Process inbox now" on Home.</div>';
-    }
+    h += '<h2>Weeks <span class="muted small">— click a week to see it, mark it, or fix it</span></h2><div class="wtiles">' + d.schedule.map(function (w) {
+      var cls = w.counts ? 'ok' : w.over ? 'missing' : 'future';
+      var info = w.counts ? '<span style="color:var(--p)">' + w.counts.P + ' P</span> · <span style="color:var(--t)">' + w.counts.T + ' T</span> · <span style="color:var(--a)">' + w.counts.A + ' A</span>'
+        : w.over ? '<span style="color:var(--a)">Not loaded yet</span>' : 'Upcoming';
+      var extra = (w.questions ? ' <span class="chip warn">' + w.questions + ' to confirm</span>' : '') +
+        (w.counts && /zoom/i.test(d.cls.mode) ? (w.populi ? ' <span class="chip good">Populi ✓</span>' : ' <span class="chip">Populi pending</span>') : '');
+      return '<div class="card wt ' + cls + '" data-go="session" data-date="' + esc(w.date) + '"><b>Week ' + w.week + ' · ' + esc(shortDate(w.date)) + '</b><div class="small">' + info + '</div>' +
+        (extra ? '<div style="margin-top:6px">' + extra + '</div>' : '') + '</div>';
+    }).join('') + '</div>';
     h += '<div class="toolbar"><input class="search" id="search" placeholder="Search a student…" value="' + esc(S.search) + '">' +
       '<div class="seg" id="seg">' + ['all', 'risk', 'absent'].map(function (f) {
         return '<button class="' + (S.filter === f ? 'on' : '') + '" data-act="filter" data-f="' + f + '">' + { all: 'Everyone', risk: 'At risk', absent: 'Missed a class' }[f] + '</button>';
@@ -368,7 +424,7 @@ function drawClassTable() {
     d.sessions.map(function (s) { return '<th class="num"><span class="wk" data-go="session" data-date="' + esc(s.date) + '">W' + (s.week || '?') + '<br><span class="muted">' + esc(shortDate(s.date)) + '</span></span></th>'; }).join('') +
     '<th class="num">Absences</th><th class="num">Tardies</th><th class="num">Counted</th><th class="num">Left</th><th class="num">Attendance</th><th>Status</th></tr></thead><tbody>';
   rows.forEach(function (s) {
-    h += '<tr><td class="sticky num muted">' + (s.order || '') + '</td><td class="sticky2"><b style="font-weight:500">' + esc(s.name) + '</b>' +
+    h += '<tr><td class="sticky num muted">' + (s.order || '') + '</td><td class="sticky2"><b style="font-weight:500" class="name-link" data-go="student" data-sid="' + esc(s.id) + '">' + esc(s.name) + '</b>' +
       (s.aliases && s.aliases.length ? '<div class="small muted">Zoom: ' + esc(s.aliases.join(', ')) + '</div>' : '') + '</td>' +
       s.weeks.map(function (w) { return '<td class="num">' + (w ? st(w.s, w.left, (LETTER_NAME[w.s] || '') + (w.note ? ' — ' + w.note : '')) : st('')) + '</td>'; }).join('') +
       '<td class="num">' + s.absences + '</td><td class="num">' + s.tardies + '</td><td class="num"><b>' + s.effective + '</b></td><td class="num">' + s.remaining + '</td>' +
@@ -378,37 +434,118 @@ function drawClassTable() {
   $('classTable').innerHTML = h + '</tbody></table>';
 }
 
-/* ---------- Session (one class, one date) ---------- */
+/* ---------- Session (one class, one date): see it, mark it, fix it ---------- */
 function viewSession() {
   call('apiSession', S.classId, S.date).then(function (d) {
     S.sess = d;
-    var c = { P: 0, T: 0, A: 0, E: 0, left: 0, none: 0 };
-    d.students.forEach(function (s) { var k = (s.status || '').charAt(0); if (k in c) c[k]++; else c.none++; if (s.left) c.left++; });
     var open = d.questions.filter(function (q) { return !q.Done; });
     var h = '<div class="crumbs"><a data-go="home">Home</a> / <a data-go="class" data-class="' + esc(d.cls.id) + '">' + esc(d.cls.course.split(':')[0]) + '</a> / ' + esc(shortDate(d.date)) + '</div>' +
-      '<div class="row"><div><h1>' + esc(d.label) + '</h1><p class="sub">' + esc(d.cls.course) + ' · ' + esc(d.source || 'No data yet') + '</p></div><div class="spacer"></div>' +
+      '<div class="row"><div><h1>' + (d.week ? 'Week ' + d.week + ' · ' : '') + esc(d.label) + '</h1><p class="sub">' + esc(d.cls.course) + ' · ' + esc(d.cls.time) + ' · ' +
+      esc(d.source || 'No attendance loaded yet') + '</p></div><div class="spacer"></div>' +
       '<div class="card pad startbox"><span class="small muted">Class really started at</span><input id="startIn" value="' + esc(d.start) + '"><button class="btn sm primary" data-act="saveStart">Save &amp; re-check</button>' +
       '<span class="small muted">(scheduled ' + esc(d.scheduled) + ')</span></div></div>';
-    h += '<div class="stats">' + stat('P', c.P, 'Present') + stat('T', c.T, 'Tardy') + stat('A', c.A, 'Absent') +
-      '<div class="card stat"><div class="n">' + c.left + '</div><div class="small muted">Disconnected before the end</div></div>' +
-      (open.length ? '<div class="card stat" style="border-color:#f5c26b"><div class="n" style="color:var(--warn)">' + open.length + '</div><div class="small muted">Names to confirm</div></div>' : '') + '</div>';
+    h += '<div class="stats" id="sessStats"></div>';
     if (open.length) {
       h += '<h2>Confirm these names <span class="muted small">— follow-ups for this class wait until you answer</span></h2>' + open.map(questionCard).join('');
     }
-    h += '<div class="two" style="margin-top:18px"><div class="card"><div class="tabs"><button class="on">Students (' + d.students.length + ')</button></div><div class="tbl-wrap" style="max-height:none">' + sessionTable(d) + '</div></div>';
-    h += '<div class="card" id="ocrCard">' + ocrPanel(d) + '</div></div>';
+    h += '<div class="actionbar">' +
+      '<button class="btn" data-act="bulk" data-s="Present">Mark everyone without a status Present</button>' +
+      '<button class="btn" data-act="bulk" data-s="Absent">… Absent</button><div class="spacer"></div>' +
+      (d.zoom ? (d.populi ? '<span class="chip good">Populi boxes ticked ✓</span><button class="btn sm ghost" data-act="populi" data-v="">Undo</button>'
+        : '<button class="btn" data-act="populi" data-v="1">Done in Populi ☑</button>') : '') +
+      '<button class="btn primary" data-act="finish">Done — prepare follow-ups</button></div>';
+    var students = '<div class="card"><div class="tabs"><button class="on">Students in Populi order (' + d.students.length + ')</button></div><div class="tbl-wrap" style="max-height:none" id="sessTable"></div></div>';
+    h += students;
+    if (d.ocr) h += '<h2>What the screenshots said <span class="muted small">— use this to check that the screenshots are read well</span></h2><div class="card" id="ocrCard">' + ocrPanel(d) + '</div>';
     $('main').innerHTML = h;
+    drawSession();
   });
+}
+function drawSession() {
+  var d = S.sess, c = { P: 0, T: 0, A: 0, E: 0, left: 0, none: 0 };
+  d.students.forEach(function (s) { var k = letterOf(s); if (k in c) c[k]++; else c.none++; if (s.left) c.left++; });
+  $('sessStats').innerHTML = stat('P', c.P, 'Present') + stat('T', c.T, 'Tardy') + stat('A', c.A, 'Absent') + (c.E ? stat('E', c.E, 'Excused') : '') +
+    '<div class="card stat"><div class="n">' + c.left + '</div><div class="small muted">Left / disconnected early</div></div>' +
+    (c.none ? '<div class="card stat" style="border-color:#f5c26b"><div class="n" style="color:var(--warn)">' + c.none + '</div><div class="small muted">No status yet</div></div>' : '');
+  var h = '<table><thead><tr><th class="num">#</th><th>Student</th><th>Status</th><th>Flags</th><th>Why</th><th></th></tr></thead><tbody>';
+  d.students.forEach(function (s, i) {
+    var k = letterOf(s);
+    h += '<tr><td class="num muted">' + (s.order || '') + '</td><td style="white-space:nowrap"><span class="name-link" data-go="student" data-sid="' + esc(s.id) + '">' + esc(s.name) + '</span></td>' +
+      '<td>' + picker(k, s.id, d.date) + '</td><td>' + flags(s) + '</td><td class="note">' + esc(s.notes || '') + '</td>' +
+      '<td><button class="more" data-act="menu" data-sid="' + esc(s.id) + '" data-date="' + esc(d.date) + '" title="More">⋯</button></td></tr>';
+  });
+  $('sessTable').innerHTML = h + '</tbody></table>';
   function stat(k, n, l) { return '<div class="card stat ' + k + '"><div class="n">' + n + '</div><div class="small muted">' + l + '</div></div>'; }
 }
-function sessionTable(d) {
-  var h = '<table><thead><tr><th class="num">#</th><th>Student</th><th class="num">Result</th><th>Why</th></tr></thead><tbody>';
-  d.students.forEach(function (s) {
-    var k = (s.status || '').charAt(0);
-    h += '<tr><td class="num muted">' + (s.order || '') + '</td><td style="white-space:nowrap">' + esc(s.name) + '</td><td class="num">' + st(k, s.left) + '</td><td class="note">' + esc(s.notes || (k === 'P' ? '' : s.source || '')) + '</td></tr>';
-  });
-  return h + '</tbody></table>';
+function letterOf(s) { return /^accepted$/i.test(s.excuse || '') ? 'E' : String(s.status || '').charAt(0); }
+function picker(k, sid, date) {
+  return '<span class="pick">' + ['P', 'T', 'A', 'E'].map(function (x) {
+    return '<button class="' + x + (k === x ? ' on' : '') + '" title="' + LETTER_NAME[x] + '" data-act="rec" data-sid="' + esc(sid) + '" data-date="' + esc(date) +
+      '" data-change=\'' + JSON.stringify({ status: LETTER_NAME[x] }) + '\'>' + x + '</button>';
+  }).join('') + '</span>';
 }
+function flags(s) {
+  var f = '';
+  if (s.left) f += '<span class="flag a">Left early</span>';
+  if (s.noId) f += '<span class="flag w">No ID</span>';
+  if (/^received$/i.test(s.excuse || '')) f += '<span class="flag e">Excuse received</span>';
+  if (/^accepted$/i.test(s.excuse || '')) f += '<span class="flag e">Excuse accepted</span>';
+  if (/^rejected$/i.test(s.excuse || '')) f += '<span class="flag a">Excuse rejected</span>';
+  return f;
+}
+function openMenu(btn) {
+  var sid = btn.getAttribute('data-sid'), date = btn.getAttribute('data-date');
+  var s = findStudentRec(sid, date) || {};
+  var item = function (label, change) {
+    return '<button data-act="rec" data-sid="' + esc(sid) + '" data-date="' + esc(date) + '" data-change=\'' + JSON.stringify(change) + '\'>' + label + '</button>';
+  };
+  var h = '<div class="h">Attendance</div>' +
+    item(s.left ? '↩ Did not leave early' : '↗ Left before the end (Absent)', { leftEarly: !s.left }) +
+    item(s.noId ? 'Had the ID after all' : 'Came without ID', { noId: !s.noId }) +
+    '<div class="sep"></div><div class="h">Medical excuse</div>' +
+    item('📄 Excuse received (office will verify)', { excuse: 'Received' }) +
+    item('✓ Office accepted the excuse', { excuse: 'Accepted' }) +
+    item('✕ Office rejected the excuse', { excuse: 'Rejected' }) +
+    (s.excuse ? item('Clear the excuse', { excuse: '' }) : '') +
+    '<div class="sep"></div><div class="h">Office</div>' +
+    item('Office changed it to Present', { office: 'Present' });
+  var m = $('menu'), r = btn.getBoundingClientRect();
+  m.innerHTML = h; m.classList.add('on');
+  var top = Math.min(r.bottom + 4, window.innerHeight - m.offsetHeight - 10);
+  m.style.top = top + 'px'; m.style.left = Math.max(10, r.right - m.offsetWidth) + 'px';
+}
+function findStudentRec(sid, date) {
+  if (S.view === 'session' && S.sess) return S.sess.students.filter(function (x) { return x.id === sid; })[0];
+  if (S.view === 'student' && S.stu) { var w = S.stu.weeks.filter(function (x) { return x.date === date; })[0]; return w && w.rec ? w.rec : {}; }
+  return null;
+}
+
+/* ---------- Student ---------- */
+function viewStudent() {
+  call('apiStudent', S.classId, S.studentId).then(function (d) {
+    S.stu = d;
+    var t = d.tally;
+    var h = '<div class="crumbs"><a data-go="home">Home</a> / <a data-go="class" data-class="' + esc(d.cls.id) + '">' + esc(d.cls.course.split(':')[0]) + '</a> / ' + esc(d.student.name) + '</div>' +
+      '<div class="row"><div><h1>' + esc(d.student.name) + ' <span class="muted" style="font-weight:500">#' + (d.student.order || '?') + '</span></h1>' +
+      '<p class="sub">' + esc(d.cls.course) + ' · ' + esc(d.student.email || 'no email') + (d.student.aliases && d.student.aliases.length ? ' · Zoom: ' + esc(d.student.aliases.join(', ')) : '') + '</p></div>' +
+      '<div class="spacer"></div>' + stateChip(t.state, t.stateLabel) + '</div>';
+    h += '<div class="stats"><div class="card stat A"><div class="n">' + t.effective + '</div><div class="small muted">Counted absences (of 2)</div></div>' +
+      '<div class="card stat"><div class="n">' + t.remaining + '</div><div class="small muted">Absences left</div></div>' +
+      '<div class="card stat T"><div class="n">' + t.tardies + '</div><div class="small muted">Tardies (3 = 1 absence)</div></div>' +
+      '<div class="card stat P"><div class="n">' + t.pct + '%</div><div class="small muted">Attendance</div></div>' +
+      (t.excused ? '<div class="card stat"><div class="n" style="color:var(--e)">' + t.excused + '</div><div class="small muted">Excused</div></div>' : '') + '</div>';
+    h += '<h2>Week by week</h2><div class="card"><table><thead><tr><th>Week</th><th>Date</th><th>Status</th><th>Flags</th><th>Notes</th><th>Follow-up</th><th></th></tr></thead><tbody>';
+    d.weeks.forEach(function (w) {
+      var r = w.rec || {}, k = w.rec ? letterOf(r) : '';
+      h += '<tr' + (w.future && !w.rec ? ' style="opacity:.5"' : '') + '><td>Week ' + w.week + '</td><td><span class="wk" data-go="session" data-date="' + esc(w.date) + '">' + esc(shortDate(w.date)) + '</span></td>' +
+        '<td>' + (w.future && !w.rec ? '<span class="muted small">Upcoming</span>' : picker(k, d.student.id, w.date)) + '</td><td>' + flags(r) + '</td><td class="note">' + esc(r.notes || '') + '</td>' +
+        '<td class="note">' + esc(r.notified ? r.notified.split(' · ').slice(0, 2).join(' · ') : '') + '</td>' +
+        '<td>' + (w.future && !w.rec ? '' : '<button class="more" data-act="menu" data-sid="' + esc(d.student.id) + '" data-date="' + esc(w.date) + '">⋯</button>') + '</td></tr>';
+    });
+    $('main').innerHTML = h + '</tbody></table></div>';
+  });
+}
+
 function ocrPanel(d) {
   if (!d.ocr) {
     return '<div class="tabs"><button class="on">What the screenshots said</button></div><div class="empty"><b>No screenshot text for this class</b>' +
@@ -482,6 +619,8 @@ function viewFollowups() {
         '<div class="row"><b style="font-weight:600">' + esc(f.Subject) + '</b><div class="spacer"></div>' +
         '<button class="btn sm" data-act="copy" data-what="Subject" data-text="' + esc(f.Subject) + '">Copy subject</button>' +
         '<button class="btn sm" data-act="copy" data-what="Message" data-text="' + esc(f.Message) + '">Copy message</button></div>' +
+        (f.changed && f.changed.length ? '<div class="changed"><b>Changed after this was written:</b> ' + f.changed.map(function (c) { return esc(c.name) + ' is now ' + esc(c.now); }).join(', ') +
+          '. Do not include them when you send it.</div>' : '') +
         '<pre>' + esc(f.Message) + '</pre>' +
         '<div class="vis"><span class="small muted">Visibility:</span>' + vis.map(function (v) { return '<span class="chip">☑ ' + esc(v) + '</span>'; }).join('') + '</div></div>';
     });
@@ -556,6 +695,36 @@ var ACTIONS = {
     call('apiFollowupDone', +b.getAttribute('data-row')).then(function () { toast('Marked as sent'); refreshOverview(); viewFollowups(); });
   },
   copy: function (b) { copy(b.getAttribute('data-text'), b.getAttribute('data-what')); },
+  menu: function (b) { openMenu(b); },
+  rec: function (b) {
+    $('menu').classList.remove('on');
+    var sid = b.getAttribute('data-sid'), date = b.getAttribute('data-date'), change = JSON.parse(b.getAttribute('data-change'));
+    call('apiSetRecord', S.classId, date, sid, change).then(function (r) {
+      if (S.view === 'session') {
+        var s = S.sess.students.filter(function (x) { return x.id === sid; })[0];
+        Object.assign(s, { status: r.status, left: r.left, noId: r.noId, excuse: r.excuse, notes: r.notes });
+        drawSession();
+      } else if (S.view === 'student') { viewStudent(); }
+      toast('Saved · now ' + r.effective + ' counted absence' + (r.effective === 1 ? '' : 's') + ', ' + r.pct + '% (' + r.stateLabel + ')');
+    });
+  },
+  bulk: function (b) {
+    var st = b.getAttribute('data-s');
+    call('apiBulkStatus', S.classId, S.date, st).then(function (r) { toast(r.changed + ' student(s) marked ' + st); viewSession(); });
+  },
+  finish: function (b) {
+    var none = S.sess.students.filter(function (s) { return !letterOf(s); }).length;
+    if (none && !confirm(none + ' student(s) still have no status. They will count as absent if the class is closed. Continue?')) return;
+    b.disabled = true; b.textContent = 'Preparing…';
+    call('apiFinishSession', S.classId, S.date).then(function (r) {
+      toast(r.busy ? 'Busy, try again in a minute.' : (r.sent ? r.sent + ' follow-up(s) ready in Follow-ups.' : 'Saved. No new follow-ups.'));
+      refreshOverview(); viewSession();
+    }, function () { b.disabled = false; b.textContent = 'Done — prepare follow-ups'; });
+  },
+  populi: function (b) {
+    var v = !!b.getAttribute('data-v');
+    call('apiPopuliDone', S.classId, S.date, v).then(function () { toast(v ? 'Marked as done in Populi' : 'Unmarked'); refreshOverview(); viewSession(); });
+  },
   pickWeek: function (b) {
     S.reportWeek = +b.getAttribute('data-w');
     document.querySelectorAll('.wkbtn').forEach(function (x) { x.classList.toggle('on', x === b); });

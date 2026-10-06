@@ -58,7 +58,32 @@ Con [clasp](https://github.com/google/clasp) también puedes subir el código co
 
 ## El panel
 
-**TA Attendance → Open dashboard** abre un panel con todo en un solo lugar:
+**TA Attendance → Open dashboard** abre un panel con todo en un solo lugar.
+
+**Home empieza con tu lista "To do"**, que se arma sola:
+- clases que ya pasaron sin asistencia cargada;
+- nombres por confirmar;
+- follow-ups por enviar en Populi;
+- excusas médicas de más de 7 días sin respuesta de la oficina;
+- clases de Zoom cuyas casillas de participación faltan en Populi.
+
+Un clic te lleva a donde se resuelve cada una.
+
+**Tomar o corregir una semana (ideal para las presenciales):** abre la clase y haz clic en la semana. Cada estudiante tiene botones
+**P / T / A / E**. Marca las excepciones y luego "Mark everyone without a status Present". Al terminar, presiona **Done — prepare follow-ups**.
+El botón **⋯** de cada estudiante permite:
+- marcar que se fue antes o que llegó sin ID;
+- registrar **Excuse received**, **Office accepted** u **Office rejected**;
+- registrar **Office changed it to Present**.
+
+Todo queda anotado con la fecha.
+
+**Ficha del estudiante:** haz clic en un nombre para ver sus 10 semanas, sus totales y las notas, y para corregir cualquier semana.
+
+**Follow-ups seguros:** si después de preparar un correo cambias el estado de un estudiante (por ejemplo, la oficina lo pasó a Present),
+el follow-up muestra un aviso para que no lo incluyas.
+
+El resto del panel:
 - **Home**: tus clases, la última asistencia de cada una, y qué necesita atención (nombres por confirmar, follow-ups por enviar, estudiantes en riesgo).
 - **Clase**: los estudiantes en el orden de Populi, con una columna por semana (P/T/A/E en colores) y sus totales. Tiene buscador y filtros.
 - **Una clase en una fecha**: el resultado de cada estudiante con el motivo, la **hora real de inicio** editable (se recalcula sola) y, para Zoom,

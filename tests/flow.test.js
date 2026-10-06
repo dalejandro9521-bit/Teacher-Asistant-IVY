@@ -554,3 +554,95 @@ test('weekly reports for any week: picker, report with totals as of that week, e
   assert.equal(env.mail.sent.length, 2);
   assert.match(env.mail.sent[1].body, /Week of Monday, October 12, 2026/);
 });
+
+test('to-do list, quick marking of an on-campus class, excuses, office changes, stale follow-ups, student history', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const j = x => JSON.parse(JSON.stringify(x));
+  // HA 103 (C1, Monday 9–1, in person) with 4 students
+  env.sheet('Students').appendRow(['201', 'Ana Uno', 'a@ivy.edu', 'C1', 'Yes', '1']);
+  env.sheet('Students').appendRow(['202', 'Beto Dos', 'b@ivy.edu', 'C1', 'Yes', '2']);
+  env.sheet('Students').appendRow(['203', 'Caro Tres', 'c@ivy.edu', 'C1', 'Yes', '3']);
+  env.sheet('Students').appendRow(['204', 'Dani Cuatro', 'd@ivy.edu', 'C1', 'Yes', '4']);
+  env.setNow('2026-10-05T18:00:00Z'); // Monday 2 PM: HA 103 (9–1) is over
+
+  // The class schedule: week 1 = Monday Oct 5, week 10 = Dec 7
+  const cl = j(env.gas.apiClass('C1'));
+  assert.deepEqual([cl.schedule[0].date, cl.schedule[9].date, cl.schedule[0].over, cl.schedule[1].over], ['2026-10-05', '2026-12-07', true, false]);
+  const c4 = j(env.gas.apiClass('C4'));
+  assert.equal(c4.schedule[0].date, '2026-10-08'); // Thursday class
+
+  // Nothing loaded yet → it's on the to-do list
+  let tasks = j(env.gas.apiOverview()).tasks;
+  const load = tasks.find(t => t.type === 'load' && t.go.classId === 'C1');
+  assert.ok(load, 'missing attendance is a task');
+  assert.match(load.text, /Load attendance · ENG 111 · Week 1/);
+  assert.ok(!tasks.some(t => t.type === 'load' && t.go.classId === 'C3'), 'the evening class is not over yet');
+
+  // Quick marking: two exceptions, then everyone else Present
+  env.gas.apiSetRecord('C1', '2026-10-05', '202', { status: 'Absent' });
+  const r = env.gas.apiSetRecord('C1', '2026-10-05', '203', { status: 'Tardy' });
+  assert.equal(r.status, 'Tardy');
+  assert.equal(env.gas.apiBulkStatus('C1', '2026-10-05', 'Present').changed, 2);
+  const sess = j(env.gas.apiSession('C1', '2026-10-05'));
+  assert.deepEqual(sess.students.map(s => s.status), ['Present', 'Absent', 'Tardy', 'Present']);
+  assert.ok(!j(env.gas.apiOverview()).tasks.some(t => t.type === 'load' && t.go.classId === 'C1'), 'loaded → off the list');
+
+  // Done → follow-ups are prepared right away
+  const fin = env.gas.apiFinishSession('C1', '2026-10-05');
+  assert.equal(fin.sent, 2);
+  assert.equal(j(env.gas.apiFollowups()).length, 2);
+  assert.ok(j(env.gas.apiOverview()).tasks.some(t => t.type === 'followup'));
+
+  // The office changes Beto to Present → the pending follow-up warns not to send it to him
+  const o = env.gas.apiSetRecord('C1', '2026-10-05', '202', { office: 'Present' });
+  assert.equal(o.status, 'Present');
+  assert.match(o.notes, /Changed to Present by the office/);
+  const fus = j(env.gas.apiFollowups());
+  const abs = fus.find(f => f.Type === 'Student Absent');
+  assert.deepEqual(abs.changed, [{ name: 'Beto Dos', now: 'Present' }]);
+
+  // Medical excuse: received → after 7 days it's a task → accepted → counts as excused
+  env.gas.apiSetRecord('C1', '2026-10-05', '203', { leftEarly: true });   // Caro left early → Absent
+  const rec = env.gas.apiSetRecord('C1', '2026-10-05', '203', { excuse: 'Received' });
+  assert.equal(rec.excuse, 'Received');
+  assert.equal(env.row('2026-10-05', 'C1', '203')['Excuse date'], '2026-10-05');
+  env.setNow('2026-10-14T15:00:00Z');
+  tasks = j(env.gas.apiOverview()).tasks;
+  const ex = tasks.find(t => t.type === 'excuse');
+  assert.match(ex.text, /Ask the office about Caro Tres's medical excuse/);
+  assert.equal(ex.go.view, 'student');
+  const acc = env.gas.apiSetRecord('C1', '2026-10-05', '203', { excuse: 'Accepted' });
+  assert.equal(acc.effective, 0);
+  assert.match(acc.notes, /Office accepted the medical excuse/);
+  assert.ok(!j(env.gas.apiOverview()).tasks.some(t => t.type === 'excuse'));
+
+  // Student history, week by week
+  const st = j(env.gas.apiStudent('C1', '203'));
+  assert.equal(st.weeks.length, 10);
+  assert.equal(st.weeks[0].rec.excuse, 'Accepted');
+  assert.equal(st.weeks[0].rec.left, true);
+  assert.equal(st.weeks[1].rec, null);
+  assert.equal(st.tally.excused, 1);
+
+  // No ID flag from the dashboard
+  env.gas.apiSetRecord('C1', '2026-10-05', '201', { noId: true });
+  assert.equal(env.row('2026-10-05', 'C1', '201')['No ID'], 'Yes');
+});
+
+test('Zoom class: "Done in Populi" task until ticked; old sheets get new columns on their own', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const j = x => JSON.parse(JSON.stringify(x));
+  // An older Sessions sheet without the "Populi updated" column
+  const ss = env.sheet('Sessions');
+  ss.data[0] = ss.data[0].filter(h => h !== 'Populi updated');
+  env.sheet('Attendance').appendRow(['2026-10-05', 'C3', '1001', 'Ana Maria Lopez', 'Present', '', 'Zoom screenshots']);
+  ss.appendRow(['C3', '2026-10-05', '6:00 PM', '', 'Zoom screenshots', 'x', '6:00 PM', '0']);
+  env.setNow('2026-10-06T14:00:00Z');
+  let tasks = j(env.gas.apiOverview()).tasks;
+  assert.ok(ss.data[0].includes('Populi updated'), 'column added');
+  assert.ok(tasks.some(t => t.type === 'populi' && t.go.classId === 'C3'));
+  env.gas.apiPopuliDone('C3', '2026-10-05', true);
+  tasks = j(env.gas.apiOverview()).tasks;
+  assert.ok(!tasks.some(t => t.type === 'populi'));
+  assert.ok(j(env.gas.apiSession('C3', '2026-10-05')).populi);
+});

@@ -1055,7 +1055,7 @@ var SHEETS = {
   'Follow-ups': ['Created', 'Type', 'Class', 'Class date', 'Roster #', 'Students', 'Count', 'Subject', 'Message',
     'Visibility (check in Populi)', 'Done'],
   Sessions: ['Class ID', 'Date', 'Scheduled start', 'Actual start', 'Source', 'Source ID', 'Processed with start',
-    'Open questions', 'Updated'],
+    'Open questions', 'Populi updated', 'Updated'],
   Review: ['Created', 'Class ID', 'Date', 'Name seen', 'Seen in', 'Suggestions', 'Student (# or name, or "ignore")', 'Done', 'Notes'],
   Outbox: ['Time', 'Type', 'To', 'Subject', 'Mode', 'Body'],
   'Inbox log': ['Time', 'File', 'Kind', 'Class', 'Dates', 'Result']
@@ -1972,7 +1972,7 @@ function apiOverview() {
   var fu = table_('Follow-ups');
   var log = table_('Inbox log');
   return {
-    today: today_(), week: termWeek(today_(), ctx.cfg.termStart), mode: mode_(ctx.cfg), classes: classes,
+    today: today_(), week: termWeek(today_(), ctx.cfg.termStart), mode: mode_(ctx.cfg), classes: classes, tasks: tasks_(ctx),
     pendingFollowups: fu.rows.filter(function (r) { return !fu.get(r, 'Done'); }).length,
     openQuestions: ctx.revT.rows.filter(function (r) { return !ctx.revT.get(r, 'Done'); }).length,
     log: rowsOf_(log).slice(-15).reverse(),
@@ -1995,8 +1995,19 @@ function apiClass(classId) {
     if (att.get(r, 'Class ID') !== cls.id) return;
     notes[att.get(r, 'Student ID') + '|' + parseDateCell(att.get(r, 'Date'), yearOf_(ctx))] = att.get(r, 'Notes');
   });
+  var counts = {};
+  recs.forEach(function (r) {
+    var k = /^accepted$/i.test(r.excuse) ? 'E' : (r.status || '').charAt(0);
+    var c = counts[r.date] || (counts[r.date] = { P: 0, T: 0, A: 0, E: 0 });
+    if (k in c) c[k]++;
+  });
   return {
     cls: classInfo_(cls),
+    schedule: classDates_(ctx, cls).map(function (d) {
+      var srow = sessionRow_(ctx, cls, d.date, false);
+      return { week: d.week, date: d.date, counts: counts[d.date] || null, over: classOver_(ctx, cls, d.date),
+        questions: openQuestions_(ctx, cls.id, d.date), populi: srow ? ctx.sessT.get(srow, 'Populi updated') : '' };
+    }),
     sessions: dates.map(function (d) {
       return { date: d, label: longDate(d), week: termWeek(d, ctx.cfg.termStart), start: minToLabel(sessionStart_(ctx, cls, d)),
         questions: openQuestions_(ctx, cls.id, d) };
@@ -2019,13 +2030,16 @@ function apiSession(classId, date) {
   att.rows.forEach(function (r) {
     if (att.get(r, 'Class ID') === cls.id && parseDateCell(att.get(r, 'Date'), y) === date) {
       byStudent[att.get(r, 'Student ID')] = { status: att.get(r, 'Status'), left: yes_(att.get(r, 'Left early')),
-        source: att.get(r, 'Source'), notes: att.get(r, 'Notes'), notified: att.get(r, 'Notified') };
+        source: att.get(r, 'Source'), notes: att.get(r, 'Notes'), notified: att.get(r, 'Notified'),
+        noId: yes_(att.get(r, 'No ID')), excuse: att.get(r, 'Excuse') };
     }
   });
   var roster = roster_(ctx, cls.id), srow = sessionRow_(ctx, cls, date, false), st = ctx.sessT;
   var out = {
     cls: classInfo_(cls), date: date, label: longDate(date), scheduled: minToLabel(cls.start),
     start: minToLabel(sessionStart_(ctx, cls, date)), source: srow ? st.get(srow, 'Source') : '',
+    populi: srow ? st.get(srow, 'Populi updated') : '', zoom: /zoom/i.test(cls.mode), over: classOver_(ctx, cls, date),
+    week: termWeek(date, ctx.cfg.termStart),
     students: roster.map(function (s) { return Object.assign({ id: s.id, order: s.order, name: s.name }, byStudent[s.id] || { status: '' }); }),
     questions: rowsOf_(ctx.revT).filter(function (q) { return q['Class ID'] === cls.id && parseDateCell(q.Date, y) === date; }),
     ocr: null
@@ -2080,8 +2094,25 @@ function apiSetStart(classId, date, text) {
   return res;
 }
 
+/** Pending follow-ups; each says if a student's status changed after it was written (don't send it as is). */
 function apiFollowups() {
-  return rowsOf_(table_('Follow-ups')).filter(function (f) { return !f.Done; });
+  var ctx = load_(), y = yearOf_(ctx);
+  return rowsOf_(table_('Follow-ups')).filter(function (f) { return !f.Done; }).map(function (f) {
+    var classId = String(f.Class || '').split(' · ')[0], date = parseDateCell(f['Class date'], y);
+    var want = /Tardy/.test(f.Type) ? STATUS.T : /Absent|LeftEarly/.test(f.Type) ? STATUS.A : '';
+    f.changed = [];
+    if (want && classId && date) {
+      var roster = roster_(ctx, classId);
+      String(f.Students || '').split(', ').forEach(function (name) {
+        var s = roster.filter(function (x) { return x.name === name; })[0];
+        if (!s) return;
+        var r = attRow_(ctx, classId, date, s.id);
+        var now = r ? (/^accepted$/i.test(ctx.att.get(r, 'Excuse')) ? STATUS.E : normalizeStatus(ctx.att.get(r, 'Status'))) : '';
+        if (now !== want) f.changed.push({ name: name, now: now || 'no status' });
+      });
+    }
+    return f;
+  });
 }
 
 function apiFollowupDone(row) {
@@ -2135,6 +2166,190 @@ function reportsFolder_(ctx) {
   return subfolder_(root, 'TA Reports');
 }
 
+/* ---------- to-do list, quick editing, student history ---------- */
+
+/** Date of the class in week N (its weekday inside that Monday–Sunday week). */
+function classDate_(ctx, cls, week) {
+  return numToDate(dayNum(weekStartOf_(ctx, week)) + ((dayIndex(cls.day) + 6) % 7));
+}
+
+function classDates_(ctx, cls) {
+  var out = [];
+  for (var w = 1; w <= rulesConfig_(ctx.cfg).totalSessions; w++) out.push({ week: w, date: classDate_(ctx, cls, w) });
+  return out;
+}
+
+/** Has this class on this date already ended (with 30 minutes of margin)? */
+function classOver_(ctx, cls, date) {
+  var today = today_();
+  if (date < today) return true;
+  if (date > today) return false;
+  var now = Utilities.formatDate(new Date(), tz_(), 'HH:mm');
+  return hmToMin(now) >= cls.end + 30;
+}
+
+function attRow_(ctx, classId, date, studentId) {
+  var t = ctx.att, y = yearOf_(ctx);
+  for (var i = 0; i < t.rows.length; i++) {
+    var r = t.rows[i];
+    if (t.get(r, 'Class ID') === classId && t.get(r, 'Student ID') === studentId && parseDateCell(t.get(r, 'Date'), y) === date) return r;
+  }
+  return null;
+}
+
+/** Everything that still needs Diego, most urgent first. */
+function tasks_(ctx) {
+  var out = [], y = yearOf_(ctx), today = today_(), recs = records_(ctx);
+  var c = rulesConfig_(ctx.cfg), have = {};
+  recs.forEach(function (r) { have[r.classId + '|' + r.date] = (have[r.classId + '|' + r.date] || 0) + 1; });
+  ctx.classes.filter(function (cls) { return cls.active; }).forEach(function (cls) {
+    var label = cls.course.split(':')[0];
+    classDates_(ctx, cls).forEach(function (d) {
+      if (d.date < (ctx.cfg.termStart || '') || !classOver_(ctx, cls, d.date) || have[cls.id + '|' + d.date]) return;
+      var zoom = /zoom/i.test(cls.mode);
+      out.push({ type: 'load', text: 'Load attendance · ' + label + ' · Week ' + d.week + ' (' + longDate(d.date).replace(/, \d{4}$/, '') + ')',
+        sub: zoom ? 'Drop the screenshot folder in TA Inbox, or mark it here.' : 'Mark it here in a minute, or drop the Populi export in TA Inbox.',
+        go: { view: 'session', classId: cls.id, date: d.date } });
+    });
+  });
+  var q = {};
+  ctx.revT.rows.forEach(function (r) {
+    if (ctx.revT.get(r, 'Done')) return;
+    var k = ctx.revT.get(r, 'Class ID') + '|' + parseDateCell(ctx.revT.get(r, 'Date'), y);
+    q[k] = (q[k] || 0) + 1;
+  });
+  Object.keys(q).forEach(function (k) {
+    var p = k.split('|'), cls = classById_(ctx, p[0]);
+    out.push({ type: 'question', text: 'Confirm ' + q[k] + ' name' + (q[k] === 1 ? '' : 's') + ' · ' + (cls ? cls.course.split(':')[0] : p[0]) + ' · ' + longDate(p[1]).replace(/, \d{4}$/, ''),
+      sub: 'Its follow-ups wait until you answer.', go: { view: 'session', classId: p[0], date: p[1] } });
+  });
+  var fu = table_('Follow-ups'), pend = fu.rows.filter(function (r) { return !fu.get(r, 'Done'); }).length;
+  if (pend) out.push({ type: 'followup', text: 'Send ' + pend + ' follow-up' + (pend === 1 ? '' : 's') + ' in Populi', sub: 'Copy, paste, check the 6 visibility boxes, send.', go: { view: 'followups' } });
+  ctx.att.rows.forEach(function (r) {
+    if (!/^received$/i.test(ctx.att.get(r, 'Excuse'))) return;
+    var got = parseDateCell(ctx.att.get(r, 'Excuse date'), y);
+    if (!got || dayNum(today) - dayNum(got) <= c.excuseReviewDays) return;
+    var cls = classById_(ctx, ctx.att.get(r, 'Class ID'));
+    out.push({ type: 'excuse', text: 'Ask the office about ' + ctx.att.get(r, 'Name') + '\'s medical excuse',
+      sub: (cls ? cls.course.split(':')[0] : '') + ' · class of ' + parseDateCell(ctx.att.get(r, 'Date'), y) + ' · received ' + got + ' (more than ' + c.excuseReviewDays + ' days)',
+      go: { view: 'student', classId: ctx.att.get(r, 'Class ID'), studentId: ctx.att.get(r, 'Student ID') } });
+  });
+  ctx.sessT.rows.forEach(function (r) {
+    var t = ctx.sessT, cls = classById_(ctx, t.get(r, 'Class ID'));
+    if (!cls || !/zoom/i.test(cls.mode) || t.get(r, 'Populi updated') || +t.get(r, 'Open questions')) return;
+    var date = parseDateCell(t.get(r, 'Date'), y);
+    if (!have[cls.id + '|' + date]) return;
+    out.push({ type: 'populi', text: 'Tick the participation boxes in Populi · ' + cls.course.split(':')[0] + ' · ' + longDate(date).replace(/, \d{4}$/, ''),
+      sub: 'Open the class in the dashboard: same order as Populi. Then press "Done in Populi".', go: { view: 'session', classId: cls.id, date: date } });
+  });
+  var order = { question: 0, load: 1, followup: 2, excuse: 3, populi: 4 };
+  return out.sort(function (a, b) { return order[a.type] - order[b.type]; });
+}
+
+/** Change one student's record for one class (quick editing from the dashboard). */
+function apiSetRecord(classId, date, studentId, change) {
+  var out;
+  withLock_(function () {
+    var ctx = load_(), t = ctx.att, cls = classById_(ctx, classId);
+    var s = ctx.students.filter(function (x) { return x.classId === classId && x.id === studentId; })[0];
+    if (!cls || !s) throw new Error('Student or class not found');
+    change = change || {};
+    var r = attRow_(ctx, classId, date, studentId), stamp = nowStr_(), day = today_();
+    if (!r) {
+      r = blankRow_(t); t.rows.push(r);
+      t.set(r, 'Date', date); t.set(r, 'Class ID', classId); t.set(r, 'Student ID', studentId);
+    }
+    t.set(r, 'Name', s.name);
+    var note = function (txt) { var n = t.get(r, 'Notes'); t.set(r, 'Notes', (n ? n + ' · ' : '') + txt); };
+    if (change.status !== undefined) {
+      t.set(r, 'Status', change.status);
+      if (change.status !== STATUS.A) t.set(r, 'Left early', '');
+      t.set(r, 'Source', 'Manual');
+    }
+    if (change.leftEarly !== undefined) {
+      t.set(r, 'Left early', change.leftEarly ? 'Yes' : '');
+      if (change.leftEarly) t.set(r, 'Status', STATUS.A);
+      t.set(r, 'Source', 'Manual');
+    }
+    if (change.noId !== undefined) t.set(r, 'No ID', change.noId ? 'Yes' : '');
+    if (change.excuse !== undefined) {
+      t.set(r, 'Excuse', change.excuse);
+      if (change.excuse === 'Received' && !t.get(r, 'Excuse date')) t.set(r, 'Excuse date', day);
+      if (change.excuse === 'Accepted') note('Office accepted the medical excuse (' + day + ')');
+      if (change.excuse === 'Rejected') note('Office rejected the medical excuse (' + day + ')');
+      if (!change.excuse) t.set(r, 'Excuse date', '');
+    }
+    if (change.office === 'Present') {
+      t.set(r, 'Status', STATUS.P); t.set(r, 'Left early', ''); t.set(r, 'Source', 'Manual');
+      note('Changed to Present by the office (' + day + ')');
+    }
+    if (change.note) note(change.note);
+    t.set(r, 'Updated', stamp);
+    save_(t);
+    var tl = tally(records_(ctx), ctx.cfg)[classId + '|' + studentId] || emptyTally(ctx.cfg);
+    out = { status: t.get(r, 'Status'), left: yes_(t.get(r, 'Left early')), noId: yes_(t.get(r, 'No ID')), excuse: t.get(r, 'Excuse'),
+      notes: t.get(r, 'Notes'), effective: tl.effective, remaining: Math.max(0, tl.remaining), pct: tl.pct, stateLabel: STATE_LABEL[tl.state], state: tl.state };
+  });
+  return out;
+}
+
+/** Give every student of the class who has no status yet on that date the same status (e.g. everyone else Present). */
+function apiBulkStatus(classId, date, status) {
+  var n = 0;
+  withLock_(function () {
+    var ctx = load_(), t = ctx.att;
+    roster_(ctx, classId).forEach(function (s) {
+      var r = attRow_(ctx, classId, date, s.id);
+      if (r && normalizeStatus(t.get(r, 'Status'))) return;
+      if (!r) { r = blankRow_(t); t.rows.push(r); t.set(r, 'Date', date); t.set(r, 'Class ID', classId); t.set(r, 'Student ID', s.id); }
+      t.set(r, 'Name', s.name); t.set(r, 'Status', status); t.set(r, 'Source', 'Manual'); t.set(r, 'Updated', nowStr_());
+      n++;
+    });
+    save_(t);
+  });
+  return { changed: n };
+}
+
+/** "Done with this class": prepare its follow-ups now (instead of waiting for the 15-minute job). */
+function apiFinishSession(classId, date) {
+  var res;
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId);
+    sessionRow_(ctx, cls, date, true);
+    save_(ctx.sessT);
+    res = runAll_(ctx);
+  });
+  return res || { busy: true };
+}
+
+function apiPopuliDone(classId, date, done) {
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId), row = sessionRow_(ctx, cls, date, true);
+    ctx.sessT.set(row, 'Populi updated', done ? nowStr_() : '');
+    save_(ctx.sessT);
+  });
+  return true;
+}
+
+/** One student in one class, week by week. */
+function apiStudent(classId, studentId) {
+  var ctx = load_(), cls = classById_(ctx, classId), y = yearOf_(ctx), t = ctx.att;
+  var s = ctx.students.filter(function (x) { return x.classId === classId && x.id === studentId; })[0];
+  if (!cls || !s) throw new Error('Student not found');
+  var tl = tally(records_(ctx), ctx.cfg)[classId + '|' + studentId] || emptyTally(ctx.cfg);
+  return {
+    cls: classInfo_(cls), student: { id: s.id, name: s.name, email: s.email, order: s.order, aliases: s.aliases },
+    tally: { absences: tl.absences, tardies: tl.tardies, excused: tl.excused, effective: tl.effective, remaining: Math.max(0, tl.remaining),
+      pct: tl.pct, state: tl.state, stateLabel: STATE_LABEL[tl.state] },
+    weeks: classDates_(ctx, cls).map(function (d) {
+      var r = attRow_(ctx, classId, d.date, studentId);
+      return { week: d.week, date: d.date, future: !classOver_(ctx, cls, d.date),
+        rec: r ? { status: t.get(r, 'Status'), left: yes_(t.get(r, 'Left early')), noId: yes_(t.get(r, 'No ID')), excuse: t.get(r, 'Excuse'),
+          excuseDate: parseDateCell(t.get(r, 'Excuse date'), y), notes: t.get(r, 'Notes'), notified: t.get(r, 'Notified'), source: t.get(r, 'Source') } : null };
+    })
+  };
+}
+
 function apiProcessNow() {
   var res;
   withLock_(function () { res = runAll_(load_()); });
@@ -2180,7 +2395,15 @@ function table_(name) {
   var sh = ss_().getSheetByName(name);
   if (!sh) throw new Error('Missing sheet "' + name + '". Run TA Attendance → Set up / repair sheets.');
   var vals = sh.getDataRange().getDisplayValues();
-  var header = vals[0] || [], col = {};
+  var header = vals[0] || [];
+  // After an update, new columns appear on their own (no need to run Set up again).
+  var missing = (SHEETS[name] || []).filter(function (h) { return header.indexOf(h) < 0; });
+  if (missing.length && header.some(String)) {
+    sh.getRange(1, header.length + 1, 1, missing.length).setValues([missing]);
+    header = header.concat(missing);
+  }
+  vals = vals.map(function (r) { while (r.length < header.length) r.push(''); return r; });
+  var col = {};
   header.forEach(function (h, i) { if (h && !(h in col)) col[h] = i; });
   return {
     sheet: sh, header: header, col: col,
