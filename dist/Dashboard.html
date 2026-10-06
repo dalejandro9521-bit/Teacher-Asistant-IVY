@@ -170,6 +170,18 @@
   .skeleton { height: 90px; border-radius: var(--radius); background: linear-gradient(90deg, #eef1f4, #f7f8fa, #eef1f4); background-size: 200% 100%; animation: load 1.2s linear infinite; }
   .help { background: var(--brand-soft); border-radius: 8px; padding: 10px 14px; color: var(--brand); font-size: 13px; margin-bottom: 14px; }
   .log td { font-size: 12px; }
+  .weeks { display: grid; grid-template-columns: repeat(10, 1fr); gap: 8px; margin-bottom: 16px; }
+  .wkbtn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 4px; text-align: center; color: var(--ink); }
+  .wkbtn b { display: block; font-size: 14px; }
+  .wkbtn span { font-size: 11px; color: var(--ink3); }
+  .wkbtn:hover { border-color: var(--brand2); }
+  .wkbtn.on { background: var(--brand2); border-color: var(--brand2); color: #fff; }
+  .wkbtn.on span { color: #dbe6f7; }
+  .wkbtn.future { opacity: .5; }
+  .wkbtn .now { display: inline-block; font-size: 10px; font-weight: 700; color: var(--brand2); }
+  .wkbtn.on .now { color: #fff; }
+  .report { padding: 28px 34px; }
+  .report table { width: auto; }
 </style>
 </head>
 <body>
@@ -234,6 +246,7 @@ function renderNav() {
   h += item('home', 'Home', '', '');
   h += item('review', 'Questions', o.openQuestions ? '<span class="badge alert">' + o.openQuestions + '</span>' : '', '');
   h += item('followups', 'Follow-ups', o.pendingFollowups ? '<span class="badge">' + o.pendingFollowups + '</span>' : '', '');
+  h += item('reports', 'Weekly reports', '', '');
   h += '<div class="nav-h">Classes</div>';
   o.classes.forEach(function (c) {
     var on = (S.view === 'class' || S.view === 'session') && S.classId === c.id;
@@ -257,7 +270,7 @@ document.addEventListener('click', function (e) {
 function render() {
   renderNav();
   $('main').innerHTML = '<div class="skeleton"></div>';
-  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity };
+  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity, reports: viewReports };
   (views[S.view] || viewHome)();
 }
 function refreshOverview() {
@@ -476,6 +489,32 @@ function viewFollowups() {
   });
 }
 
+/* ---------- Weekly reports ---------- */
+function viewReports() {
+  call('apiReportWeeks').then(function (d) {
+    S.weeks = d;
+    if (!S.reportWeek) S.reportWeek = d.current;
+    var h = '<h1>Weekly reports</h1><p class="sub">Pick a week to see its report: who was absent or tardy that week and who is losing the course, for every class. ' +
+      'It also goes to ' + esc(d.reportTo) + ' automatically every Friday morning.</p>';
+    h += '<div class="weeks">' + d.weeks.map(function (w) {
+      return '<button class="wkbtn' + (w.week === S.reportWeek ? ' on' : '') + (w.future ? ' future' : '') + '" data-act="pickWeek" data-w="' + w.week + '">' +
+        '<b>Week ' + w.week + '</b><span>' + esc(shortDate(w.start)) + ' – ' + esc(shortDate(w.end)) + '</span>' + (w.current ? '<br><span class="now">THIS WEEK</span>' : '') + '</button>';
+    }).join('') + '</div>';
+    h += '<div class="row" style="margin-bottom:12px"><div id="repTitle" class="muted"></div><div class="spacer"></div>' +
+      '<button class="btn" data-act="reportPdf">Save as PDF in Drive</button><button class="btn primary" data-act="reportSend">Email it to me</button></div>' +
+      '<div class="card report" id="report"><div class="skeleton"></div></div>';
+    $('main').innerHTML = h;
+    loadReport();
+  });
+}
+function loadReport() {
+  $('report').innerHTML = '<div class="skeleton"></div>';
+  call('apiWeeklyReport', S.reportWeek).then(function (r) {
+    $('repTitle').textContent = 'Week ' + r.week + ' · ' + longToday(r.start) + ' to ' + longToday(r.end);
+    $('report').innerHTML = r.html; // built on the server with every value escaped
+  });
+}
+
 /* ---------- Activity ---------- */
 function logTable(rows) {
   return '<table class="log"><thead><tr><th>When</th><th>File</th><th>Class</th><th>Result</th></tr></thead><tbody>' + rows.map(function (r) {
@@ -516,7 +555,25 @@ var ACTIONS = {
     b.disabled = true;
     call('apiFollowupDone', +b.getAttribute('data-row')).then(function () { toast('Marked as sent'); refreshOverview(); viewFollowups(); });
   },
-  copy: function (b) { copy(b.getAttribute('data-text'), b.getAttribute('data-what')); }
+  copy: function (b) { copy(b.getAttribute('data-text'), b.getAttribute('data-what')); },
+  pickWeek: function (b) {
+    S.reportWeek = +b.getAttribute('data-w');
+    document.querySelectorAll('.wkbtn').forEach(function (x) { x.classList.toggle('on', x === b); });
+    loadReport();
+  },
+  reportSend: function (b) {
+    b.disabled = true;
+    call('apiSendWeeklyReport', S.reportWeek).then(function (r) { b.disabled = false; toast('Week ' + S.reportWeek + ' report sent to ' + r.to); },
+      function () { b.disabled = false; });
+  },
+  reportPdf: function (b) {
+    b.disabled = true; b.textContent = 'Saving…';
+    call('apiSaveWeeklyReportPdf', S.reportWeek).then(function (r) {
+      b.disabled = false; b.textContent = 'Save as PDF in Drive';
+      toast('Saved in Drive → TA Reports');
+      window.open(r.url, '_blank');
+    }, function () { b.disabled = false; b.textContent = 'Save as PDF in Drive'; });
+  }
 };
 function answer(row, ans, b) {
   var card = b.closest('.q'); if (card) card.style.opacity = .5;

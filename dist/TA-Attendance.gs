@@ -943,7 +943,8 @@ function buildAssignmentReminder(p) {
  */
 function buildWeeklyReport(p) {
   var cfg = p.cfg || {}, c = rulesConfig_(cfg);
-  var totals = tally(p.records, cfg);
+  // Totals as they stood at the end of that week (so an old week's report stays the same later).
+  var totals = tally(p.records.filter(function (r) { return !r.date || r.date <= p.weekEnd; }), cfg);
   var html = ['<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222">',
     '<h2 style="margin:0 0 4px">Weekly attendance report</h2>',
     '<p style="margin:0 0 16px;color:#555">Week of ' + esc_(longDate(p.weekStart)) + ' – ' + esc_(longDate(p.weekEnd)) +
@@ -955,8 +956,11 @@ function buildWeeklyReport(p) {
 
   p.classes.forEach(function (cls) {
     var roster = p.students.filter(function (s) { return s.classId === cls.id; });
-    var nameOf = {};
-    roster.forEach(function (s) { nameOf[s.id] = s.name; });
+    var nameOf = {}, orderOf = {};
+    roster.forEach(function (s) { nameOf[s.id] = (s.order ? '#' + s.order + ' ' : '') + s.name; orderOf[s.id] = s.order || 1e6; });
+    var thisWeek = p.records.filter(function (r) { return r.classId === cls.id && r.date >= p.weekStart && r.date <= p.weekEnd; });
+    var wc = { P: 0, T: 0, A: 0, E: 0 };
+    thisWeek.forEach(function (r) { var k = /^accepted$/i.test(r.excuse || '') ? 'E' : String(r.status || '').charAt(0); if (k in wc) wc[k]++; });
     var week = p.records.filter(function (r) {
       return r.classId === cls.id && r.date >= p.weekStart && r.date <= p.weekEnd &&
         /^(absent|tardy)$/i.test(r.status) && !/^accepted$/i.test(r.excuse || '');
@@ -964,8 +968,8 @@ function buildWeeklyReport(p) {
     var risk = roster.map(function (s) {
       return { s: s, t: totals[cls.id + '|' + s.id] || emptyTally(cfg) };
     }).filter(function (x) { return x.t.state !== 'ok'; })
-      .sort(function (a, b) { return b.t.effective - a.t.effective || a.s.name.localeCompare(b.s.name); });
-    var pending = p.records.filter(function (r) { return r.classId === cls.id && /^received$/i.test(r.excuse || ''); });
+      .sort(function (a, b) { return b.t.effective - a.t.effective || (a.s.order || 1e6) - (b.s.order || 1e6) || a.s.name.localeCompare(b.s.name); });
+    var pending = p.records.filter(function (r) { return r.classId === cls.id && /^received$/i.test(r.excuse || '') && r.date <= p.weekEnd; });
     counts.missed += week.filter(function (r) { return /^absent$/i.test(r.status); }).length;
     counts.risk += risk.filter(function (x) { return x.t.state === 'failing'; }).length;
 
@@ -973,13 +977,21 @@ function buildWeeklyReport(p) {
       '<p style="margin:0 0 8px;color:#555">' + esc_(DAY_NAMES[dayIndex(cls.day)] || cls.day) + ' ' + esc_(classTime(cls)) +
       ' · ' + esc_(cls.mode || '') + (cls.professor ? ' · Prof. ' + esc_(cls.professor) : '') + ' · ' + roster.length + ' students</p>');
     text.push('== ' + classLabel(cls) + ' — ' + (DAY_NAMES[dayIndex(cls.day)] || cls.day) + ' ' + classTime(cls) + ' ==');
+    var summary = thisWeek.length ? wc.P + ' present · ' + wc.T + ' tardy · ' + wc.A + ' absent' + (wc.E ? ' · ' + wc.E + ' excused' : '')
+      : 'No attendance recorded for this week';
+    html.push('<p style="margin:0 0 8px"><b>This week:</b> ' + esc_(summary) + '</p>');
+    text.push('This week: ' + summary);
 
     html.push('<p style="margin:8px 0 4px"><b>Absent or tardy this week</b></p>');
     text.push('Absent or tardy this week:');
-    if (!week.length) { html.push('<p style="margin:0;color:#2e7d32">Nobody. Full attendance.</p>'); text.push('  Nobody.'); }
+    if (!thisWeek.length) {
+      // No data is not the same as full attendance.
+      html.push('<p style="margin:0;color:#a05a00">Not available: no attendance was loaded for this class this week.</p>');
+      text.push('  Not available: no attendance loaded this week.');
+    } else if (!week.length) { html.push('<p style="margin:0;color:#2e7d32">Nobody. Full attendance.</p>'); text.push('  Nobody.'); }
     else {
       html.push('<table style="border-collapse:collapse;font-size:13px"><tr><th ' + th + '>Student</th><th ' + th + '>Date</th><th ' + th + '>Status</th><th ' + th + '>Excuse</th></tr>');
-      week.sort(function (a, b) { return a.date.localeCompare(b.date); }).forEach(function (r) {
+      week.sort(function (a, b) { return a.date.localeCompare(b.date) || orderOf[a.studentId] - orderOf[b.studentId]; }).forEach(function (r) {
         var nm = nameOf[r.studentId] || r.name || r.studentId;
         html.push('<tr><td ' + td + '>' + esc_(nm) + '</td><td ' + td + '>' + esc_(r.date) + '</td><td ' + td + '>' + esc_(r.status) + (r.leftEarly ? ' (left early)' : '') + '</td><td ' + td + '>' + esc_(r.excuse || '') + '</td></tr>');
         text.push('  ' + nm + ' — ' + r.date + ' — ' + r.status + (r.excuse ? ' (excuse: ' + r.excuse + ')' : ''));
@@ -994,10 +1006,10 @@ function buildWeeklyReport(p) {
       html.push('<table style="border-collapse:collapse;font-size:13px"><tr><th ' + th + '>Student</th><th ' + th + '>Absences</th><th ' + th + '>Tardies</th><th ' + th + '>Counted absences</th><th ' + th + '>Left</th><th ' + th + '>Attendance</th><th ' + th + '>Status</th></tr>');
       risk.forEach(function (x) {
         var color = x.t.state === 'failing' ? '#c62828' : x.t.state === 'at-limit' ? '#e65100' : '#8d6e00';
-        html.push('<tr><td ' + td + '>' + esc_(x.s.name) + '</td><td ' + td + '>' + x.t.absences + '</td><td ' + td + '>' + x.t.tardies +
+        html.push('<tr><td ' + td + '>' + esc_((x.s.order ? '#' + x.s.order + ' ' : '') + x.s.name) + '</td><td ' + td + '>' + x.t.absences + '</td><td ' + td + '>' + x.t.tardies +
           '</td><td ' + td + '>' + x.t.effective + '</td><td ' + td + '>' + Math.max(0, x.t.remaining) + '</td><td ' + td + '>' + x.t.pct +
           '%</td><td ' + td + '><b style="color:' + color + '">' + esc_(STATE_LABEL[x.t.state]) + '</b></td></tr>');
-        text.push('  ' + x.s.name + ' — ' + x.t.effective + ' counted absences (' + x.t.absences + ' A, ' + x.t.tardies + ' T), ' + x.t.pct + '% — ' + STATE_LABEL[x.t.state]);
+        text.push('  ' + (x.s.order ? '#' + x.s.order + ' ' : '') + x.s.name + ' — ' + x.t.effective + ' counted absences (' + x.t.absences + ' A, ' + x.t.tardies + ' T), ' + x.t.pct + '% — ' + STATE_LABEL[x.t.state]);
       });
       html.push('</table>');
     }
@@ -1224,19 +1236,32 @@ function runAll_(ctx) {
 
 function weeklyReport() {
   withLock_(function () {
-    var ctx = load_(), today = today_(), wb = weekBounds(today);
-    var r = buildWeeklyReport({
-      classes: ctx.classes.filter(function (c) { return c.active; }),
-      students: ctx.students.filter(function (s) { return s.active; }),
-      records: records_(ctx),
-      weekStart: wb.start, weekEnd: wb.end, today: today,
-      week: termWeek(today, ctx.cfg.termStart),
-      cfg: ctx.cfg
-    });
+    var ctx = load_();
+    var r = reportForWeek_(ctx, termWeek(today_(), ctx.cfg.termStart) || 1, weekBounds(today_()).start);
     deliver_(ctx, 'Weekly report', ctx.cfg.reportTo || ctx.cfg.replyTo, r, { send: true });
     refreshSummary_(ctx);
     refreshGrids_(ctx);
   });
+}
+
+/** Monday of week N of the term ("Term start" in Config is week 1). */
+function weekStartOf_(ctx, week) {
+  var t = ctx.cfg.termStart || today_();
+  return numToDate(dayNum(weekBounds(t).start) + 7 * (week - 1));
+}
+
+/** The report for a week of the term (Monday to Sunday), with totals as of the end of that week. */
+function reportForWeek_(ctx, week, start) {
+  start = start || weekStartOf_(ctx, week);
+  var end = numToDate(dayNum(start) + 6);
+  var r = buildWeeklyReport({
+    classes: ctx.classes.filter(function (c) { return c.active; }),
+    students: ctx.students.filter(function (s) { return s.active; }),
+    records: records_(ctx),
+    weekStart: start, weekEnd: end, today: today_(), week: week, cfg: ctx.cfg
+  });
+  r.week = week; r.start = start; r.end = end;
+  return r;
 }
 
 function assignmentReminders() {
@@ -2065,6 +2090,49 @@ function apiFollowupDone(row) {
   t.set(r, 'Done', 'Yes · ' + nowStr_());
   save_(t);
   return true;
+}
+
+/** Weeks of the term for the report picker. */
+function apiReportWeeks() {
+  var ctx = load_(), today = today_(), out = [];
+  var now = termWeek(today, ctx.cfg.termStart) || 1;
+  for (var w = 1; w <= rulesConfig_(ctx.cfg).totalSessions; w++) {
+    var start = weekStartOf_(ctx, w);
+    out.push({ week: w, start: start, end: numToDate(dayNum(start) + 6), current: w === now, future: start > today });
+  }
+  return { weeks: out, current: Math.min(Math.max(now, 1), out.length), reportTo: ctx.cfg.reportTo || ctx.cfg.replyTo };
+}
+
+function apiWeeklyReport(week) {
+  var r = reportForWeek_(load_(), +week);
+  return { week: r.week, start: r.start, end: r.end, subject: r.subject, html: r.html };
+}
+
+/** Email the report of a week to "Weekly report to" in Config. */
+function apiSendWeeklyReport(week) {
+  var ctx = load_(), r = reportForWeek_(ctx, +week), to = ctx.cfg.reportTo || ctx.cfg.replyTo;
+  deliver_(ctx, 'Weekly report', to, r, { send: true });
+  return { to: to };
+}
+
+/** Save the report of a week as a PDF in Drive ("TA Reports" next to TA Inbox). Returns its link. */
+function apiSaveWeeklyReportPdf(week) {
+  var ctx = load_(), r = reportForWeek_(ctx, +week);
+  var name = 'Attendance report – Week ' + r.week + ' (' + r.start + ' to ' + r.end + ').pdf';
+  var page = '<html><head><meta charset="utf-8"></head><body>' + r.html + '</body></html>';
+  var pdf = Utilities.newBlob(page, 'text/html', 'report.html').getAs('application/pdf').setName(name);
+  var folder = reportsFolder_(ctx);
+  var old = folder.getFilesByName(name);
+  while (old.hasNext()) old.next().setTrashed(true); // keep one PDF per week
+  var file = folder.createFile(pdf);
+  return { name: name, url: file.getUrl() };
+}
+
+function reportsFolder_(ctx) {
+  var parent = null;
+  try { parent = DriveApp.getFolderById(ctx.cfg.inboxFolderId).getParents(); } catch (e) { parent = null; }
+  var root = parent && parent.hasNext() ? parent.next() : DriveApp.getRootFolder();
+  return subfolder_(root, 'TA Reports');
 }
 
 function apiProcessNow() {

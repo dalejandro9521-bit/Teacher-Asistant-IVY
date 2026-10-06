@@ -109,7 +109,11 @@ function makeEnv(opts) {
       if (this.parent) this.parent.folders = this.parent.folders.filter(f => f !== this);
       folder.folders.push(this); this.parent = folder;
     }
-    createFile(name, content, mime) { return this.addFile(name, content, mime || 'text/plain'); }
+    createFile(name, content, mime) {
+      if (name && typeof name === 'object') return this.addFile(name.getName(), name.getDataAsString(), name.getContentType()); // a Blob
+      return this.addFile(name, content, mime || 'text/plain');
+    }
+    getParents() { return iter(this.parent ? [this.parent] : [driveRoot]); }
     getFilesByName(n) { return iter(this.files.filter(f => f.name === n)); }
     // test helper: a screenshot whose "pixels" are the text Zoom shows
     addImage(name, text) { return this.addFile(name, text, 'image/png'); }
@@ -136,12 +140,16 @@ function makeEnv(opts) {
     getMimeType() { return this.mime; }
     getDateCreated() { return this.created; }
     getBlob() { return { getDataAsString: () => this.content }; }
+    getUrl() { return 'https://drive.google.com/file/d/' + this.id; }
+    setTrashed(v) { this.trashed = v; if (v) this.folder.files = this.folder.files.filter(f => f !== this); }
     moveTo(folder) { this.folder.files = this.folder.files.filter(f => f !== this); folder.files.push(this); this.folder = folder; }
   }
   const rootFolders = [];
+  const driveRoot = new Folder('My Drive', null);
   const DriveApp = {
     createFolder: n => { const f = new Folder(n, null); rootFolders.push(f); return f; },
     getFolderById: id => { if (!drive.byId[id]) throw new Error('no folder ' + id); return drive.byId[id]; },
+    getRootFolder: () => driveRoot,
     getFileById: id => drive.byId[id] || ({ setTrashed: () => { drive.docs[id].trashed = true; } })
   };
   // Advanced Drive service (v3): converting an image to a Google Doc runs OCR. Here the image content is its text.
@@ -176,7 +184,12 @@ function makeEnv(opts) {
       return b;
     }
   };
+  const blob = (data, type, name) => ({
+    getDataAsString: () => data, getContentType: () => type, getName: () => name,
+    getAs: t => blob(data, t, name), setName: n => blob(data, type, n)
+  });
   const Utilities = {
+    newBlob: (data, type, name) => blob(data, type, name),
     formatDate(d, tz, fmt) {
       const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new RealDate(d.getTime())).map(x => [x.type, x.value]));
@@ -196,7 +209,7 @@ function makeEnv(opts) {
     vm.runInContext(fs.readFileSync(path.join(src, f), 'utf8'), ctx, { filename: f });
   });
   return {
-    gas: ctx, sheets, mail, triggers, toasts, rootFolders, ocr, docs: drive.docs,
+    gas: ctx, sheets, mail, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot,
     setNow: iso => { NOW = new RealDate(iso).getTime(); },
     sheet: n => sheets[n]
   };

@@ -64,6 +64,9 @@ Con [clasp](https://github.com/google/clasp) también puedes subir el código co
 - **Una clase en una fecha**: el resultado de cada estudiante con el motivo, la **hora real de inicio** editable (se recalcula sola) y, para Zoom,
   **lo que el OCR leyó en cada screenshot** y a quién asignó cada nombre. Así pruebas si los screenshots funcionan.
 - **Questions**: los nombres con duda, con botones para elegir al estudiante.
+- **Weekly reports**: eliges la semana (1 a 10) y ves el reporte de todas las clases: cuántos present/tardy/absent hubo, quién faltó o llegó tarde
+  (con su # de Populi) y quién está en riesgo o perdiendo el curso, con los totales **al cierre de esa semana**. Botones para **enviártelo por correo**
+  y **guardarlo como PDF** en la carpeta **TA Reports** de tu Drive. Igual te llega solo cada viernes a las 8 AM.
 - **Follow-ups**: cada correo con los # a seleccionar en Populi, botones para copiar asunto y mensaje, y las casillas de visibilidad.
 
 ## Uso diario

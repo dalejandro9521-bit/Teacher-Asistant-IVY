@@ -223,7 +223,7 @@ test('Friday report is emailed; assignment reminders go to the class in BCC', ()
   assert.equal(rep.to, 'dgomez230@ivy.edu');
   assert.match(rep.body, /== ENG 111 \(01\)/);
   assert.match(rep.body, /Luis Silva — 2026-10-05 — Absent/);
-  assert.match(rep.body, /== BIO 101 \(03\)[\s\S]*Nobody\./);
+  assert.match(rep.body, /== BIO 101 \(03\)[\s\S]*Not available: no attendance loaded this week/); // no data ≠ full attendance
 
   env.sheet('Assignments').appendRow(['C3', 'Lab report 2', '2026-10-12', '3,1', 'Upload it to Populi.']);
   env.gas.assignmentReminders();
@@ -507,4 +507,50 @@ test('dashboard API: overview, class, session with OCR diagnostics, answering a 
   assert.equal(f[0].Students, 'Malek Bay');
   env.gas.apiFollowupDone(f[0].row);
   assert.equal(env.gas.apiFollowups().length, 0);
+});
+
+test('weekly reports for any week: picker, report with totals as of that week, email, PDF in Drive', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.setConfig('Term start', '2026-10-05');
+  const sh = env.sheet('Attendance');
+  sh.appendRow(['2026-10-05', 'C3', '1001', 'Ana Maria Lopez', 'Absent', '', 'Manual']);
+  sh.appendRow(['2026-10-05', 'C3', '1002', 'Brian Smith', 'Present', '', 'Manual']);
+  sh.appendRow(['2026-10-12', 'C3', '1001', 'Ana Maria Lopez', 'Absent', '', 'Manual']);
+  sh.appendRow(['2026-10-12', 'C3', '1002', 'Brian Smith', 'Tardy', '', 'Manual']);
+  env.setNow('2026-10-16T13:00:00Z'); // Friday of week 2
+
+  const w = JSON.parse(JSON.stringify(env.gas.apiReportWeeks()));
+  assert.equal(w.weeks.length, 10);
+  assert.equal(w.current, 2);
+  assert.deepEqual([w.weeks[0].start, w.weeks[0].end, w.weeks[9].start], ['2026-10-05', '2026-10-11', '2026-12-07']);
+  assert.equal(w.weeks[2].future, true);
+
+  const r1 = env.gas.apiWeeklyReport(1);
+  assert.match(r1.subject, /October 5, 2026/);
+  assert.match(r1.html, /Week 1 of 10/);
+  assert.match(r1.html, /This week:<\/b> 1 present · 0 tardy · 1 absent/);
+  assert.doesNotMatch(r1.html, /2026-10-12/);              // week 2 is not in week 1's report
+  assert.match(r1.html, /Not available: no attendance was loaded for this class this week/); // C1, C2, C4 have no data
+  assert.doesNotMatch(r1.html.split('BIO 101')[0], /Full attendance/);
+  assert.doesNotMatch(r1.html, /At the limit/);           // as of week 1, Ana had 1 absence
+  const r2 = env.gas.apiWeeklyReport(2);
+  assert.match(r2.html, /At the limit/);                  // two absences by the end of week 2
+
+  const sent = env.gas.apiSendWeeklyReport(2);
+  assert.equal(sent.to, 'dgomez230@ivy.edu');
+  assert.equal(env.mail.sent.length, 1);
+  assert.match(env.mail.sent[0].subject, /October 12, 2026/);
+
+  const pdf = env.gas.apiSaveWeeklyReportPdf(2);
+  assert.match(pdf.name, /Week 2 \(2026-10-12 to 2026-10-18\)\.pdf$/);
+  const reports = env.driveRoot.folders.find(f => f.name === 'TA Reports');
+  assert.equal(reports.files.length, 1);
+  assert.equal(reports.files[0].mime, 'application/pdf');
+  env.gas.apiSaveWeeklyReportPdf(2);                      // saving again replaces it
+  assert.equal(reports.files.length, 1);
+
+  // the Friday trigger still sends this week's report
+  env.gas.weeklyReport();
+  assert.equal(env.mail.sent.length, 2);
+  assert.match(env.mail.sent[1].body, /Week of Monday, October 12, 2026/);
 });

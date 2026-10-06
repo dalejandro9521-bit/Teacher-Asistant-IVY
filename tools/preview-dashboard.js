@@ -36,11 +36,13 @@ const api = {};
 ['apiOverview', 'apiQuestions', 'apiFollowups'].forEach(f => { api[f] = JSON.parse(JSON.stringify(g[f]())); });
 api.apiClass = { C3: JSON.parse(JSON.stringify(g.apiClass('C3'))), C1: JSON.parse(JSON.stringify(g.apiClass('C1'))) };
 api.apiSession = JSON.parse(JSON.stringify(g.apiSession('C3', '2026-10-05')));
+api.apiReportWeeks = JSON.parse(JSON.stringify(g.apiReportWeeks()));
+api.apiWeeklyReport = JSON.parse(JSON.stringify(g.apiWeeklyReport(1)));
 
 const stub = `window.__API = ${JSON.stringify(api)};
 window.google = { script: { run: (function make(ok, fail) {
   const r = { withSuccessHandler: f => make(f, fail), withFailureHandler: f => make(ok, f) };
-  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone'].forEach(n => {
+  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf'].forEach(n => {
     r[n] = (...a) => setTimeout(() => { let v = window.__API[n]; if (n === 'apiClass') v = v[a[0]] || v.C3; if (n === 'apiProcessNow') v = { files: 0, sent: 0 };
       if (n === 'apiAnswer') v = { note: 'Linked to #12 Malek Bay' }; ok(v === undefined ? true : v); }, 50);
   });
@@ -63,6 +65,7 @@ window.google = { script: { run: (function make(ok, fail) {
   await page.click('[data-act="ocrTab"][data-p="end"]'); await shot('4-session-last-screenshot');
   await page.click('[data-go="review"]'); await shot('5-questions');
   await page.click('[data-go="followups"]'); await shot('6-followups');
+  await page.click('[data-go="reports"]'); await shot('7-weekly-report');
   await browser.close();
   if (errors.length) { console.error('Page errors:', errors); process.exit(1); }
   console.log('Screenshots in', out);
