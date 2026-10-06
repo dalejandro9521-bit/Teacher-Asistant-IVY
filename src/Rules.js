@@ -193,14 +193,14 @@ function matchStudent(probe, roster) {
       var words = normalizeName(s.name).split(' '), vw = v.split(' ');
       return words.length > 1 && vw.length > 1 && words[0] === vw[0] && words[words.length - 1] === vw[vw.length - 1];
     },
-    // "Sureeporn Sawangngoen" = "Sureeporn Sawang-ngoen"; "muhammadsharjeelarshad" written together
+    // "Suda Kaewngam" = "Suda Kaew-ngam"; "johnsmith" written together
     function (s, v) { return v.length > 5 && normalizeName(s.name).replace(/ /g, '') === v.replace(/ /g, ''); },
-    // Zoom shows part of the name: "Lendy Mendoza" ⊂ "Lendy Mendoza Bohorquez", "Maria Monroy" ⊂ "Maria Fernanda Monroy Calderon"
+    // Zoom shows part of the name: "Lina Mora" ⊂ "Lina Mora Bastidas", "Ana Ruiz" ⊂ "Ana Maria Ruiz Soto"
     function (s, v) {
       var words = ' ' + normalizeName(s.name) + ' ', vw = v.split(' ');
       return vw.length > 1 && vw.every(function (w) { return words.indexOf(' ' + w + ' ') >= 0; });
     },
-    // Only a first name ("Larisa", "praewa"): fine when nobody else in the class has it.
+    // Only a first name ("Lara"): fine when nobody else in the class has it.
     function (s, v) { return v.indexOf(' ') < 0 && v.length > 2 && normalizeName(s.name).split(' ')[0] === v; }
   ];
   for (var t = 0; t < tests.length; t++) {

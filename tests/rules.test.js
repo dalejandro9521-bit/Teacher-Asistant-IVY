@@ -238,18 +238,18 @@ test('Diego\'s online rules: 15 min, 31 min and the 1-hour screenshot', () => {
 
 test('names as Zoom shows them (partial, joined, first name only); chat lines with times are skipped', () => {
   const ro = [
-    { id: '1', name: 'Lendy Mendoza Bohorquez' }, { id: '2', name: 'Sureeporn Sawang-ngoen' }, { id: '3', name: 'Larisa Elizarova' },
-    { id: '4', name: 'Muhammad Ikram Munir' }, { id: '5', name: 'Muhammad Usman Munir' }, { id: '6', name: 'Maide Arsoy' }
+    { id: '1', name: 'Lina Mora Bastidas' }, { id: '2', name: 'Suda Kaew-ngam' }, { id: '3', name: 'Lara Ivanova' },
+    { id: '4', name: 'Omar Ali Khan' }, { id: '5', name: 'Omar Saad Khan' }, { id: '6', name: 'Mina Aksoy' }
   ];
-  assert.equal(g.matchStudent({ name: 'Lendy Mendoza' }, ro).id, '1');
-  assert.equal(g.matchStudent({ name: 'Sureeporn Sawangngoen' }, ro).id, '2');
-  assert.equal(g.matchStudent({ name: 'Larisa' }, ro).id, '3');
-  assert.equal(g.matchStudent({ name: 'Maide Ceren Arsoy' }, ro).id, '6');
-  assert.equal(g.matchStudent({ name: 'Muhammad Munir' }, ro), null);   // two of them: never guess
-  assert.equal(g.matchStudent({ name: 'Muhammad' }, ro), null);
-  const r = g.screenshotStatuses({ present: ['Larisa\nMaide 6:44 PM\nProfessor Braden\nLula'] }, ro, []);
+  assert.equal(g.matchStudent({ name: 'Lina Mora' }, ro).id, '1');
+  assert.equal(g.matchStudent({ name: 'Suda Kaewngam' }, ro).id, '2');
+  assert.equal(g.matchStudent({ name: 'Lara' }, ro).id, '3');
+  assert.equal(g.matchStudent({ name: 'Mina Deniz Aksoy' }, ro).id, '6');
+  assert.equal(g.matchStudent({ name: 'Omar Khan' }, ro), null);   // two of them: never guess
+  assert.equal(g.matchStudent({ name: 'Omar' }, ro), null);
+  const r = g.screenshotStatuses({ present: ['Lara\nMina 6:44 PM\nProfessor Smith\nLulu'] }, ro, []);
   assert.deepEqual(plain(r.results.map(x => x.student.id)), ['3']);
-  assert.deepEqual(plain(r.unmatched), ['Lula']);
+  assert.deepEqual(plain(r.unmatched), ['Lulu']);
 });
 
 test('Populi roster export: real column layout, professors and the TA skipped, Populi order kept', () => {
