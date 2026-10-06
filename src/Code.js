@@ -6,12 +6,14 @@
 var SHEETS = {
   Config: ['Setting', 'Value', 'Notes'],
   Classes: ['Class ID', 'Course', 'Section', 'Professor', 'Professor email', 'Day', 'Start', 'End', 'Mode', 'Zoom meeting ID', 'Active'],
-  Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active'],
+  Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active', 'Order'],
   Attendance: ['Date', 'Class ID', 'Student ID', 'Name', 'Status', 'Minutes late', 'Source', 'No ID', 'Left early',
     'Excuse', 'Excuse date', 'Notified', 'Office notified', 'Notes', 'Updated'],
   Assignments: ['Class ID', 'Title', 'Due date', 'Remind days before', 'Notes', 'Reminded'],
   Summary: ['Class ID', 'Course', 'Student ID', 'Name', 'Email', 'Absences', 'Tardies', 'Excused', 'Counted absences',
     'Absences left', 'Attendance %', 'Status'],
+  'Follow-ups': ['Created', 'Type', 'Class', 'Class date', 'Roster #', 'Students', 'Count', 'Subject', 'Message',
+    'Visibility (check in Populi)', 'Done'],
   Outbox: ['Time', 'Type', 'To', 'Subject', 'Mode', 'Body'],
   'Inbox log': ['Time', 'File', 'Kind', 'Class', 'Dates', 'Result']
 };
@@ -24,7 +26,8 @@ var CONFIG_FIELDS = [
   ['officeName', 'Office name', 'the main office', 'How emails refer to the office ("send your excuse to me or to ...").'],
   ['officeEmail', 'Office email', '', 'Gets the "student without ID" notices. Empty → they go to the Reply-To email.'],
   ['reportTo', 'Weekly report to', 'dgomez230@ivy.edu', 'Who gets the Friday report (comma-separated).'],
-  ['emailMode', 'Email mode', 'DRAFT', 'DRAFT = Gmail drafts you review and send · SEND = send automatically · LOG = only write them in Outbox.'],
+  ['emailMode', 'Email mode', 'POPULI', 'POPULI = write each email in Follow-ups to send from Populi (students with the same numbers share one email) · DRAFT = Gmail drafts · SEND = send from Gmail · LOG = only Outbox.'],
+  ['populiVisibility', 'Populi visibility', 'Academic Admin, Account Admin, Admissions Admin, Staff, Academic Auditor, Admissions', 'Boxes to check under Visibility when you send a follow-up from Populi.'],
   ['bcc', 'BCC on student notices', '', 'Optional, e.g. the office, so they keep a copy.'],
   ['noticesFrom', 'Send notices from', '', 'Absences before this date are not emailed (so importing old weeks does not spam students).'],
   ['markMissing', 'Mark students missing from a file absent', 'Yes', 'Zoom report or Populi list of check-ins: whoever is not in it is Absent.'],
@@ -106,7 +109,8 @@ function setup() {
     var def = f[0] === 'noticesFrom' ? today_() : f[2];
     cfgSheet.appendRow([f[1], String(def), f[3]]);
   });
-  setValidation_(cfgSheet, CONFIG_FIELDS.map(function (f) { return f[1]; }).indexOf('Email mode') + 2, 2, ['DRAFT', 'SEND', 'LOG']);
+  setValidation_(cfgSheet, CONFIG_FIELDS.map(function (f) { return f[1]; }).indexOf('Email mode') + 2, 2, ['POPULI', 'DRAFT', 'SEND', 'LOG']);
+  setValidation_(ss.getSheetByName('Follow-ups'), 2, SHEETS['Follow-ups'].indexOf('Done') + 1, ['Yes', ''], 2000);
 
   var classes = ss.getSheetByName('Classes');
   if (classes.getLastRow() < 2) classes.getRange(2, 1, DEFAULT_CLASSES.length, DEFAULT_CLASSES[0].length).setValues(DEFAULT_CLASSES);
@@ -169,6 +173,7 @@ function tick() {
     var office = checkNoId_(ctx);
     save_(ctx.att);
     refreshSummary_(ctx);
+    refreshGrids_(ctx);
     if (log.length || sent || office) {
       toast_((log.length ? log.length + ' file(s) processed. ' : '') + sent + ' student notice(s), ' + office + ' office notice(s).');
     }
@@ -188,6 +193,7 @@ function weeklyReport() {
     });
     deliver_(ctx, 'Weekly report', ctx.cfg.reportTo || ctx.cfg.replyTo, r, { send: true });
     refreshSummary_(ctx);
+    refreshGrids_(ctx);
   });
 }
 
@@ -203,9 +209,12 @@ function assignmentReminders() {
       if (!cls) return;
       var emails = ctx.students.filter(function (s) { return s.active && s.classId === cls.id && s.email; })
         .map(function (s) { return s.email; });
-      if (!emails.length) return;
+      var populi = mode_(ctx.cfg) === 'POPULI';
+      if (!emails.length && !populi) return;
       var msg = buildAssignmentReminder({ assignment: a, cls: cls, daysLeft: d.daysLeft, cfg: ctx.cfg });
-      deliver_(ctx, 'Assignment reminder', ctx.cfg.replyTo, msg, { bcc: emails.join(',') });
+      deliver_(ctx, 'Assignment reminder', ctx.cfg.replyTo, msg, populi
+        ? { cls: cls, date: a.due, audience: 'Whole class (Roster → Actions → Email this section)' }
+        : { bcc: emails.join(',') });
       var row = t.rows[a.i];
       t.set(row, 'Reminded', (a.reminded ? a.reminded + ',' : '') + d.reminderKey);
     });
@@ -272,7 +281,16 @@ function handleFile_(ctx, fileName, rows, created) {
   }
 
   var p = parsePopuli(rows, yearOf_(ctx));
-  if (!p.records.length) return { ok: false, kind: kind, cls: '', dates: '', msg: 'No attendance rows found. Is this a Populi attendance export?' };
+  if (!p.records.length) {
+    var roster = parseRoster(rows);
+    if (!roster.length) return { ok: false, kind: kind, cls: '', dates: '', msg: 'No students or attendance found. Is this a Populi export?' };
+    var rk = pickClass({ fileName: fileName, course: p.course }, ctx.classes, rosterByClass_(ctx), roster);
+    if (!rk.cls) return { ok: false, kind: 'roster', cls: '', dates: '', msg: 'Roster file: could not tell the class (' + rk.how + '). Add [C1] (the Class ID) to the file name.' };
+    var rr = importRoster_(ctx, rk.cls, roster);
+    return { ok: true, kind: 'roster', cls: rk.cls.id, dates: '',
+      msg: 'Roster in Populi order: ' + rr.total + ' students (' + rr.added + ' new, ' + rr.inactive + ' inactive). Class by ' + rk.how + '.' };
+  }
+  var source = /screenshot/i.test(fileName) ? 'Zoom screenshots' : 'Populi';
   var pp = p.records.map(function (r) { return { name: r.name, id: r.id, email: r.email }; });
   var pk = pickClass({ fileName: fileName, course: p.course }, ctx.classes, rosterByClass_(ctx), pp);
   if (!pk.cls) return { ok: false, kind: kind, cls: '', dates: '', msg: 'Could not tell the class (' + pk.how + '). Add [C1] (the Class ID) to the file name.' };
@@ -287,7 +305,7 @@ function handleFile_(ctx, fileName, rows, created) {
     var st = r.status, late = r.time != null ? Math.max(0, Math.floor(r.time - cls.start)) : '';
     // Populi gives the scan time: our 15 / 30 minute rule decides Present vs Tardy vs Absent.
     if (r.time != null && st !== STATUS.A && st !== STATUS.E) st = classify(r.time - cls.start, cfg);
-    (byDate[r.date] || (byDate[r.date] = [])).push({ student: s, status: st, minutesLate: late, source: 'Populi' });
+    (byDate[r.date] || (byDate[r.date] = [])).push({ student: s, status: st, minutesLate: late, source: source });
   });
   var tot = { added: 0, updated: 0, kept: 0 }, dates = Object.keys(byDate).sort();
   dates.forEach(function (d) {
@@ -295,7 +313,7 @@ function handleFile_(ctx, fileName, rows, created) {
     if (p.shape === 'long' && yes_(cfg.markMissing)) {
       var have = {};
       entries.forEach(function (e) { have[e.student.id] = true; });
-      rosterNow.forEach(function (s) { if (!have[s.id]) entries.push({ student: s, status: STATUS.A, source: 'Populi (not in file)' }); });
+      rosterNow.forEach(function (s) { if (!have[s.id]) entries.push({ student: s, status: STATUS.A, source: source + ' (not in file)' }); });
     }
     var c2 = applyEntries_(ctx, cls, d, entries);
     tot.added += c2.added; tot.updated += c2.updated; tot.kept += c2.kept;
@@ -319,11 +337,51 @@ function addToRoster_(ctx, cls, people) {
     t.set(row, 'Email', p.email || '');
     t.set(row, 'Class ID', cls.id);
     t.set(row, 'Active', 'Yes');
+    t.set(row, 'Order', String(nextOrder_(ctx, cls.id)));
     t.rows.push(row);
     ctx.students.push(studentFrom_(t, row));
     n++;
   });
   return n;
+}
+
+function nextOrder_(ctx, classId) {
+  return ctx.students.filter(function (s) { return s.classId === classId; })
+    .reduce(function (m, s) { return Math.max(m, s.order || 0); }, 0) + 1;
+}
+
+/**
+ * Populi roster export → Students for that class, numbered in Populi's order (the order of the participation
+ * checkboxes). Students no longer in the export are set inactive; their attendance stays.
+ */
+function importRoster_(ctx, cls, people) {
+  var t = ctx.studentsT, out = { total: people.length, added: 0, inactive: 0 }, seen = {};
+  var mine = ctx.students.filter(function (s) { return s.classId === cls.id; });
+  people.forEach(function (p, i) {
+    var s = matchStudent({ id: p.id, email: p.email, name: p.name }, mine), row;
+    if (s) row = t.rows[s.row];
+    else {
+      row = blankRow_(t);
+      t.rows.push(row);
+      t.set(row, 'Student ID', p.id || p.email || p.name);
+      t.set(row, 'Class ID', cls.id);
+      out.added++;
+    }
+    if (p.name) t.set(row, 'Name', p.name);
+    if (p.email) t.set(row, 'Email', p.email);
+    t.set(row, 'Active', p.active ? 'Yes' : 'No');
+    if (!p.active) out.inactive++;
+    t.set(row, 'Order', String(i + 1));
+    seen[t.get(row, 'Student ID')] = true;
+  });
+  t.rows.forEach(function (r) {
+    if (t.get(r, 'Class ID') === cls.id && !seen[t.get(r, 'Student ID')] && t.get(r, 'Active') !== 'No') {
+      t.set(r, 'Active', 'No');
+      out.inactive++;
+    }
+  });
+  ctx.students = studentsFrom_(t);
+  return out;
 }
 
 /** Upsert attendance rows for one class and date. Manual rows and excused absences are never overwritten. */
@@ -375,29 +433,45 @@ function applyManualFlags_(ctx) {
 /* ---------- emails ---------- */
 
 function sendPendingNotices_(ctx) {
-  var t = ctx.att, cfg = ctx.cfg, totals = tally(records_(ctx), cfg), sent = 0;
-  var since = parseDateCell(cfg.noticesFrom, yearOf_(ctx));
+  var t = ctx.att, cfg = ctx.cfg, totals = tally(records_(ctx), cfg), y = yearOf_(ctx);
+  var since = parseDateCell(cfg.noticesFrom, y), populi = mode_(cfg) === 'POPULI', pending = [];
   t.rows.forEach(function (r) {
     var st = normalizeStatus(t.get(r, 'Status'));
     if ((st !== STATUS.A && st !== STATUS.T) || /^accepted$/i.test(t.get(r, 'Excuse'))) return;
     var kind = st === STATUS.A && yes_(t.get(r, 'Left early')) ? 'LeftEarly' : st;
-    var notified = t.get(r, 'Notified');
-    if (notified.indexOf(kind) === 0) return;
-    var date = parseDateCell(t.get(r, 'Date'), yearOf_(ctx));
+    if (t.get(r, 'Notified').indexOf(kind) === 0) return;
+    var date = parseDateCell(t.get(r, 'Date'), y);
     if (since && date < since) { t.set(r, 'Notified', kind + ' · not sent (before ' + since + ')'); return; }
     var cls = classById_(ctx, t.get(r, 'Class ID'));
     var s = ctx.students.filter(function (x) { return x.classId === t.get(r, 'Class ID') && x.id === t.get(r, 'Student ID'); })[0];
-    if (!cls || !s || !s.email) return; // tried again on the next run (e.g. once the email is filled in)
-    var msg = buildStudentNotice({
-      kind: kind, student: s, cls: cls, date: date, cfg: cfg,
-      tally: totals[cls.id + '|' + s.id] || emptyTally(cfg),
-      minutesLate: +t.get(r, 'Minutes late') || 0
-    });
-    var mode = deliver_(ctx, 'Student ' + kind, s.email, msg, { bcc: cfg.bcc });
-    t.set(r, 'Notified', kind + ' · ' + nowStr_() + ' · ' + mode);
-    sent++;
+    // Gmail needs an address; Populi doesn't. Rows without one are tried again on the next run.
+    if (!cls || !s || (!populi && !s.email)) return;
+    pending.push({ row: r, kind: kind, date: date, cls: cls, student: s, tally: totals[cls.id + '|' + s.id] || emptyTally(cfg),
+      minutesLate: +t.get(r, 'Minutes late') || 0 });
   });
-  return sent;
+  if (!populi) {
+    pending.forEach(function (p) {
+      var msg = buildStudentNotice({ kind: p.kind, student: p.student, cls: p.cls, date: p.date, cfg: cfg, tally: p.tally, minutesLate: p.minutesLate });
+      var mode = deliver_(ctx, 'Student ' + p.kind, p.student.email, msg, { bcc: cfg.bcc });
+      t.set(p.row, 'Notified', p.kind + ' · ' + nowStr_() + ' · ' + mode);
+    });
+    return pending.length;
+  }
+  // Populi: students of the same class, date and kind with the same numbers get one email ("Email selected students").
+  var groups = {}, order = [];
+  pending.forEach(function (p) {
+    var x = p.tally;
+    var key = [p.cls.id, p.date, p.kind, x.absences, x.tardies, x.excused, x.effective, x.remaining, x.pct, x.state].join('|');
+    if (!groups[key]) { groups[key] = []; order.push(key); }
+    groups[key].push(p);
+  });
+  order.forEach(function (key) {
+    var g = groups[key], p = g[0];
+    var msg = buildStudentNotice({ kind: p.kind, student: { name: '' }, cls: p.cls, date: p.date, cfg: cfg, tally: p.tally });
+    deliver_(ctx, 'Student ' + p.kind, '', msg, { cls: p.cls, date: p.date, students: g.map(function (x) { return x.student; }) });
+    g.forEach(function (x) { t.set(x.row, 'Notified', x.kind + ' · ' + nowStr_() + ' · POPULI'); });
+  });
+  return order.length;
 }
 
 /** A student without ID more than the allowed times → the office gets a notice for each extra time. */
@@ -420,7 +494,8 @@ function checkNoId_(ctx) {
         { id: t.get(r, 'Student ID'), name: t.get(r, 'Name') };
       if (!cls) return;
       var msg = buildNoIdNotice({ student: s, cls: cls, date: dates[i], count: i + 1, dates: dates.slice(0, i + 1), cfg: ctx.cfg });
-      var mode = deliver_(ctx, 'Office: no ID', ctx.cfg.officeEmail || ctx.cfg.replyTo, msg, {});
+      var mode = deliver_(ctx, 'Office: no ID', ctx.cfg.officeEmail || ctx.cfg.replyTo, msg,
+        { cls: cls, date: dates[i], audience: 'Office: ' + (ctx.cfg.officeEmail || '(set Office email in Config)') });
       t.set(r, 'Office notified', nowStr_() + ' · ' + mode);
       sent++;
     });
@@ -428,20 +503,35 @@ function checkNoId_(ctx) {
   return sent;
 }
 
+function mode_(cfg) {
+  var m = String(cfg.emailMode || 'POPULI').trim().toUpperCase();
+  return ['POPULI', 'DRAFT', 'SEND', 'LOG'].indexOf(m) >= 0 ? m : 'POPULI';
+}
+
 /**
- * Sends (or drafts, or only logs) one email and writes it to Outbox. Returns the mode used.
- * opts.send = true sends even in DRAFT mode (used for the report that goes to the TA).
+ * Delivers one email and writes it to Outbox. Returns the mode used.
+ * POPULI → a row in Follow-ups (who to select in the Populi roster, subject, message, visibility boxes).
+ * DRAFT / SEND → Gmail with Reply-To. LOG → Outbox only.
+ * opts: {send: true (the Friday report to yourself always goes by Gmail), bcc, cls, date, students, audience}
  */
 function deliver_(ctx, type, to, msg, opts) {
   opts = opts || {};
-  var cfg = ctx.cfg, mode = String(cfg.emailMode || 'DRAFT').toUpperCase();
-  if (opts.send && mode === 'DRAFT') mode = 'SEND';
-  var o = { htmlBody: msg.html, replyTo: cfg.replyTo, name: cfg.taName };
-  if (opts.bcc) o.bcc = opts.bcc;
-  if (mode === 'SEND') GmailApp.sendEmail(to, msg.subject, msg.text, o);
-  else if (mode === 'DRAFT') GmailApp.createDraft(to, msg.subject, msg.text, o);
-  else mode = 'LOG';
-  appendRow_('Outbox', [nowStr_(), type, to + (opts.bcc ? ' (bcc ' + opts.bcc.split(',').length + ')' : ''), msg.subject, mode, msg.text]);
+  var cfg = ctx.cfg, mode = mode_(cfg);
+  if (opts.send && (mode === 'DRAFT' || mode === 'POPULI')) mode = 'SEND';
+  if (mode === 'POPULI') {
+    var studs = (opts.students || []).slice().sort(function (a, b) { return (a.order || 1e6) - (b.order || 1e6); });
+    var who = studs.length ? studs.map(function (s) { return s.name; }).join(', ') : (opts.audience || to);
+    appendRow_('Follow-ups', [nowStr_(), type, opts.cls ? opts.cls.id + ' · ' + classLabel(opts.cls) : '', opts.date || '',
+      studs.map(function (s) { return s.order || '?'; }).join(', '), who, studs.length || '', msg.subject, msg.text,
+      cfg.populiVisibility, '']);
+  } else {
+    var o = { htmlBody: msg.html, replyTo: cfg.replyTo, name: cfg.taName };
+    if (opts.bcc) o.bcc = opts.bcc;
+    if (mode === 'SEND') GmailApp.sendEmail(to, msg.subject, msg.text, o);
+    else if (mode === 'DRAFT') GmailApp.createDraft(to, msg.subject, msg.text, o);
+  }
+  appendRow_('Outbox', [nowStr_(), type, (to || (opts.students || []).length + ' student(s)') + (opts.bcc ? ' (bcc ' + opts.bcc.split(',').length + ')' : ''),
+    msg.subject, mode, msg.text]);
   return mode;
 }
 
@@ -450,14 +540,58 @@ function refreshSummary_(ctx) {
   ctx.students.filter(function (s) { return s.active; }).forEach(function (s) {
     var cls = classById_(ctx, s.classId), t = totals[s.classId + '|' + s.id] || emptyTally(ctx.cfg);
     out.push([s.classId, cls ? classLabel(cls) : '', s.id, s.name, s.email, t.absences, t.tardies, t.excused, t.effective,
-      Math.max(0, t.remaining), t.pct + '%', STATE_LABEL[t.state]].map(String));
+      Math.max(0, t.remaining), t.pct + '%', STATE_LABEL[t.state]].map(String).concat([s.order || 1e6]));
   });
   var order = { 'Below 80% (losing the course)': 0, 'At the limit (no absences left)': 1, '1 absence left': 2, 'On track': 3 };
-  out.sort(function (a, b) { return a[0].localeCompare(b[0]) || order[a[11]] - order[b[11]] || a[3].localeCompare(b[3]); });
+  out.sort(function (a, b) { return a[0].localeCompare(b[0]) || order[a[11]] - order[b[11]] || a[12] - b[12]; });
+  out = out.map(function (r) { return r.slice(0, 12); });
   var sh = ss_().getSheetByName('Summary');
   sh.clearContents();
   sh.getRange(1, 1, 1, SHEETS.Summary.length).setValues([SHEETS.Summary]);
   if (out.length) sh.getRange(2, 1, out.length, SHEETS.Summary.length).setValues(out);
+}
+
+var GRID_COLORS = { P: '#d9ead3', T: '#fff2cc', A: '#f4cccc', E: '#cfe2f3' };
+
+/**
+ * One sheet per class ("Grid C1"): students in Populi's order (same as the participation checkboxes), one column
+ * per week with P / T / A / E, then the totals. Rebuilt on every run, so never type in it — edit Attendance instead.
+ */
+function refreshGrids_(ctx) {
+  var recs = records_(ctx), totals = tally(recs, ctx.cfg), ss = ss_();
+  ctx.classes.filter(function (c) { return c.active; }).forEach(function (cls) {
+    var roster = roster_(ctx, cls.id), mine = recs.filter(function (r) { return r.classId === cls.id; });
+    var dates = mine.map(function (r) { return r.date; }).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
+    var cell = {};
+    mine.forEach(function (r) {
+      var v = /^accepted$/i.test(r.excuse) ? 'E' : (r.status || '?').charAt(0);
+      if (r.leftEarly && v === 'A') v = 'A (left)';
+      if (/^received$/i.test(r.excuse) && v !== 'E') v += ' (excuse sent)';
+      cell[r.studentId + '|' + r.date] = v;
+    });
+    var header = ['#', 'Student'].concat(dates.map(function (d, i) {
+      var p = d.split('-'), wk = termWeek(d, ctx.cfg.termStart) || (i + 1);
+      return 'Week ' + wk + ' · ' + MONTH_NAMES[+p[1] - 1].slice(0, 3) + ' ' + (+p[2]);
+    }), ['Absences', 'Tardies', 'Counted', 'Left', 'Attendance', 'Status']);
+    var rows = roster.map(function (s, i) {
+      var t = totals[cls.id + '|' + s.id] || emptyTally(ctx.cfg);
+      return [String(s.order || i + 1), s.name].concat(dates.map(function (d) { return cell[s.id + '|' + d] || ''; }),
+        [t.absences, t.tardies, t.effective, Math.max(0, t.remaining), t.pct + '%', STATE_LABEL[t.state]].map(String));
+    });
+    var name = 'Grid ' + cls.id, sh = ss.getSheetByName(name) || ss.insertSheet(name);
+    sh.clear();
+    sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    if (!rows.length) return;
+    var range = sh.getRange(2, 1, rows.length, header.length);
+    range.setNumberFormat('@').setValues(rows);
+    range.setBackgrounds(rows.map(function (r) {
+      return r.map(function (v, j) {
+        if (j < 2 || j >= 2 + dates.length) return j === header.length - 1 && /Below|limit/.test(v) ? '#f4cccc' : null;
+        return GRID_COLORS[String(v).charAt(0)] || null;
+      });
+    }));
+  });
 }
 
 /* ---------- data helpers ---------- */
@@ -556,21 +690,27 @@ function load_() {
     };
   }).filter(function (c) { return c.id && c.start != null && c.end != null; });
   ctx.studentsT = table_('Students');
-  ctx.students = ctx.studentsT.rows.map(function (r) { return studentFrom_(ctx.studentsT, r); })
-    .filter(function (s) { return s.id && s.classId; });
+  ctx.students = studentsFrom_(ctx.studentsT);
   ctx.att = table_('Attendance');
   return ctx;
 }
 
 function studentFrom_(t, r) {
   return { id: t.get(r, 'Student ID'), name: t.get(r, 'Name'), email: t.get(r, 'Email'), classId: t.get(r, 'Class ID'),
-    active: !/^(no|n|false|0)$/i.test(t.get(r, 'Active')) };
+    active: !/^(no|n|false|0)$/i.test(t.get(r, 'Active')), order: parseInt(t.get(r, 'Order'), 10) || 0,
+    row: t.rows.indexOf(r) };
+}
+
+function studentsFrom_(t) {
+  return t.rows.map(function (r) { return studentFrom_(t, r); }).filter(function (s) { return s.id && s.classId; });
 }
 
 function classById_(ctx, id) { return ctx.classes.filter(function (c) { return c.id === id; })[0] || null; }
 
+/** Active students of a class in Populi's order (students without a number go last, in sheet order). */
 function roster_(ctx, classId) {
-  return ctx.students.filter(function (s) { return s.active && s.classId === classId; });
+  return ctx.students.filter(function (s) { return s.active && s.classId === classId; })
+    .sort(function (a, b) { return (a.order || 1e6) - (b.order || 1e6) || a.row - b.row; });
 }
 
 function rosterByClass_(ctx) {

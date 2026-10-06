@@ -213,7 +213,7 @@ function parsePopuli(rows, defaultYear) {
  * Which class a file belongs to.
  * hints: {fileName, course, topic, meetingId}; classes: [{id, course, section, zoomId}]; rosterByClass: {classId:[students]}
  * people: [{name, id, email}] found in the file. Order: [C2] tag in the file name → Zoom meeting ID →
- * course/section text → the roster that matches the most people.
+ * course code / name / section text → the roster that matches the most people.
  */
 function pickClass(hints, classes, rosterByClass, people) {
   hints = hints || {};
@@ -229,8 +229,10 @@ function pickClass(hints, classes, rosterByClass, people) {
   }
   var text = normalizeName([hints.course, hints.topic, name].join(' '));
   var byText = classes.filter(function (c) {
-    var sec = normalizeName(c.section), crs = normalizeName(c.course);
-    return (sec && (' ' + text + ' ').indexOf(' ' + sec + ' ') >= 0) || (crs && text.indexOf(crs) >= 0);
+    var sec = normalizeName(c.section), crs = normalizeName(c.course), code = courseCode(c.course);
+    var padded = ' ' + text + ' ';
+    return (sec && padded.indexOf(' ' + sec + ' ') >= 0) || (crs && text.indexOf(crs) >= 0) ||
+      (code && (padded.indexOf(' ' + code + ' ') >= 0 || padded.indexOf(' ' + code.replace(' ', '') + ' ') >= 0));
   });
   if (byText.length === 1) return { cls: byText[0], how: 'course name' };
   var best = null, bestN = 0, tie = false;
@@ -241,4 +243,41 @@ function pickClass(hints, classes, rosterByClass, people) {
   });
   if (best && !tie) return { cls: best, how: 'roster match (' + bestN + ' students)' };
   return { cls: null, how: tie ? 'two classes match the same students' : 'no class matched' };
+}
+
+/** "HA 103: History of World Religions" → "ha 103" (the course code alone identifies a class in file names). */
+function courseCode(course) {
+  var m = String(course || '').match(/^\s*([A-Za-z]{2,5})\s*-?\s*(\d{2,4}[A-Za-z]?)\b/);
+  return m ? (m[1] + ' ' + m[2]).toLowerCase() : '';
+}
+
+/**
+ * Populi class roster export (Roster → Actions → Export this section CSV), in Populi's own order.
+ * → [{name, id, email, active}] — withdrawn / dropped students come back with active:false.
+ */
+function parseRoster(rows) {
+  var h = -1;
+  for (var i = 0; i < Math.min(rows.length, 15); i++) {
+    if (rows[i].filter(String).length >= 2 && findCol_(rows[i], /(student|name|first|last)/i) >= 0) { h = i; break; }
+  }
+  if (h < 0) return [];
+  var head = rows[h];
+  var cFirst = findCol_(head, /first/i), cLast = findCol_(head, /last/i, /last\s*(attend|update|date)/i);
+  var cName = findCol_(head, /(student|name)/i, /(id|number|first|last|email)/i);
+  var cId = findCol_(head, /(\bid\b|student\s*id|number|barcode|^id)/i, /email/i);
+  var cEmail = findCol_(head, /email/i);
+  var cStatus = findCol_(head, /^(status|enrollment)/i);
+  var out = [];
+  for (var r = h + 1; r < rows.length; r++) {
+    var row = rows[r], name = cName >= 0 ? row[cName] : '';
+    if (cFirst >= 0 || cLast >= 0) {
+      var full = ((cFirst >= 0 ? row[cFirst] : '') + ' ' + (cLast >= 0 ? row[cLast] : '')).trim();
+      if (full) name = full;
+    }
+    var id = cId >= 0 ? row[cId] : '', email = cEmail >= 0 ? row[cEmail] : '';
+    if (!name && !id) continue;
+    var st = cStatus >= 0 ? String(row[cStatus] || '') : '';
+    out.push({ name: name, id: id, email: email, active: !/(withdr|drop|cancel|incomplete)/i.test(st) });
+  }
+  return out;
 }

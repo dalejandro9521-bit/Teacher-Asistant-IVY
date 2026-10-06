@@ -29,6 +29,8 @@ function setupTerm(opts) {
     assert.ok(i > 0, 'config label ' + label);
     cfgSheet.put(i + 1, 2, value);
   };
+  // These tests check the Gmail path; the POPULI default has its own tests below.
+  env.setConfig('Email mode', (opts && opts.mode) || 'DRAFT');
   env.inbox = () => env.rootFolders.find(f => f.name === 'TA Inbox');
   env.att = () => env.sheet('Attendance').objects();
   env.row = (date, cls, id) => env.att().find(r => r.Date === date && r['Class ID'] === cls && r['Student ID'] === id);
@@ -47,14 +49,15 @@ const populiC1 = [
 test('setup creates the sheets, the Drive inbox and the 4 classes', () => {
   const env = makeEnv();
   env.gas.setup();
-  for (const n of ['Config', 'Classes', 'Students', 'Attendance', 'Assignments', 'Summary', 'Outbox', 'Inbox log']) assert.ok(env.sheet(n), n);
+  for (const n of ['Config', 'Classes', 'Students', 'Attendance', 'Assignments', 'Summary', 'Follow-ups', 'Outbox', 'Inbox log']) assert.ok(env.sheet(n), n);
   const inbox = env.rootFolders.find(f => f.name === 'TA Inbox');
   assert.ok(inbox);
   assert.deepEqual(inbox.folders.map(f => f.name).sort(), ['Needs attention', 'Processed']);
   assert.equal(env.sheet('Classes').objects().length, 4);
   const cfg = Object.fromEntries(env.sheet('Config').data.map(r => [r[0], r[1]]));
   assert.equal(cfg['Reply-To email'], 'dgomez230@ivy.edu');
-  assert.equal(cfg['Email mode'], 'DRAFT');
+  assert.equal(cfg['Email mode'], 'POPULI');
+  assert.match(cfg['Populi visibility'], /Academic Admin, Account Admin, Admissions Admin, Staff, Academic Auditor, Admissions/);
   assert.equal(cfg['Send notices from'], '2026-10-05');
   assert.equal(cfg['Inbox folder ID'], inbox.id);
   // running setup again keeps everything (no duplicates)
@@ -239,4 +242,104 @@ test('automations: 3 triggers, reinstalling does not duplicate them', () => {
   env.gas.installTriggers();
   assert.deepEqual(env.triggers.map(t => t.handler).sort(), ['assignmentReminders', 'tick', 'weeklyReport']);
   assert.deepEqual(env.triggers.find(t => t.handler === 'weeklyReport').spec, [['timeBased'], ['onWeekDay', 'FRIDAY'], ['atHour', 8]]);
+});
+
+/* ---------- Populi workflow: roster order, follow-ups for Populi, weekly grid, screenshots ---------- */
+
+// Roster → Actions → Export this section CSV (Populi's own order, not alphabetical)
+const rosterHA103 = [
+  'Student,Program,Status,Credits,Hours,Attendance',
+  'Malek Abufardeh,Biblical Studies,Enrolled,4.00,40.00,100%',
+  'Traecy Aguilar,Biblical Studies,Enrolled,4.00,40.00,100%',
+  'Qais Alanaqreh,Business Administration,Enrolled,4.00,40.00,0%',
+  'Mohammed Alohali,Business Administration,Enrolled,4.00,40.00,100%',
+  'Zed Withdrawn,Business Administration,Withdrawn,4.00,40.00,0%'
+].join('\n');
+
+function populiTerm() {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.sheet('Classes').put(4, 2, 'HA 103: History of World Religions'); // C3
+  env.inbox().addFile('HA_103_roster.csv', rosterHA103);
+  env.gas.tick();
+  return env;
+}
+
+test('Populi roster export keeps Populi\'s order and is found by the course code', () => {
+  const env = populiTerm();
+  assert.match(env.sheet('Inbox log').objects()[0].Result, /Roster in Populi order: 5 students \(5 new, 5 inactive\). Class by course name/); // 1 withdrawn + the 4 old test students
+  const c3 = env.sheet('Students').objects().filter(s => s['Class ID'] === 'C3' && s.Active === 'Yes');
+  // the 4 test students from setupTerm are not in Populi's roster → inactive; the export defines the class
+  assert.deepEqual(c3.map(s => [s.Order, s.Name]),
+    [['1', 'Malek Abufardeh'], ['2', 'Traecy Aguilar'], ['3', 'Qais Alanaqreh'], ['4', 'Mohammed Alohali']]);
+  // re-importing does not duplicate
+  env.inbox().addFile('HA_103_roster.csv', rosterHA103);
+  env.gas.tick();
+  assert.equal(env.sheet('Students').objects().filter(s => s['Class ID'] === 'C3').length, 9);
+});
+
+test('screenshots list → attendance; POPULI follow-ups group students with the same numbers', () => {
+  const env = populiTerm();
+  // What Claude writes after reading the 6:15 / 6:31 / end-of-class screenshots
+  env.inbox().addFile('Zoom screenshots 2026-10-05 [C3].csv', [
+    'Student,Date,Status,Notes',
+    'Malek Abufardeh,2026-10-05,Present,in 6:15 screenshot',
+    'Traecy Aguilar,2026-10-05,Tardy,only in 6:31 screenshot',
+    'Mohammed Alohali,2026-10-05,Absent,left before the end'
+  ].join('\n'));
+  env.setNow('2026-10-06T00:30:00Z');
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C3', 'Qais Alanaqreh').Status, 'Absent');       // not in any screenshot
+  assert.equal(env.row('2026-10-05', 'C3', 'Qais Alanaqreh').Source, 'Zoom screenshots (not in file)');
+  assert.equal(env.row('2026-10-05', 'C3', 'Traecy Aguilar').Status, 'Tardy');
+  // no Gmail at all in POPULI mode
+  assert.equal(env.mail.drafts.length + env.mail.sent.length, 0);
+  const fu = env.sheet('Follow-ups').objects();
+  assert.equal(fu.length, 2);                       // 2 absents with the same numbers share one email + 1 tardy
+  const abs = fu.find(f => f.Type === 'Student Absent');
+  assert.equal(abs['Roster #'], '3, 4');
+  assert.equal(abs.Students, 'Qais Alanaqreh, Mohammed Alohali');
+  assert.equal(abs.Count, '2');
+  assert.match(abs.Message, /^Dear student,/);
+  assert.match(abs.Message, /HA 103: History of World Religions.*6:00 PM – 7:00 PM/);
+  assert.match(abs.Message, /Absences remaining: 1/);
+  assert.match(abs['Visibility (check in Populi)'], /Academic Auditor/);
+  assert.equal(fu.find(f => f.Type === 'Student Tardy').Students, 'Traecy Aguilar');
+  assert.match(env.row('2026-10-05', 'C3', 'Qais Alanaqreh').Notified, /POPULI$/);
+  env.gas.tick();
+  assert.equal(env.sheet('Follow-ups').objects().length, 2); // not repeated
+});
+
+test('weekly grid per class: Populi order, one column per week, totals', () => {
+  const env = populiTerm();
+  env.setConfig('Term start', '2026-09-28');
+  const list = (d, rows) => ['Student,Date,Status', ...rows.map(r => r[0] + ',' + d + ',' + r[1])].join('\n');
+  env.inbox().addFile('Zoom screenshots w1 [C3].csv', list('2026-09-28', [['Malek Abufardeh', 'Present'], ['Traecy Aguilar', 'Present'], ['Qais Alanaqreh', 'Tardy'], ['Mohammed Alohali', 'Present']]));
+  env.inbox().addFile('Zoom screenshots w2 [C3].csv', list('2026-10-05', [['Malek Abufardeh', 'Present'], ['Mohammed Alohali', 'Present'], ['Qais Alanaqreh', 'Tardy']]));
+  env.gas.tick();
+  const g = env.sheet('Grid C3').data;
+  assert.deepEqual(g[0], ['#', 'Student', 'Week 1 · Sep 28', 'Week 2 · Oct 5', 'Absences', 'Tardies', 'Counted', 'Left', 'Attendance', 'Status']);
+  assert.deepEqual(g.slice(1).map(r => r.slice(0, 4)), [
+    ['1', 'Malek Abufardeh', 'P', 'P'],
+    ['2', 'Traecy Aguilar', 'P', 'A'],
+    ['3', 'Qais Alanaqreh', 'T', 'T'],
+    ['4', 'Mohammed Alohali', 'P', 'P']
+  ]);
+  assert.deepEqual(g[2].slice(4), ['1', '0', '1', '1', '90%', '1 absence left']);
+  assert.equal(env.sheet('Grid C3').backgrounds[1][3], '#f4cccc');
+});
+
+test('POPULI mode: office no-ID notice and assignment reminders become follow-ups too', () => {
+  const env = populiTerm();
+  env.setConfig('Office email', 'office@ivy.edu');
+  const sh = env.sheet('Attendance');
+  ['2026-09-21', '2026-09-28', '2026-10-05'].forEach(d => sh.appendRow([d, 'C3', 'Malek Abufardeh', 'Malek Abufardeh', 'Present', '', 'Manual', 'Yes']));
+  env.sheet('Assignments').appendRow(['C3', 'Reflection paper', '2026-10-07', '2']);
+  env.gas.tick();
+  env.gas.assignmentReminders();
+  const fu = env.sheet('Follow-ups').objects();
+  assert.equal(fu.find(f => f.Type === 'Office: no ID').Students, 'Office: office@ivy.edu');
+  assert.match(fu.find(f => f.Type === 'Assignment reminder').Students, /Email this section/);
+  // the Friday report still comes to you by Gmail
+  env.gas.weeklyReport();
+  assert.equal(env.mail.sent.length, 1);
 });

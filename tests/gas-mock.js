@@ -43,6 +43,7 @@ function makeEnv(opts) {
     setFontWeight() { return this; }
     setNumberFormat() { return this; }
     setDataValidation() { return this; }
+    setBackgrounds(b) { this.sheet.backgrounds = b; return this; }
     getSheet() { return this.sheet; }
     getRow() { return this.r; }
     getColumn() { return this.c; }
@@ -66,6 +67,7 @@ function makeEnv(opts) {
     getDataRange() { return new Range(this, 1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
     appendRow(row) { const r = this.getLastRow() + 1; row.forEach((v, j) => this.put(r, j + 1, v)); }
     clearContents() { this.data = []; }
+    clear() { this.data = []; this.backgrounds = null; }
     setFrozenRows() {}
     // test helper: rows as objects keyed by header
     objects() {
