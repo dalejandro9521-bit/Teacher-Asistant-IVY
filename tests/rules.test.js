@@ -1,0 +1,195 @@
+// Unit tests for the pure rules, parsers and messages. Run: npm test
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { makeEnv } = require('./gas-mock');
+
+const g = makeEnv().gas;
+// Objects made inside the VM have other prototypes; compare them as plain JSON.
+const plain = x => JSON.parse(JSON.stringify(x));
+const cls = { id: 'C3', course: 'BIO 101', section: '01', day: 'Monday', start: 18 * 60, end: 19 * 60, mode: 'Zoom' };
+const roster = [
+  { id: '1001', name: 'Ana Maria Lopez', email: 'ana@ivy.edu', classId: 'C3' },
+  { id: '1002', name: 'Brian Smith', email: 'brian@ivy.edu', classId: 'C3' },
+  { id: '1003', name: 'Carla Pérez', email: 'carla@ivy.edu', classId: 'C3' },
+  { id: '1004', name: 'David Kim', email: 'david@ivy.edu', classId: 'C3' }
+];
+
+test('15 / 30 minute rule', () => {
+  assert.equal(g.classify(-5), 'Present');
+  assert.equal(g.classify(0), 'Present');
+  assert.equal(g.classify(15.9), 'Present'); // 9:15:54 is still minute 15
+  assert.equal(g.classify(16), 'Tardy');
+  assert.equal(g.classify(30.5), 'Tardy');
+  assert.equal(g.classify(31), 'Absent');
+  assert.equal(g.classify(200), 'Absent');
+});
+
+test('time parsing', () => {
+  assert.equal(g.hmToMin('9:00 AM'), 540);
+  assert.equal(g.hmToMin('1:30 PM'), 810);
+  assert.equal(g.hmToMin('12:10 AM'), 10);
+  assert.equal(g.hmToMin('18:02:30'), 18 * 60 + 2.5);
+  assert.equal(g.hmToMin('10/06/2026 06:31:00 PM'), 18 * 60 + 31);
+  assert.equal(g.minToLabel(810), '1:30 PM');
+  assert.equal(g.longDate('2026-10-05'), 'Monday, October 5, 2026');
+  assert.deepEqual(plain(g.weekBounds('2026-10-09')), { start: '2026-10-05', end: '2026-10-11' });
+  assert.equal(g.termWeek('2026-10-08', '2026-09-28'), 2);
+});
+
+test('3 tardies = 1 absence, max 2, each absence 10%', () => {
+  const rec = (st, d) => ({ classId: 'C1', studentId: 'x', date: d, status: st });
+  let t = g.tally([rec('Tardy'), rec('Tardy')])['C1|x'];
+  assert.equal(t.effective, 0); assert.equal(t.remaining, 2); assert.equal(t.state, 'ok'); assert.equal(t.pct, 100);
+  t = g.tally([rec('Tardy'), rec('Tardy'), rec('Tardy')])['C1|x'];
+  assert.equal(t.effective, 1); assert.equal(t.remaining, 1); assert.equal(t.state, 'warning'); assert.equal(t.pct, 90);
+  t = g.tally([rec('Absent'), rec('Absent')])['C1|x'];
+  assert.equal(t.state, 'at-limit'); assert.equal(t.pct, 80);
+  t = g.tally([rec('Absent'), rec('Absent'), rec('Tardy'), rec('Tardy'), rec('Tardy')])['C1|x'];
+  assert.equal(t.effective, 3); assert.equal(t.state, 'failing'); assert.equal(t.pct, 70);
+  // An accepted medical excuse does not count.
+  t = g.tally([rec('Absent'), { ...rec('Absent'), excuse: 'Accepted' }])['C1|x'];
+  assert.equal(t.absences, 1); assert.equal(t.excused, 1);
+});
+
+test('status words from Populi', () => {
+  assert.equal(g.normalizeStatus('P'), 'Present');
+  assert.equal(g.normalizeStatus('late'), 'Tardy');
+  assert.equal(g.normalizeStatus('ABSENT'), 'Absent');
+  assert.equal(g.normalizeStatus('Excused'), 'Excused');
+  assert.equal(g.normalizeStatus('??'), '');
+});
+
+test('matching Zoom / Populi names to the roster', () => {
+  assert.equal(g.matchStudent({ name: 'ana maria lopez' }, roster).id, '1001');
+  assert.equal(g.matchStudent({ name: 'Ana Lopez' }, roster).id, '1001');
+  assert.equal(g.matchStudent({ name: 'iPhone (Brian Smith)' }, roster).id, '1002');
+  assert.equal(g.matchStudent({ name: 'Perez, Carla' }, roster).id, '1003');
+  assert.equal(g.matchStudent({ name: 'Dave', email: 'DAVID@ivy.edu' }, roster).id, '1004');
+  assert.equal(g.matchStudent({ name: 'Someone Else' }, roster), null);
+  assert.equal(g.matchStudent({ id: '1003', name: 'whatever' }, roster).id, '1003');
+});
+
+const zoomCsv = [
+  'Meeting ID,Topic,Start Time,End Time,User Email,Duration (Minutes),Participants',
+  '"812 3456 7890",BIO 101 Evening,10/05/2026 05:55:00 PM,10/05/2026 07:00:00 PM,ta@ivy.edu,65,6',
+  '',
+  'Name (Original Name),User Email,Join Time,Leave Time,Duration (Minutes),Guest',
+  'Diego Gomez (TA),dgomez230@ivy.edu,10/05/2026 05:55:00 PM,10/05/2026 07:00:00 PM,65,No',
+  'Ana Maria Lopez,,10/05/2026 06:10:00 PM,10/05/2026 06:40:00 PM,30,Yes',
+  'Ana Maria Lopez,,10/05/2026 06:42:00 PM,10/05/2026 07:00:00 PM,18,Yes',
+  'iPhone (Brian Smith),,10/05/2026 06:20:00 PM,10/05/2026 07:00:00 PM,40,Yes',
+  'Carla Perez,,10/05/2026 06:01:00 PM,10/05/2026 06:35:00 PM,34,Yes',
+  'Mystery Person,,10/05/2026 06:05:00 PM,10/05/2026 07:00:00 PM,55,Yes'
+].join('\n');
+
+test('Zoom report → Present / Tardy / left early / not seen', () => {
+  const rows = g.parseCSV(zoomCsv);
+  assert.equal(g.detectKind(rows), 'zoom');
+  const z = g.parseZoom(rows);
+  assert.equal(z.topic, 'BIO 101 Evening');
+  assert.equal(z.meetingId, '81234567890');
+  assert.equal(z.date, '2026-10-05');
+  const r = g.zoomStatuses(z, roster, cls, {});
+  const by = Object.fromEntries(r.results.map(x => [x.student.id, x]));
+  assert.equal(by['1001'].status, 'Present');          // rejoined after a drop: first join counts, stayed to the end
+  assert.equal(by['1002'].status, 'Tardy');
+  assert.equal(by['1002'].minutesLate, 20);
+  assert.equal(by['1003'].status, 'Absent');           // left at 6:35
+  assert.equal(by['1003'].leftEarly, true);
+  assert.deepEqual(plain(r.notSeen.map(s => s.id)), ['1004']);
+  assert.deepEqual(plain(r.unmatched), ['Diego Gomez (TA)', 'Mystery Person']);
+});
+
+test('host ending the meeting a few minutes early is not "left early"', () => {
+  const z = g.parseZoom(g.parseCSV([
+    'Name (Original Name),User Email,Join Time,Leave Time',
+    'Ana Maria Lopez,,10/05/2026 06:00:00 PM,10/05/2026 06:50:00 PM',
+    'Brian Smith,,10/05/2026 06:00:00 PM,10/05/2026 06:50:00 PM'
+  ].join('\n')));
+  const r = g.zoomStatuses(z, roster, cls, {});
+  assert.ok(r.results.every(x => x.status === 'Present'));
+});
+
+test('Populi export, long shape with check-in times', () => {
+  const rows = g.parseCSV([
+    'Student ID,Last Name,First Name,Email,Date,Status,Check-in Time',
+    '1001,Lopez,Ana Maria,ana@ivy.edu,10/5/2026,Present,9:05 AM',
+    '1002,Smith,Brian,brian@ivy.edu,10/5/2026,Present,9:22 AM',
+    '1003,Pérez,Carla,carla@ivy.edu,10/5/2026,Absent,'
+  ].join('\n'));
+  assert.equal(g.detectKind(rows), 'populi');
+  const p = g.parsePopuli(rows, 2026);
+  assert.equal(p.shape, 'long');
+  assert.equal(p.records.length, 3);
+  assert.deepEqual(plain(p.records[1]), { name: 'Brian Smith', id: '1002', email: 'brian@ivy.edu', date: '2026-10-05', status: 'Present', time: 562 });
+});
+
+test('Populi export, wide shape (one column per class date)', () => {
+  const rows = g.parseCSV([
+    'Student attendance – BIO 101-01',
+    'Student,Student ID,9/28/2026,10/5/2026',
+    '"Lopez, Ana Maria",1001,P,T',
+    '"Smith, Brian",1002,A,'
+  ].join('\n'));
+  const p = g.parsePopuli(rows, 2026);
+  assert.equal(p.shape, 'wide');
+  assert.match(p.course, /BIO 101-01/); // the title line is not taken as the header
+  assert.deepEqual(plain(p.records.map(r => [r.id, r.date, r.status])),
+    [['1001', '2026-09-28', 'Present'], ['1001', '2026-10-05', 'Tardy'], ['1002', '2026-09-28', 'Absent']]);
+});
+
+test('which class a file belongs to', () => {
+  const classes = [{ id: 'C1', course: 'ENG 111', section: '' }, { id: 'C3', course: 'BIO 101', section: '', zoomId: '812 3456 7890' }];
+  const rbc = { C1: [{ id: '9', name: 'Zed Zero' }], C3: roster };
+  assert.equal(g.pickClass({ fileName: 'export [c1].csv' }, classes, rbc, []).cls.id, 'C1');
+  assert.equal(g.pickClass({ fileName: 'x.csv', meetingId: '81234567890' }, classes, rbc, []).cls.id, 'C3');
+  assert.equal(g.pickClass({ fileName: 'x.csv', course: 'ENG 111 - Attendance' }, classes, rbc, []).cls.id, 'C1');
+  assert.equal(g.pickClass({ fileName: 'x.csv' }, classes, rbc, [{ name: 'Brian Smith' }, { name: 'Ana Lopez' }]).cls.id, 'C3');
+  assert.equal(g.pickClass({ fileName: 'x.csv' }, classes, rbc, [{ name: 'Nobody' }]).cls, null);
+});
+
+test('assignment reminders fire once per reminder day', () => {
+  const a = { classId: 'C1', title: 'Essay', due: '2026-10-10', remindDays: '3,1', reminded: '' };
+  assert.equal(g.dueReminders([a], '2026-10-06').length, 0);
+  const d = g.dueReminders([a], '2026-10-07');
+  assert.equal(d.length, 1); assert.equal(d[0].reminderKey, 3);
+  assert.equal(g.dueReminders([{ ...a, reminded: '3' }], '2026-10-08').length, 0);
+  assert.equal(g.dueReminders([{ ...a, reminded: '3' }], '2026-10-09')[0].reminderKey, 1);
+  assert.equal(g.dueReminders([{ ...a, reminded: '3,1' }], '2026-10-10').length, 0);
+  assert.equal(g.dueReminders([a], '2026-10-11').length, 0); // past due
+});
+
+test('student notice says class, time, absences, remaining and the medical excuse rules', () => {
+  const t = g.tally([{ classId: 'C3', studentId: '1001', status: 'Absent' }])['C3|1001'];
+  const m = g.buildStudentNotice({ kind: 'Absent', student: roster[0], cls, date: '2026-10-05', tally: t,
+    cfg: { taName: 'Diego Gomez', replyTo: 'dgomez230@ivy.edu' } });
+  assert.match(m.subject, /BIO 101 \(01\).*Absence on Monday, October 5, 2026/);
+  for (const s of ['marked ABSENT', '6:00 PM – 7:00 PM', 'Current absences: 1 of 2', 'Absences remaining: 1', '90%',
+    'at least 80%', 'Do not send it to your professor', 'phone number for the doctor or hospital', 'guardian or companion',
+    'within one week', 'leave before class ends', 'dgomez230@ivy.edu']) {
+    assert.ok(m.text.includes(s), 'missing: ' + s);
+  }
+  const tt = g.tally([1, 2, 3, 4].map(() => ({ classId: 'C3', studentId: '1002', status: 'Tardy' })))['C3|1002'];
+  const m2 = g.buildStudentNotice({ kind: 'Tardy', student: roster[1], cls, date: '2026-10-05', tally: tt, cfg: {}, minutesLate: 20 });
+  assert.ok(m2.text.includes('marked TARDY'));
+  assert.ok(m2.text.includes('arrived 20 minutes'));
+  assert.ok(m2.text.includes('Current absences: 1 of 2 allowed (0 absences + 1 from tardies)'));
+  assert.ok(m2.text.includes('Tardies: 4'));
+  assert.ok(!/<script/i.test(m2.html));
+});
+
+test('weekly report lists this week\'s absences and who is losing the course', () => {
+  const recs = [
+    { classId: 'C3', studentId: '1001', date: '2026-09-28', status: 'Absent' },
+    { classId: 'C3', studentId: '1001', date: '2026-10-05', status: 'Absent' },
+    { classId: 'C3', studentId: '1001', date: '2026-10-05', status: 'Absent' },
+    { classId: 'C3', studentId: '1002', date: '2026-10-05', status: 'Tardy' },
+    { classId: 'C3', studentId: '1003', date: '2026-10-05', status: 'Absent', excuse: 'Received', excuseDate: '2026-09-25' }
+  ];
+  const r = g.buildWeeklyReport({ classes: [cls], students: roster, records: recs, weekStart: '2026-10-05', weekEnd: '2026-10-11', today: '2026-10-09', cfg: {} });
+  assert.match(r.text, /Ana Maria Lopez — 2026-10-05 — Absent/);
+  assert.match(r.text, /Ana Maria Lopez — 3 counted absences .* Below 80%/);
+  assert.match(r.text, /Carla Pérez — class of 2026-10-05, received 2026-09-25 \(OVERDUE\)/);
+  assert.ok(!r.text.includes('Ana Maria Lopez — 2026-09-28'));
+  assert.match(r.subject, /3 absences, 1 losing the course/);
+});

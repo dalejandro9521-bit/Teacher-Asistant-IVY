@@ -1,0 +1,5 @@
+node_modules/
+.clasp.json
+*.csv
+*.xlsx
+.DS_Store
