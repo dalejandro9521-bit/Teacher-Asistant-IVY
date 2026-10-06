@@ -28,10 +28,11 @@ El reporte del viernes siempre te llega a ti por Gmail.
 
 1. Crea una hoja de cálculo nueva en Google Sheets con tu cuenta **dgomez230@ivy.edu** (es Google Workspace).
    Si el administrador bloquea Apps Script en esa cuenta, usa tu Gmail personal: funciona igual.
-2. Ve a **Extensiones → Apps Script**. Borra el contenido de `Código.gs` y crea 4 archivos de script con el contenido de `src/`:
-   `Rules`, `Parsers`, `Messages`, `Code` (copia y pega cada `.js`).
-   En **Configuración del proyecto**, activa "Mostrar appsscript.json" y pega `src/appsscript.json`.
-   Eso pone la hora de Virginia (Este) y activa el servicio **Drive**, que es el que hace el OCR de los screenshots.
+2. Ve a **Extensiones → Apps Script**.
+   - En **Configuración del proyecto** (engranaje), activa "Mostrar el archivo de manifiesto appsscript.json".
+   - En el editor, abre `appsscript.json` y reemplaza todo con [`src/appsscript.json`](src/appsscript.json).
+     Eso pone la hora del Este y activa el servicio **Drive**, que es el que hace el OCR.
+   - Abre `Código.gs` y reemplaza todo con [`dist/TA-Attendance.gs`](dist/TA-Attendance.gs): es todo el código en un solo archivo.
 3. Guarda, vuelve a la hoja y recárgala. Aparece el menú **TA Attendance**.
 4. **TA Attendance → Set up / repair sheets**. Acepta los permisos (Sheets, Drive, Gmail). Se crean las hojas y la carpeta **TA Inbox** en tu Drive.
 5. Llena las hojas:

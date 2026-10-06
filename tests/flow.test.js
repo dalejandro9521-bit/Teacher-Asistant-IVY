@@ -58,7 +58,7 @@ test('setup creates the sheets, the Drive inbox and the 4 classes', () => {
   assert.equal(cfg['Reply-To email'], 'dgomez230@ivy.edu');
   assert.equal(cfg['Email mode'], 'POPULI');
   assert.match(cfg['Populi visibility'], /Academic Admin, Account Admin, Admissions Admin, Staff, Academic Auditor, Admissions/);
-  assert.equal(cfg['Send notices from'], '2026-10-05');
+  assert.equal(cfg['Send notices from'], '2026-10-05'); // the term start
   assert.equal(cfg['Inbox folder ID'], inbox.id);
   // running setup again keeps everything (no duplicates)
   env.gas.setup();

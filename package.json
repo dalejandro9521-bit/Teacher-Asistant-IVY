@@ -3,7 +3,10 @@
   "private": true,
   "description": "Attendance automation for a Teacher Assistant: Populi + Zoom imports, 80% rule, notices, weekly report, reminders (Google Sheets + Apps Script).",
   "scripts": {
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "bundle": "node tools/bundle.js"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  }
 }

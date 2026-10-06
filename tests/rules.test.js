@@ -306,3 +306,9 @@ test('chat: the message time decides, from the real start of class', () => {
   assert.equal(g.screenshotStatuses({ present: ['Malek Abu\nMalek Bay\nMalek'] }, ro2, []).review.length, 0);
   assert.equal(g.screenshotStatuses({ present: ['Malek Abu\nMalek'] }, ro2, []).review.length, 1);
 });
+
+test('dist/TA-Attendance.gs is up to date with src/ (run `npm run bundle`)', () => {
+  const fs = require('fs'), path = require('path');
+  const { bundle } = require('../tools/bundle');
+  assert.equal(fs.readFileSync(path.join(__dirname, '..', 'dist', 'TA-Attendance.gs'), 'utf8'), bundle());
+});

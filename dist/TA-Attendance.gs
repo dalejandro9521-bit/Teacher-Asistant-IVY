@@ -1,4 +1,992 @@
 /**
+ * TA Attendance — paste this whole file into Apps Script as Code.gs.
+ * Generated from src/ by `npm run bundle`. Do not edit here.
+ */
+
+/* ===== Rules.js ===== */
+
+/**
+ * Attendance rules. Pure functions only (no Apps Script services) so the tests can run them in Node.
+ * In Apps Script every .gs file shares one global scope, so these are visible to Code.js.
+ */
+
+var DEFAULTS = {
+  presentUntilMin: 15,     // arrives in minutes 0-15 → Present
+  tardyUntilMin: 30,       // minutes 16-30 → Tardy; 31 or later → Absent
+  tardiesPerAbsence: 3,    // 3 tardies = 1 absence
+  maxAbsences: 2,          // more than this and the student is below 80%
+  totalSessions: 10,       // 10-week course, one session a week → each absence = 10%
+  minAttendancePct: 80,
+  noIdLimit: 2,            // more than this many check-ins without ID → notify the office
+  earlyLeaveGraceMin: 5,   // Zoom: leaving within this many minutes of the end is not "left early"
+  excuseReviewDays: 7      // the office verifies medical excuses within one week
+};
+
+var STATUS = { P: 'Present', T: 'Tardy', A: 'Absent', E: 'Excused' };
+
+function rulesConfig_(cfg) {
+  var out = {};
+  for (var k in DEFAULTS) out[k] = DEFAULTS[k];
+  for (var j in (cfg || {})) if (cfg[j] !== '' && cfg[j] != null) out[j] = cfg[j];
+  return out;
+}
+
+/** "09:00", "9:00 AM", "1:30 pm", "13:30:15" → minutes since midnight (with fraction for seconds). */
+function hmToMin(v) {
+  if (v == null || v === '') return null;
+  var m = String(v).match(/(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp])?\.?\s*[Mm]?\.?/);
+  if (!m) return null;
+  var h = +m[1], min = +m[2], s = +(m[3] || 0), ap = (m[4] || '').toUpperCase();
+  if (ap === 'P' && h < 12) h += 12;
+  if (ap === 'A' && h === 12) h = 0;
+  return h * 60 + min + s / 60;
+}
+
+/** 810 → "1:30 PM" */
+function minToLabel(min) {
+  var h = Math.floor(min / 60), m = Math.round(min % 60);
+  var ap = h >= 12 ? 'PM' : 'AM', h12 = h % 12 || 12;
+  return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
+}
+
+/** Status from how many minutes after the start the student arrived. 9:15:40 counts as minute 15 → Present. */
+function classify(minutesAfterStart, cfg) {
+  var c = rulesConfig_(cfg), m = Math.floor(minutesAfterStart);
+  if (m <= c.presentUntilMin) return STATUS.P;
+  if (m <= c.tardyUntilMin) return STATUS.T;
+  return STATUS.A;
+}
+
+/** Accepts Present/P/Tardy/Late/T/Absent/A/Excused/E (any case) → canonical status, or '' if unknown. */
+function normalizeStatus(v) {
+  var s = String(v == null ? '' : v).trim().toLowerCase();
+  if (!s) return '';
+  if (/^(p|present|presente|attended|yes|y|✓|x)$/.test(s)) return STATUS.P;
+  if (/^(t|tardy|tardío|tardio|late|tarde|l)$/.test(s)) return STATUS.T;
+  if (/^(a|absent|ausente|no|n|missed)$/.test(s)) return STATUS.A;
+  if (/^(e|excused|excusado|exc)$/.test(s)) return STATUS.E;
+  return '';
+}
+
+/**
+ * Totals per class + student.
+ * records: [{classId, studentId, date, status, excuse}] — an accepted excuse turns an Absent/Tardy into Excused.
+ * Returns { "<classId>|<studentId>": {absences, tardies, excused, present, effective, remaining, pct, state} }.
+ */
+function tally(records, cfg) {
+  var c = rulesConfig_(cfg), out = {};
+  (records || []).forEach(function (r) {
+    var key = r.classId + '|' + r.studentId;
+    var t = out[key] || (out[key] = { absences: 0, tardies: 0, excused: 0, present: 0 });
+    var st = /^accepted$/i.test(String(r.excuse || '').trim()) ? STATUS.E : normalizeStatus(r.status);
+    if (st === STATUS.A) t.absences++;
+    else if (st === STATUS.T) t.tardies++;
+    else if (st === STATUS.E) t.excused++;
+    else if (st === STATUS.P) t.present++;
+  });
+  for (var k in out) finishTally_(out[k], c);
+  return out;
+}
+
+function emptyTally(cfg) {
+  return finishTally_({ absences: 0, tardies: 0, excused: 0, present: 0 }, rulesConfig_(cfg));
+}
+
+function finishTally_(t, c) {
+  t.tardyAbsences = Math.floor(t.tardies / c.tardiesPerAbsence);
+  t.effective = t.absences + t.tardyAbsences;
+  t.remaining = c.maxAbsences - t.effective;
+  t.pct = Math.max(0, Math.round(100 - t.effective * 100 / c.totalSessions));
+  t.state = t.effective > c.maxAbsences ? 'failing'
+    : t.effective === c.maxAbsences ? 'at-limit'
+    : t.effective === c.maxAbsences - 1 ? 'warning' : 'ok';
+  return t;
+}
+
+var STATE_LABEL = {
+  ok: 'On track',
+  warning: '1 absence left',
+  'at-limit': 'At the limit (no absences left)',
+  failing: 'Below 80% (losing the course)'
+};
+
+/** "2026-10-05" → day number, for date math without time zones. */
+function dayNum(dateStr) {
+  var p = String(dateStr).split('-');
+  return Math.round(Date.UTC(+p[0], +p[1] - 1, +p[2]) / 86400000);
+}
+
+function numToDate(n) {
+  var d = new Date(n * 86400000);
+  return d.getUTCFullYear() + '-' + pad2_(d.getUTCMonth() + 1) + '-' + pad2_(d.getUTCDate());
+}
+
+function pad2_(n) { return (n < 10 ? '0' : '') + n; }
+
+var DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+var MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+  'September', 'October', 'November', 'December'];
+
+function weekday(dateStr) { return new Date(dayNum(dateStr) * 86400000).getUTCDay(); }
+
+/** "2026-10-05" → "Monday, October 5, 2026" */
+function longDate(dateStr) {
+  var p = String(dateStr).split('-');
+  return DAY_NAMES[weekday(dateStr)] + ', ' + MONTH_NAMES[+p[1] - 1] + ' ' + (+p[2]) + ', ' + p[0];
+}
+
+/** "Monday" / "Mon" / "lunes" → 1 */
+function dayIndex(v) {
+  var s = String(v || '').trim().toLowerCase().slice(0, 3);
+  var map = { sun: 0, dom: 0, mon: 1, lun: 1, tue: 2, mar: 2, wed: 3, mié: 3, mie: 3, thu: 4, jue: 4, fri: 5, vie: 5, sat: 6, sáb: 6, sab: 6 };
+  return s in map ? map[s] : -1;
+}
+
+/** Monday..Sunday around a date. */
+function weekBounds(dateStr) {
+  var n = dayNum(dateStr), wd = weekday(dateStr), mon = n - ((wd + 6) % 7);
+  return { start: numToDate(mon), end: numToDate(mon + 6) };
+}
+
+/** Week number of the term (1-based) for a date, given the first day of the term. */
+function termWeek(dateStr, termStart) {
+  if (!termStart) return null;
+  return Math.floor((dayNum(weekBounds(dateStr).start) - dayNum(weekBounds(termStart).start)) / 7) + 1;
+}
+
+/** Lowercase, no accents, no punctuation. "Gómez, José (Joe)" → "gomez jose joe" */
+function normalizeName(s) {
+  return String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Finds the roster student for a name typed in Zoom or shown in a Populi export.
+ * Tries: exact ID, exact email, full name or alias, "Last, First", every roster-name word present, then first + last word.
+ * Returns the student or null (also null when two students match equally).
+ */
+function matchStudent(probe, roster) {
+  probe = probe || {};
+  var id = String(probe.id || '').trim().toLowerCase();
+  var email = String(probe.email || '').trim().toLowerCase();
+  if (id) {
+    var byId = roster.filter(function (s) { return String(s.id).trim().toLowerCase() === id; });
+    if (byId.length === 1) return byId[0];
+  }
+  if (email) {
+    var byEmail = roster.filter(function (s) { return String(s.email || '').trim().toLowerCase() === email; });
+    if (byEmail.length === 1) return byEmail[0];
+  }
+  var raw = String(probe.name || '');
+  if (!raw.trim()) return null;
+  // Zoom: "Display Name (Original Name)" → try both parts; Populi: "Last, First" → also "First Last".
+  var variants = [];
+  var paren = raw.match(/^(.*?)\s*\((.*)\)\s*$/);
+  if (paren) variants.push(paren[1], paren[2]); else variants.push(raw);
+  variants.slice().forEach(function (v) {
+    var comma = v.split(',');
+    if (comma.length === 2) variants.push(comma[1] + ' ' + comma[0]);
+  });
+  var tests = [
+    function (s, v) {
+      // Zoom names Diego linked by hand ("Aliases" column), then the roster name itself.
+      return normalizeName(s.name) === v || (s.aliases || []).some(function (a) { return normalizeName(a) === v; });
+    },
+    function (s, v) {
+      var words = normalizeName(s.name).split(' '), have = ' ' + v + ' ';
+      return words.length > 1 && words.every(function (w) { return have.indexOf(' ' + w + ' ') >= 0; });
+    },
+    function (s, v) {
+      var words = normalizeName(s.name).split(' '), vw = v.split(' ');
+      return words.length > 1 && vw.length > 1 && words[0] === vw[0] && words[words.length - 1] === vw[vw.length - 1];
+    },
+    // "Suda Kaewngam" = "Suda Kaew-ngam"; "johnsmith" written together
+    function (s, v) { return v.length > 5 && normalizeName(s.name).replace(/ /g, '') === v.replace(/ /g, ''); },
+    // Zoom shows part of the name: "Lina Mora" ⊂ "Lina Mora Bastidas", "Ana Ruiz" ⊂ "Ana Maria Ruiz Soto"
+    function (s, v) {
+      var words = ' ' + normalizeName(s.name) + ' ', vw = v.split(' ');
+      return vw.length > 1 && vw.every(function (w) { return words.indexOf(' ' + w + ' ') >= 0; });
+    },
+    // Only a first name ("Lara"): fine when nobody else in the class has it.
+    function (s, v) { return v.indexOf(' ') < 0 && v.length > 2 && normalizeName(s.name).split(' ')[0] === v; }
+  ];
+  for (var t = 0; t < tests.length; t++) {
+    for (var i = 0; i < variants.length; i++) {
+      var v = normalizeName(variants[i]);
+      if (!v) continue;
+      var hits = roster.filter(function (s) { return tests[t](s, v); });
+      if (hits.length === 1) return hits[0];
+      if (hits.length > 1) return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Class running (or about to start / just ended) at a moment. classes: [{id, day, start, end}] with start/end in minutes.
+ */
+function classAt(classes, dateStr, nowMin, marginMin) {
+  var wd = weekday(dateStr), m = marginMin == null ? 30 : marginMin;
+  var hits = classes.filter(function (c) {
+    return dayIndex(c.day) === wd && nowMin >= c.start - m && nowMin <= c.end + m;
+  });
+  hits.sort(function (a, b) { return Math.abs(a.start - nowMin) - Math.abs(b.start - nowMin); });
+  return hits[0] || null;
+}
+
+/**
+ * Assignment reminders due today.
+ * assignments: [{classId, title, due:"yyyy-mm-dd", remindDays:"3,1", reminded:"3"}]
+ * Returns [{assignment, daysLeft}] — one per assignment (the closest reminder not sent yet).
+ */
+function dueReminders(assignments, todayStr) {
+  var today = dayNum(todayStr), out = [];
+  (assignments || []).forEach(function (a) {
+    if (!a.due || !a.title) return;
+    var left = dayNum(a.due) - today;
+    if (left < 0) return;
+    var days = String(a.remindDays == null || a.remindDays === '' ? '2' : a.remindDays)
+      .split(/[,; ]+/).filter(String).map(Number).filter(function (n) { return !isNaN(n); });
+    var sent = String(a.reminded || '').split(/[,; ]+/).filter(String).map(Number);
+    // Fire the reminder for the smallest "days before" that has been reached and not sent yet.
+    var pending = days.filter(function (d) { return left <= d && sent.indexOf(d) < 0; });
+    if (!pending.length) return;
+    var d = Math.min.apply(null, pending);
+    // Skip if a closer reminder was already sent (e.g. "3,1" and 1 already went out).
+    if (sent.some(function (s) { return s <= d; })) return;
+    out.push({ assignment: a, daysLeft: left, reminderKey: d });
+  });
+  return out;
+}
+
+/* ---------- fuzzy names: second names, Z/S, typos ---------- */
+
+/** Spelling-insensitive form of a name word: z→s, y→i, v→b, ph→f, k/q→c, no h, no double letters. */
+function soundKey(w) {
+  return normalizeName(w).replace(/ph/g, 'f').replace(/z/g, 's').replace(/y/g, 'i').replace(/v/g, 'b')
+    .replace(/[kq]/g, 'c').replace(/h/g, '').replace(/(.)\1+/g, '$1');
+}
+
+function editDistance(a, b) {
+  if (a === b) return 0;
+  var prev = [], cur, i, j;
+  for (j = 0; j <= b.length; j++) prev[j] = j;
+  for (i = 1; i <= a.length; i++) {
+    cur = [i];
+    for (j = 1; j <= b.length; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+/** 1 = same word, 0.8 = same sound or one/two letters off, 0.6 = cut-off word ("Sharj…"), 0 = different. */
+function wordScore(a, b) {
+  if (a === b) return 1;
+  var ka = soundKey(a), kb = soundKey(b);
+  if (ka && ka === kb) return 0.8;
+  var n = Math.min(ka.length, kb.length);
+  if (n >= 4 && editDistance(ka, kb) <= (n >= 7 ? 2 : 1)) return 0.8;
+  if (a.length >= 4 && b.indexOf(a) === 0) return 0.6;
+  return 0;
+}
+
+var NAME_NOISE_ = /^(guest|host|co|cohost|me|iphone|ipad|android|galaxy|samsung|phone|laptop|pc|mac|macbook|zoom|user|de|del|la|el|y|the|of)$/;
+
+/**
+ * Who a Zoom/chat name could be, best first: [{student, score}].
+ * The score adds up how well each word of the name matches a different word of the student's name, so a student
+ * who uses only a second name ("Naomy Ferreira" for "Angie Naomy Ferreira Beltran") still scores high.
+ */
+function nameCandidates(probe, roster) {
+  var words = normalizeName(String(probe || '').replace(/\(.*?\)/g, ' ')).split(' ')
+    .filter(function (w) { return w.length >= 2 && !/^\d+$/.test(w) && !NAME_NOISE_.test(w); });
+  if (!words.length) return [];
+  var joined = words.join('');
+  var out = [];
+  roster.forEach(function (s) {
+    var sw = normalizeName(s.name).split(' ').filter(String), used = {}, score = 0, hits = 0;
+    words.forEach(function (w) {
+      var best = 0, bi = -1;
+      sw.forEach(function (x, i) {
+        if (used[i]) return;
+        var sc = wordScore(w, x);
+        if (sc > best) { best = sc; bi = i; }
+      });
+      if (bi >= 0) { used[bi] = true; score += best; hits++; }
+    });
+    // Name written all together: "muhammadsharjeelarshad"
+    if (words.length === 1 && joined.length >= 10) {
+      var all = soundKey(sw.join(''));
+      if (editDistance(soundKey(joined), all) <= 2) { score = Math.max(score, 1.8); hits = 2; }
+    }
+    if (score > 0) out.push({ student: s, score: Math.round(score * 10) / 10, hits: hits, words: words.length });
+  });
+  return out.sort(function (a, b) { return b.score - a.score; });
+}
+
+/**
+ * A name from a screenshot → {student, how} when sure, {doubt:[students]} when it could be more than one or the match
+ * is weak (Diego decides), or null when nobody is close.
+ * Sure = the exact rules of matchStudent, or two words matching well and clearly ahead of anyone else.
+ */
+function resolveName(probe, roster) {
+  var exact = matchStudent({ name: probe }, roster);
+  if (exact) return { student: exact, how: 'exact' };
+  var c = nameCandidates(probe, roster);
+  if (!c.length) return null;
+  var top = c[0], second = c[1];
+  var strong = top.hits >= 2 && top.score >= 1.6;
+  var clear = !second || second.score <= top.score - 0.8;
+  if (strong && clear) return { student: top.student, how: 'similar' };
+  var close = c.filter(function (x) { return x.score >= Math.max(0.6, top.score - 0.8); }).slice(0, 3);
+  // A single cut-off or misspelt word is too little to suggest anyone.
+  if (top.score < 0.8) return null;
+  return { doubt: close.map(function (x) { return x.student; }) };
+}
+
+/* ===== Parsers.js ===== */
+
+/**
+ * Reading the files dropped in the Drive inbox: Populi attendance exports and Zoom participant reports.
+ * Pure functions (no Apps Script services).
+ */
+
+/** CSV (or tab-separated text pasted from a spreadsheet) → array of rows. Handles quotes and a BOM. */
+function parseCSV(text) {
+  text = String(text || '').replace(/^﻿/, '');
+  var firstLine = text.split(/\r?\n/)[0] || '';
+  var sep = (firstLine.split('\t').length > firstLine.split(',').length) ? '\t' : ',';
+  var rows = [], row = [], cell = '', q = false;
+  for (var i = 0; i < text.length; i++) {
+    var ch = text[i];
+    if (q) {
+      if (ch === '"') {
+        if (text[i + 1] === '"') { cell += '"'; i++; } else q = false;
+      } else cell += ch;
+    } else if (ch === '"') q = true;
+    else if (ch === sep) { row.push(cell); cell = ''; }
+    else if (ch === '\n' || ch === '\r') {
+      if (ch === '\r' && text[i + 1] === '\n') i++;
+      row.push(cell); rows.push(row); row = []; cell = '';
+    } else cell += ch;
+  }
+  if (cell !== '' || row.length) { row.push(cell); rows.push(row); }
+  return rows.map(function (r) { return r.map(function (c) { return String(c).trim(); }); })
+    .filter(function (r) { return r.some(function (c) { return c !== ''; }); });
+}
+
+/** Many date spellings → "yyyy-mm-dd" (or '' if it isn't a date). */
+function parseDateCell(v, defaultYear) {
+  if (v instanceof Date && !isNaN(v)) return v.getFullYear() + '-' + pad2_(v.getMonth() + 1) + '-' + pad2_(v.getDate());
+  var s = String(v == null ? '' : v).trim();
+  if (!s) return '';
+  var m = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return m[1] + '-' + pad2_(+m[2]) + '-' + pad2_(+m[3]);
+  m = s.match(/(?:^|\s)(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?(?:\s|$)/);
+  if (m) {
+    var y = m[3] ? (m[3].length === 2 ? 2000 + +m[3] : +m[3]) : defaultYear;
+    if (!y || +m[1] > 12 || +m[2] > 31) return '';
+    return y + '-' + pad2_(+m[1]) + '-' + pad2_(+m[2]);
+  }
+  m = s.match(/\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2})(?:,?\s+(\d{4}))?/i);
+  if (m) {
+    var mo = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'].indexOf(m[1].toLowerCase()) + 1;
+    var yr = m[3] ? +m[3] : defaultYear;
+    if (!yr) return '';
+    return yr + '-' + pad2_(mo) + '-' + pad2_(+m[2]);
+  }
+  return '';
+}
+
+function findCol_(header, re, not) {
+  for (var i = 0; i < header.length; i++) {
+    var h = String(header[i]);
+    if (re.test(h) && !(not && not.test(h))) return i;
+  }
+  return -1;
+}
+
+/** 'zoom' if it looks like a Zoom participants report, otherwise 'populi'. */
+function detectKind(rows) {
+  for (var i = 0; i < Math.min(rows.length, 15); i++) {
+    if (rows[i].some(function (c) { return /join\s*time/i.test(c); })) return 'zoom';
+  }
+  return 'populi';
+}
+
+/**
+ * Zoom participants report (Reports → Usage → Participants, or the meeting's participant export).
+ * → {kind, topic, meetingId, date, participants:[{name, email, join, leave}]} — join/leave in minutes since midnight.
+ */
+function parseZoom(rows) {
+  var out = { kind: 'zoom', topic: '', meetingId: '', date: '', participants: [] };
+  var h = -1;
+  for (var i = 0; i < rows.length; i++) {
+    var ti = findCol_(rows[i], /^topic$/i), mi = findCol_(rows[i], /meeting\s*id/i);
+    if ((ti >= 0 || mi >= 0) && rows[i + 1] && findCol_(rows[i], /join\s*time/i) < 0) {
+      if (ti >= 0) out.topic = rows[i + 1][ti] || '';
+      if (mi >= 0) out.meetingId = String(rows[i + 1][mi] || '').replace(/\D/g, '');
+    }
+    if (findCol_(rows[i], /join\s*time/i) >= 0) { h = i; break; }
+  }
+  if (h < 0) return out;
+  var head = rows[h];
+  var cName = findCol_(head, /^(name|participant|user name|display name)/i);
+  var cEmail = findCol_(head, /email/i);
+  var cJoin = findCol_(head, /join\s*time/i), cLeave = findCol_(head, /leave\s*time/i);
+  var dates = {};
+  for (var r = h + 1; r < rows.length; r++) {
+    var row = rows[r];
+    if (findCol_(row, /join\s*time/i) >= 0) continue; // repeated header
+    var join = hmToMin(row[cJoin]), leave = cLeave >= 0 ? hmToMin(row[cLeave]) : null;
+    if (join == null) continue;
+    var d = parseDateCell(row[cJoin]);
+    if (d) dates[d] = (dates[d] || 0) + 1;
+    out.participants.push({
+      name: cName >= 0 ? row[cName] : '',
+      email: cEmail >= 0 ? row[cEmail] : '',
+      join: join,
+      leave: leave == null ? join : leave
+    });
+  }
+  out.date = Object.keys(dates).sort(function (a, b) { return dates[b] - dates[a]; })[0] || '';
+  return out;
+}
+
+/**
+ * Zoom report → status per roster student.
+ * cls: {start, end} in minutes. Returns {results:[{student, status, minutesLate, join, leave, leftEarly, names}], unmatched:[names], notSeen:[students]}
+ * - First time the student joined decides Present / Tardy / Absent (same 15 / 30 minute rule).
+ * - Leaving before the class ends (or before the host ended the meeting) by more than the grace minutes → Absent.
+ */
+function zoomStatuses(zoom, roster, cls, cfg) {
+  var c = rulesConfig_(cfg), byStudent = {}, unmatched = [], seen = {};
+  var meetingEnd = 0;
+  zoom.participants.forEach(function (p) { if (p.leave > meetingEnd) meetingEnd = p.leave; });
+  var endRef = Math.min(cls.end, meetingEnd || cls.end);
+  zoom.participants.forEach(function (p) {
+    var s = matchStudent({ name: p.name, email: p.email }, roster);
+    if (!s) {
+      if (unmatched.indexOf(p.name) < 0) unmatched.push(p.name);
+      return;
+    }
+    var b = byStudent[s.id] || (byStudent[s.id] = { student: s, join: p.join, leave: p.leave, names: [] });
+    b.join = Math.min(b.join, p.join);
+    b.leave = Math.max(b.leave, p.leave);
+    if (b.names.indexOf(p.name) < 0) b.names.push(p.name);
+  });
+  var results = [];
+  for (var id in byStudent) {
+    var b = byStudent[id];
+    seen[id] = true;
+    var late = b.join - cls.start;
+    var st = classify(late, c), left = false;
+    if (st !== STATUS.A && b.leave < endRef - c.earlyLeaveGraceMin) { st = STATUS.A; left = true; }
+    results.push({ student: b.student, status: st, minutesLate: Math.max(0, Math.floor(late)), join: b.join, leave: b.leave, leftEarly: left, names: b.names });
+  }
+  var notSeen = roster.filter(function (s) { return !seen[s.id]; });
+  return { results: results, unmatched: unmatched, notSeen: notSeen };
+}
+
+/**
+ * Populi attendance export. Understands both shapes:
+ *  - long: one row per student per meeting, with a Date column and a Status column (and maybe a check-in time);
+ *  - wide: one row per student, one column per meeting date, cells like Present / P / Absent / Tardy / Excused.
+ * → {kind:'populi', shape:'long'|'wide', course, records:[{name, id, email, date, status, time}], skipped}
+ *   status may be '' when only a check-in time is given (Code.js classifies it with the class start time).
+ */
+function parsePopuli(rows, defaultYear) {
+  var out = { kind: 'populi', shape: '', course: '', records: [], skipped: 0 };
+  // Header = first row that has a name-ish column.
+  var h = -1;
+  for (var i = 0; i < Math.min(rows.length, 15); i++) {
+    // A title line ("Student attendance report") has one cell; the header has several.
+    if (rows[i].filter(String).length >= 2 && findCol_(rows[i], /(student|name|first|last)/i) >= 0) { h = i; break; }
+  }
+  if (h < 0) return out;
+  // A course title above the header ("ENG 111-01 Attendance") helps pick the class.
+  if (h > 0) out.course = rows.slice(0, h).map(function (r) { return r.join(' '); }).join(' ').trim();
+  var head = rows[h];
+  var cFirst = findCol_(head, /first/i), cLast = findCol_(head, /last/i, /last\s*(attend|update|date)/i);
+  var cName = findCol_(head, /(student|name)/i, /(id|number|first|last|email)/i);
+  var cId = findCol_(head, /(\bid\b|student\s*id|number|barcode|^id)/i, /email/i);
+  var cEmail = findCol_(head, /email/i);
+  var cCourse = findCol_(head, /(course|class|section)/i);
+  var cDate = findCol_(head, /date/i, /(update|created|modified)/i);
+  var cStatus = findCol_(head, /(status|attendance)/i, /date/i);
+  var cTime = findCol_(head, /(check.?in|scan|arriv|time)/i, /(date|update)/i);
+
+  function who(row) {
+    var name = cName >= 0 ? row[cName] : '';
+    if (cFirst >= 0 || cLast >= 0) {
+      var full = ((cFirst >= 0 ? row[cFirst] : '') + ' ' + (cLast >= 0 ? row[cLast] : '')).trim();
+      if (full) name = full;
+    }
+    return { name: name, id: cId >= 0 ? row[cId] : '', email: cEmail >= 0 ? row[cEmail] : '' };
+  }
+
+  // Wide format: columns whose header is a date.
+  var dateCols = [];
+  head.forEach(function (cell, idx) {
+    if (idx === cDate) return;
+    var d = parseDateCell(cell, defaultYear);
+    if (d) dateCols.push({ idx: idx, date: d });
+  });
+
+  out.shape = (cDate >= 0 && (cStatus >= 0 || cTime >= 0)) ? 'long' : 'wide';
+  for (var r = h + 1; r < rows.length; r++) {
+    var row = rows[r], p = who(row);
+    if (!p.name && !p.id && !p.email) continue;
+    if (cCourse >= 0 && !out.course) out.course = row[cCourse];
+    if (out.shape === 'long') {
+      var date = parseDateCell(row[cDate], defaultYear);
+      if (!date) { out.skipped++; continue; }
+      // The check-in time may be in its own column or inside the date cell ("10/5/2026 9:12 AM").
+      var tm = cTime >= 0 ? hmToMin(row[cTime]) : hmToMin(row[cDate]);
+      var st = cStatus >= 0 ? normalizeStatus(row[cStatus]) : '';
+      if (!st && tm == null) { out.skipped++; continue; }
+      out.records.push({ name: p.name, id: p.id, email: p.email, date: date, status: st, time: tm });
+    } else {
+      dateCols.forEach(function (dc) {
+        var st2 = normalizeStatus(row[dc.idx]);
+        if (st2) out.records.push({ name: p.name, id: p.id, email: p.email, date: dc.date, status: st2, time: null });
+        else if (String(row[dc.idx] || '').trim()) out.skipped++;
+      });
+    }
+  }
+  return out;
+}
+
+/**
+ * Which class a file belongs to.
+ * hints: {fileName, course, topic, meetingId}; classes: [{id, course, section, zoomId}]; rosterByClass: {classId:[students]}
+ * people: [{name, id, email}] found in the file. Order: [C2] tag in the file name → Zoom meeting ID →
+ * course code / name / section text → the roster that matches the most people.
+ */
+function pickClass(hints, classes, rosterByClass, people) {
+  hints = hints || {};
+  var name = String(hints.fileName || '');
+  var tag = name.match(/\[([^\]]+)\]/);
+  if (tag) {
+    var t = classes.filter(function (c) { return String(c.id).toLowerCase() === tag[1].trim().toLowerCase(); });
+    if (t.length) return { cls: t[0], how: 'file name tag' };
+  }
+  if (hints.meetingId) {
+    var z = classes.filter(function (c) { return String(c.zoomId || '').replace(/\D/g, '') === hints.meetingId; });
+    if (z.length === 1) return { cls: z[0], how: 'Zoom meeting ID' };
+  }
+  var text = normalizeName([hints.course, hints.topic, name].join(' ')), padded = ' ' + text + ' ';
+  // Course code ("HA 105") first, then the full course name, then the section number (weakest: "01" is common).
+  var tests = [
+    function (c) { var code = courseCode(c.course); return code && (padded.indexOf(' ' + code + ' ') >= 0 || padded.indexOf(' ' + code.replace(' ', '') + ' ') >= 0); },
+    function (c) { var crs = normalizeName(c.course); return crs && text.indexOf(crs) >= 0; },
+    function (c) { var sec = normalizeName(c.section); return sec && padded.indexOf(' ' + sec + ' ') >= 0; }
+  ];
+  var byText = [];
+  for (var k = 0; k < tests.length && byText.length !== 1; k++) {
+    var hits = classes.filter(tests[k]);
+    if (hits.length) byText = hits;
+  }
+  if (byText.length === 1) return { cls: byText[0], how: 'course name' };
+  var best = null, bestN = 0, tie = false;
+  (byText.length ? byText : classes).forEach(function (c) {
+    var roster = rosterByClass[c.id] || [];
+    var n = (people || []).filter(function (p) { return matchStudent(p, roster); }).length;
+    if (n > bestN) { best = c; bestN = n; tie = false; } else if (n && n === bestN) tie = true;
+  });
+  if (best && !tie) return { cls: best, how: 'roster match (' + bestN + ' students)' };
+  return { cls: null, how: tie ? 'two classes match the same students' : 'no class matched' };
+}
+
+/** "HA 103: History of World Religions" → "ha 103" (the course code alone identifies a class in file names). */
+function courseCode(course) {
+  var m = String(course || '').match(/^\s*([A-Za-z]{2,5})\s*-?\s*(\d{2,4}[A-Za-z]?)\b/);
+  return m ? (m[1] + ' ' + m[2]).toLowerCase() : '';
+}
+
+/**
+ * Populi class roster export (Roster → Actions → Export this section CSV), in Populi's own order.
+ * → [{name, id, email, active}] — withdrawn / dropped students come back with active:false.
+ */
+function parseRoster(rows) {
+  var h = -1;
+  for (var i = 0; i < Math.min(rows.length, 15); i++) {
+    if (rows[i].filter(String).length >= 2 && findCol_(rows[i], /(student|name|first|last)/i) >= 0) { h = i; break; }
+  }
+  if (h < 0) return [];
+  var head = rows[h];
+  var cFirst = findCol_(head, /first/i), cLast = findCol_(head, /last/i, /last\s*(attend|update|date)/i);
+  var cName = findCol_(head, /(student|name)/i, /(id|number|first|last|email)/i);
+  var cId = findCol_(head, /(\bid\b|student\s*id|number|barcode|^id)/i, /email/i);
+  var cEmail = findCol_(head, /email/i);
+  var cStatus = findCol_(head, /^(status|enrollment)/i);
+  var cType = findCol_(head, /^(type|role)$/i);
+  var out = [];
+  for (var r = h + 1; r < rows.length; r++) {
+    var row = rows[r], name = cName >= 0 ? row[cName] : '';
+    if (cFirst >= 0 || cLast >= 0) {
+      var full = ((cFirst >= 0 ? row[cFirst] : '') + ' ' + (cLast >= 0 ? row[cLast] : '')).trim();
+      if (full) name = full;
+    }
+    var id = cId >= 0 ? row[cId] : '', email = cEmail >= 0 ? row[cEmail] : '';
+    if (!name && !id) continue;
+    if (cType >= 0 && row[cType] && !/student/i.test(row[cType])) continue; // professors and the TA are listed too
+    var st = cStatus >= 0 ? String(row[cStatus] || '') : '';
+    out.push({ name: name, id: id, email: email, active: !/(withdr|drop|cancel|incomplete)/i.test(st) });
+  }
+  return out;
+}
+
+/**
+ * Which moment a screenshot folder is, from its name. Diego's folders: "1. Present", "2. Tardy", "3. Absent"
+ * (the last check before leaving). Also understands "6.15", "6.31", "End", "Final", "Salida".
+ */
+function screenshotPhase(folderName) {
+  var n = String(folderName || '').toLowerCase();
+  if (/present|presente|:15|\.15\b|\b15\b/.test(n)) return 'present';
+  if (/tard|:31|\.31\b|\b31\b/.test(n)) return 'tardy';
+  if (/absent|ausente|\\bend\\b|final|salida|leav|check/.test(n)) return 'end';
+  return '';
+}
+
+var ZOOM_UI_WORDS_ = /\b(professor|prof|teacher|instructor|everyone|screen|type message|message|who can see|new chat|to|mute|unmute|participants?|invite|waiting room|chat|raise|lower|hand|reactions?|share|record|security|breakout|apps|whiteboard|leave|end|more|rename|search|in the meeting|host|co-host|guest|me|video|audio|view|speaker|gallery|zoom|meeting|minutes?)\b/;
+
+/** Chat header as OCR reads it: "Maide 6:44 PM", "From Ana Lopez to Everyone 6:02 PM". */
+var CHAT_HEADER_ = /^(?:from\s+)?(.{2,60}?)(?:\s+to\s+(?:everyone|me|all)\b.*?)?\s+(\d{1,2}:\d{2}\s*[AaPp]\.?\s*[Mm]\.?)\s*$/;
+
+/**
+ * One screenshot's OCR text → names on video tiles and chat messages.
+ * A chat message is the header line (sender + time) and the line under it (what the student typed: their name).
+ * → {tiles:[name], chat:[{names:[typed, sender], time}]}
+ */
+function readScreenshotText(text) {
+  var lines = String(text || '').split(/\r?\n/).map(function (l) { return l.replace(/[|•·]/g, ' ').trim(); })
+    .filter(String);
+  var out = { tiles: [], chat: [] };
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(CHAT_HEADER_);
+    if (m) {
+      var next = lines[i + 1] && !CHAT_HEADER_.test(lines[i + 1]) ? lines[++i] : '';
+      out.chat.push({ names: [next, m[1]].filter(String), time: hmToMin(m[2]) });
+    } else if (!/^\d{1,2}:\d{2}/.test(lines[i])) out.tiles.push(lines[i]);
+  }
+  return out;
+}
+
+/**
+ * Text read (OCR) from the screenshots of each moment → status per roster student. Diego's rules for Zoom:
+ * - "present" shots (minutes 0–15), "tardy" shots (16–30), "end" shot (before he leaves, about 1 hour in).
+ * - In present → Present, even if missing from the tardy shot, as long as the end shot confirms them.
+ * - First seen in tardy → Tardy (if still there at the end).
+ * - Seen earlier but not in the end shot → Absent (disconnected), with a note.
+ * - Only in the end shot (joined after minute 30) or never seen → Absent.
+ * - Chat: what the student typed (their name) and the message time say when they joined, measured from the
+ *   real start of class (opts.start, minutes). Chat never proves someone is still connected at the end.
+ * Names: exact or clearly similar → that student; two possible students or a weak match → review (Diego decides).
+ * Without end shots, nobody is marked as disconnected.
+ * phases: {present:[text], tardy:[text], end:[text]} (one OCR text per screenshot); ignore: names that are not students;
+ * opts: {start, cfg}.
+ * Returns {results:[{student, status, leftEarly, note}], notSeen:[students], review:[{name, seenIn:[...], candidates:[students]}]}.
+ */
+function screenshotStatuses(phases, roster, ignore, opts) {
+  opts = opts || {};
+  var c = rulesConfig_(opts.cfg), start = opts.start;
+  var seen = { present: {}, tardy: {}, end: {}, late: {} }, chatAt = {}, review = {}, order = [];
+  var skip = (ignore || []).map(function (n) { return { id: n, name: n }; });
+
+  function note(name, ph, r) {
+    var key = normalizeName(name);
+    if (!review[key]) { review[key] = { name: name, seenIn: [], candidates: r ? r.doubt : [] }; order.push(key); }
+    if (review[key].seenIn.indexOf(ph) < 0) review[key].seenIn.push(ph);
+  }
+  function see(names, ph, time) {
+    var doubt = null, unknown = null;
+    for (var i = 0; i < names.length; i++) {
+      var r = resolveName(names[i], roster);
+      if (r && r.student) {
+        seen[ph][r.student.id] = true;
+        if (time != null && !(r.student.id in chatAt)) chatAt[r.student.id] = time;
+        return;
+      }
+      if (skip.length && (matchStudent({ name: names[i] }, skip) || nameCandidates(names[i], skip).some(function (x) { return x.score >= 1; }))) return;
+      if (r && r.doubt && !doubt) doubt = { name: names[i], r: r };
+      else if (!r && !unknown && looksLikeName_(names[i])) unknown = names[i];
+    }
+    if (doubt) note(doubt.name, ph, doubt.r);
+    else if (unknown) note(unknown, ph, null);
+  }
+
+  ['present', 'tardy', 'end'].forEach(function (ph) {
+    (phases[ph] || []).forEach(function (text) {
+      var shot = readScreenshotText(text);
+      shot.tiles.forEach(function (t) { see([t], ph); });
+      shot.chat.forEach(function (m) {
+        // The message time decides; without a start time, the folder does (but chat never counts as "still there").
+        var when = start != null && m.time != null ? classify(m.time - start, c) : (ph === 'end' ? '' : ph === 'present' ? STATUS.P : STATUS.T);
+        var cph = when === STATUS.P ? 'present' : when === STATUS.T ? 'tardy' : 'late';
+        see(m.names, cph, m.time);
+      });
+    });
+  });
+
+  var hasEnd = (phases.end || []).some(function (t) { return String(t || '').trim(); });
+  var hasTardy = (phases.tardy || []).some(function (t) { return String(t || '').trim(); });
+  var results = [], notSeen = [];
+  roster.forEach(function (s) {
+    var p = seen.present[s.id], t = seen.tardy[s.id], e = seen.end[s.id];
+    var r = { student: s, status: '', leftEarly: false, note: '' };
+    var chat = s.id in chatAt ? ' (chat ' + minToLabel(chatAt[s.id]) + ')' : '';
+    if (p || t) {
+      r.status = p ? STATUS.P : STATUS.T;
+      if (hasEnd && !e) {
+        r.status = STATUS.A; r.leftEarly = true;
+        r.note = (p && t ? 'In the 15 and 31 minute screenshots' : p ? 'Only in the 15 minute screenshot' : 'Tardy (31 minute screenshot)') +
+          chat + ', not in the last screenshot: disconnected before the 1-hour check';
+      } else if (p && !t && e && hasTardy) r.note = 'Not in the 31 minute screenshot; confirmed in the last one' + chat;
+      else if (chat) r.note = 'Name in chat' + chat;
+    } else if (e || seen.late[s.id]) {
+      r.status = STATUS.A;
+      r.note = 'Joined after minute 30' + chat + (e && !chat ? ' (only in the last screenshot)' : '');
+    } else { notSeen.push(s); return; }
+    results.push(r);
+  });
+  // Don't ask about "Malek" if every possible Malek was already recognized in those screenshots.
+  var questions = order.map(function (k) { return review[k]; }).filter(function (q) {
+    return !q.candidates.length || !q.candidates.every(function (s) {
+      return q.seenIn.every(function (ph) { return seen[ph][s.id]; });
+    });
+  });
+  return { results: results, notSeen: notSeen, review: questions };
+}
+
+function looksLikeName_(line) {
+  var n = normalizeName(String(line).replace(/\(.*?\)/g, ' '));
+  var words = n.split(' ').filter(function (w) { return /[a-z]{2}/.test(w); });
+  return words.length >= 1 && words.length <= 5 && n.length <= 45 && !ZOOM_UI_WORDS_.test(n);
+}
+
+/* ===== Messages.js ===== */
+
+/**
+ * Email texts: student notices, office notices, assignment reminders and the Friday report.
+ * Pure functions (no Apps Script services). Every builder returns {subject, text, html}.
+ */
+
+function esc_(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c];
+  });
+}
+
+function textToHtml_(text) {
+  return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5;color:#222">' +
+    text.split(/\n{2,}/).map(function (p) {
+      var lines = p.split('\n');
+      if (lines.every(function (l) { return /^• /.test(l); })) {
+        return '<ul style="margin:0 0 12px 18px;padding:0">' + lines.map(function (l) { return '<li>' + esc_(l.slice(2)) + '</li>'; }).join('') + '</ul>';
+      }
+      return '<p style="margin:0 0 12px">' + lines.map(esc_).join('<br>') + '</p>';
+    }).join('') + '</div>';
+}
+
+/** "ENG 111 (Section 01) — Monday, October 5, 2026, 9:00 AM – 1:00 PM (in person)" pieces. */
+function classLabel(cls) {
+  return cls.course + (cls.section ? ' (' + cls.section + ')' : '');
+}
+
+function classTime(cls) {
+  return minToLabel(cls.start) + ' – ' + minToLabel(cls.end);
+}
+
+function signature_(cfg) {
+  return [cfg.taName || 'Teacher Assistant', cfg.taTitle || 'Teacher Assistant', cfg.replyTo || ''].filter(String).join('\n');
+}
+
+function medicalExcuseText_(cfg) {
+  var office = cfg.officeName || 'the main office';
+  return 'If you missed class for a medical reason, please send your medical excuse to me or to ' + office +
+    '. Do not send it to your professor. The excuse must include:\n' +
+    '• Your full name\n' +
+    '• A phone number for the doctor or hospital, so our office can contact them and verify it\n' +
+    '• If the appointment was for someone else who could not go on their own, the note must say that you were there as their guardian or companion\n\n' +
+    'The office verifies the excuse and updates your attendance within one week.';
+}
+
+function summaryLines_(t, cfg) {
+  var c = rulesConfig_(cfg);
+  var lines = [
+    '• Current absences: ' + t.effective + ' of ' + c.maxAbsences + ' allowed' +
+      (t.tardyAbsences ? ' (' + t.absences + ' absence' + (t.absences === 1 ? '' : 's') + ' + ' + t.tardyAbsences + ' from tardies)' : ''),
+    '• Absences remaining: ' + Math.max(0, t.remaining),
+    '• Tardies: ' + t.tardies + ' (every ' + c.tardiesPerAbsence + ' tardies count as 1 absence)',
+    '• Current attendance: ' + t.pct + '% (minimum required: ' + c.minAttendancePct + '%)'
+  ];
+  if (t.excused) lines.push('• Excused: ' + t.excused);
+  return lines.join('\n');
+}
+
+function standingSentence_(t, cfg) {
+  var c = rulesConfig_(cfg);
+  if (t.state === 'failing') {
+    return 'You now have more than ' + c.maxAbsences + ' absences, so your attendance is below the ' + c.minAttendancePct +
+      '% required to pass this course. Please contact me or the office as soon as possible.';
+  }
+  if (t.state === 'at-limit') return 'You have no absences left. One more absence (or ' + (c.tardiesPerAbsence - t.tardies % c.tardiesPerAbsence) + ' more tard' + ((c.tardiesPerAbsence - t.tardies % c.tardiesPerAbsence) === 1 ? 'y' : 'ies') + ') will put you below ' + c.minAttendancePct + '%.';
+  return 'You need at least ' + c.minAttendancePct + '% attendance to pass. Over the ' + c.totalSessions + '-week course, that means no more than ' + c.maxAbsences + ' absences.';
+}
+
+/**
+ * Notice to a student after a class.
+ * kind: 'Absent' | 'Tardy' | 'LeftEarly'
+ * p: {kind, student:{name,email}, cls:{course,section,start,end,mode}, date, tally, cfg, minutesLate}
+ */
+function buildStudentNotice(p) {
+  var cfg = p.cfg || {}, c = rulesConfig_(cfg), s = p.student, cls = p.cls, t = p.tally;
+  var when = longDate(p.date) + ', ' + classTime(cls);
+  var first = String(s.name || '').split(/\s+/)[0] || 'student';
+  var what, subjectWord;
+  if (p.kind === 'Tardy') {
+    subjectWord = 'Tardy';
+    what = 'You were marked TARDY for ' + classLabel(cls) + ' on ' + when + '.' +
+      (p.minutesLate ? ' You arrived ' + p.minutesLate + ' minutes after the start of class.' : '') +
+      '\n\nStudents who arrive in the first ' + c.presentUntilMin + ' minutes are present, from minute ' + (c.presentUntilMin + 1) +
+      ' to ' + c.tardyUntilMin + ' they are tardy, and from minute ' + (c.tardyUntilMin + 1) + ' on they are absent. Every ' +
+      c.tardiesPerAbsence + ' tardies count as 1 absence.';
+  } else if (p.kind === 'LeftEarly') {
+    subjectWord = 'Absence (left early)';
+    what = 'You were marked ABSENT for ' + classLabel(cls) + ' on ' + when + '. You checked in, but you left before the end of class. ' +
+      'Leaving before the time set by the professor changes your attendance from Present to Absent.';
+  } else {
+    subjectWord = 'Absence';
+    what = 'You were marked ABSENT for ' + classLabel(cls) + ' on ' + when + '.';
+  }
+  var text = 'Dear ' + first + ',\n\n' + what + '\n\n' +
+    'Your attendance in this course:\n' + summaryLines_(t, cfg) + '\n\n' +
+    standingSentence_(t, cfg) + '\n\n' +
+    medicalExcuseText_(cfg) + '\n\n' +
+    'Remember: if you check in and then leave before class ends, you will be marked absent.\n\n' +
+    'Best regards,\n' + signature_(cfg);
+  return {
+    subject: 'Attendance notice – ' + classLabel(cls) + ' – ' + subjectWord + ' on ' + longDate(p.date),
+    text: text,
+    html: textToHtml_(text)
+  };
+}
+
+/** To the office when a student checks in without their ID more than the allowed times. */
+function buildNoIdNotice(p) {
+  var cfg = p.cfg || {}, s = p.student, cls = p.cls;
+  var text = 'Hello,\n\n' + s.name + (s.id ? ' (ID ' + s.id + ')' : '') + ' came to ' + classLabel(cls) + ' on ' +
+    longDate(p.date) + ', ' + classTime(cls) + ' without their student ID. Attendance was recorded manually.\n\n' +
+    'This is time number ' + p.count + ' this term (the limit is ' + rulesConfig_(cfg).noIdLimit + ').\n\n' +
+    'Dates without ID: ' + p.dates.join(', ') + '\n\n' +
+    'Thank you,\n' + signature_(cfg);
+  return { subject: 'Student without ID – ' + s.name + ' – ' + classLabel(cls), text: text, html: textToHtml_(text) };
+}
+
+/** Reminder to the students of a class about an assignment. */
+function buildAssignmentReminder(p) {
+  var cfg = p.cfg || {}, a = p.assignment, cls = p.cls;
+  var whenLeft = p.daysLeft === 0 ? 'today' : p.daysLeft === 1 ? 'tomorrow' : 'in ' + p.daysLeft + ' days';
+  var text = 'Hello everyone,\n\nThis is a reminder that "' + a.title + '" for ' + classLabel(cls) + ' is due ' + whenLeft +
+    ' (' + longDate(a.due) + ').' + (a.notes ? '\n\n' + a.notes : '') +
+    '\n\nIf you have questions, reply to this email.\n\nBest regards,\n' + signature_(cfg);
+  return { subject: 'Reminder: ' + a.title + ' – due ' + longDate(a.due), text: text, html: textToHtml_(text) };
+}
+
+/**
+ * Friday report.
+ * p: {classes:[cls], students:[{id,name,email,classId}], records:[{classId,studentId,date,status,excuse,excuseDate,name}],
+ *     weekStart, weekEnd, today, cfg}
+ */
+function buildWeeklyReport(p) {
+  var cfg = p.cfg || {}, c = rulesConfig_(cfg);
+  var totals = tally(p.records, cfg);
+  var html = ['<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222">',
+    '<h2 style="margin:0 0 4px">Weekly attendance report</h2>',
+    '<p style="margin:0 0 16px;color:#555">Week of ' + esc_(longDate(p.weekStart)) + ' – ' + esc_(longDate(p.weekEnd)) +
+    (p.week ? ' · Week ' + p.week + ' of ' + c.totalSessions : '') + '</p>'];
+  var text = ['WEEKLY ATTENDANCE REPORT', 'Week of ' + longDate(p.weekStart) + ' – ' + longDate(p.weekEnd), ''];
+  var th = 'style="text-align:left;padding:4px 8px;border-bottom:1px solid #ccc;background:#f4f4f4"';
+  var td = 'style="padding:4px 8px;border-bottom:1px solid #eee"';
+  var counts = { missed: 0, risk: 0 };
+
+  p.classes.forEach(function (cls) {
+    var roster = p.students.filter(function (s) { return s.classId === cls.id; });
+    var nameOf = {};
+    roster.forEach(function (s) { nameOf[s.id] = s.name; });
+    var week = p.records.filter(function (r) {
+      return r.classId === cls.id && r.date >= p.weekStart && r.date <= p.weekEnd &&
+        /^(absent|tardy)$/i.test(r.status) && !/^accepted$/i.test(r.excuse || '');
+    });
+    var risk = roster.map(function (s) {
+      return { s: s, t: totals[cls.id + '|' + s.id] || emptyTally(cfg) };
+    }).filter(function (x) { return x.t.state !== 'ok'; })
+      .sort(function (a, b) { return b.t.effective - a.t.effective || a.s.name.localeCompare(b.s.name); });
+    var pending = p.records.filter(function (r) { return r.classId === cls.id && /^received$/i.test(r.excuse || ''); });
+    counts.missed += week.filter(function (r) { return /^absent$/i.test(r.status); }).length;
+    counts.risk += risk.filter(function (x) { return x.t.state === 'failing'; }).length;
+
+    html.push('<h3 style="margin:20px 0 4px">' + esc_(classLabel(cls)) + '</h3>',
+      '<p style="margin:0 0 8px;color:#555">' + esc_(DAY_NAMES[dayIndex(cls.day)] || cls.day) + ' ' + esc_(classTime(cls)) +
+      ' · ' + esc_(cls.mode || '') + (cls.professor ? ' · Prof. ' + esc_(cls.professor) : '') + ' · ' + roster.length + ' students</p>');
+    text.push('== ' + classLabel(cls) + ' — ' + (DAY_NAMES[dayIndex(cls.day)] || cls.day) + ' ' + classTime(cls) + ' ==');
+
+    html.push('<p style="margin:8px 0 4px"><b>Absent or tardy this week</b></p>');
+    text.push('Absent or tardy this week:');
+    if (!week.length) { html.push('<p style="margin:0;color:#2e7d32">Nobody. Full attendance.</p>'); text.push('  Nobody.'); }
+    else {
+      html.push('<table style="border-collapse:collapse;font-size:13px"><tr><th ' + th + '>Student</th><th ' + th + '>Date</th><th ' + th + '>Status</th><th ' + th + '>Excuse</th></tr>');
+      week.sort(function (a, b) { return a.date.localeCompare(b.date); }).forEach(function (r) {
+        var nm = nameOf[r.studentId] || r.name || r.studentId;
+        html.push('<tr><td ' + td + '>' + esc_(nm) + '</td><td ' + td + '>' + esc_(r.date) + '</td><td ' + td + '>' + esc_(r.status) + (r.leftEarly ? ' (left early)' : '') + '</td><td ' + td + '>' + esc_(r.excuse || '') + '</td></tr>');
+        text.push('  ' + nm + ' — ' + r.date + ' — ' + r.status + (r.excuse ? ' (excuse: ' + r.excuse + ')' : ''));
+      });
+      html.push('</table>');
+    }
+
+    html.push('<p style="margin:12px 0 4px"><b>Losing the course or at risk</b></p>');
+    text.push('Losing the course or at risk:');
+    if (!risk.length) { html.push('<p style="margin:0;color:#2e7d32">Everyone is on track.</p>'); text.push('  Everyone is on track.'); }
+    else {
+      html.push('<table style="border-collapse:collapse;font-size:13px"><tr><th ' + th + '>Student</th><th ' + th + '>Absences</th><th ' + th + '>Tardies</th><th ' + th + '>Counted absences</th><th ' + th + '>Left</th><th ' + th + '>Attendance</th><th ' + th + '>Status</th></tr>');
+      risk.forEach(function (x) {
+        var color = x.t.state === 'failing' ? '#c62828' : x.t.state === 'at-limit' ? '#e65100' : '#8d6e00';
+        html.push('<tr><td ' + td + '>' + esc_(x.s.name) + '</td><td ' + td + '>' + x.t.absences + '</td><td ' + td + '>' + x.t.tardies +
+          '</td><td ' + td + '>' + x.t.effective + '</td><td ' + td + '>' + Math.max(0, x.t.remaining) + '</td><td ' + td + '>' + x.t.pct +
+          '%</td><td ' + td + '><b style="color:' + color + '">' + esc_(STATE_LABEL[x.t.state]) + '</b></td></tr>');
+        text.push('  ' + x.s.name + ' — ' + x.t.effective + ' counted absences (' + x.t.absences + ' A, ' + x.t.tardies + ' T), ' + x.t.pct + '% — ' + STATE_LABEL[x.t.state]);
+      });
+      html.push('</table>');
+    }
+
+    if (pending.length) {
+      html.push('<p style="margin:12px 0 4px"><b>Medical excuses waiting for the office</b></p><ul style="margin:0 0 0 18px;padding:0">');
+      text.push('Medical excuses waiting for the office:');
+      pending.forEach(function (r) {
+        var nm = nameOf[r.studentId] || r.name || r.studentId;
+        var late = r.excuseDate && p.today && dayNum(p.today) - dayNum(r.excuseDate) > c.excuseReviewDays;
+        html.push('<li>' + esc_(nm) + ' — class of ' + esc_(r.date) + (r.excuseDate ? ', received ' + esc_(r.excuseDate) : '') +
+          (late ? ' <b style="color:#c62828">(more than ' + c.excuseReviewDays + ' days)</b>' : '') + '</li>');
+        text.push('  ' + nm + ' — class of ' + r.date + (r.excuseDate ? ', received ' + r.excuseDate : '') + (late ? ' (OVERDUE)' : ''));
+      });
+      html.push('</ul>');
+    }
+    text.push('');
+  });
+  html.push('</div>');
+  return {
+    subject: 'Weekly attendance report – ' + longDate(p.weekStart).replace(/^\w+, /, '') + ' – ' + counts.missed + ' absences, ' + counts.risk + ' losing the course',
+    text: text.join('\n'),
+    html: html.join('')
+  };
+}
+
+/* ===== Code.js ===== */
+
+/**
  * Google Apps Script glue: the spreadsheet, the Drive inbox, Gmail and the time triggers.
  * The rules live in Rules.js, file reading in Parsers.js and email texts in Messages.js.
  */
