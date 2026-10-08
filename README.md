@@ -19,6 +19,8 @@ Los correos a estudiantes se envían **desde Populi**, con las 6 casillas de vis
 | Reporte del viernes | Por clase: quién faltó o llegó tarde esa semana, quién está en riesgo o perdiendo el curso y qué excusas médicas siguen pendientes (marca las de más de 7 días). |
 | Recordatorios de tareas | Hoja **Assignments**: el día que toca (por ejemplo "3,1" días antes) aparece en Follow-ups para enviarlo con "Email this section". |
 | Resumen | La hoja **Summary** muestra a cada estudiante con sus ausencias, tardies, %, ausencias disponibles y estado. |
+| Nombres con IA (opcional) | Con la clave de Claude, cada screenshot lo lee **Claude** junto con el roster (más preciso que el OCR: apodos, segundos nombres, nombres cortados). Si duda, pregunta en **Questions**. Si la IA falla, se usa el OCR gratis. |
+| Correos de estudiantes | Cada 15 min revisa tu Gmail (últimos 14 días). Los correos de estudiantes de tus rosters aparecen en **Student emails** con el tiempo de espera, el tipo (excusa médica, va a faltar, pregunta de asistencia…), su asistencia y un **borrador de respuesta** para copiar o guardar en Gmail. Si mandan una excusa médica, la ausencia queda **Excuse = Received** sola. Etiquetas en Gmail: **TA/Needs reply** y **TA/Medical excuse**. |
 
 `Email mode = POPULI` (por defecto) deja los correos en **Follow-ups** para enviarlos desde Populi.
 Si algún día se permite enviarlos por Gmail, `DRAFT` crea borradores y `SEND` los envía solos, con Reply-To a tu correo académico.
@@ -104,6 +106,22 @@ El resto del panel:
   (con su # de Populi) y quién está en riesgo o perdiendo el curso, con los totales **al cierre de esa semana**. Botones para **enviártelo por correo**
   y **guardarlo como PDF** en la carpeta **TA Reports** de tu Drive. Igual te llega solo cada viernes a las 8 AM.
 - **Follow-ups**: cada correo con los # a seleccionar en Populi, botones para copiar asunto y mensaje, y las casillas de visibilidad.
+- **Student emails**: los correos de estudiantes que esperan respuesta (en rojo si llevan más de 24 h), con su asistencia en cada clase y el
+  borrador. Botones: **Copy reply**, **Put in Gmail as a draft** (queda en la misma conversación; tú lo revisas y envías), **Open in Gmail**,
+  **Answered**, **No reply needed**, y para excusas **Forward to the office (draft)** con los adjuntos. Con IA puedes pedir otra versión:
+  *Shorter*, *More formal*, *Ask for the doctor's phone*, *Excuse forwarded*, *Absences left*, *In Spanish* o lo que escribas.
+  Cuando respondes desde Gmail, el correo se cierra solo.
+
+### Velocidad
+El panel pide **todo de una vez** al abrir (Home, las 4 clases, preguntas, follow-ups, reportes y correos) y luego cambia de pantalla
+sin esperar. Lo que guardas se ve al instante y se escribe en segundo plano; después el panel se actualiza solo.
+
+### IA (Claude): activar
+1. Crea una clave en **console.anthropic.com** → API Keys (necesita saldo; ~3 centavos por screenshot y ~2 centavos por correo).
+2. En la hoja: **TA Attendance → Set Claude API key** y pégala. Se guarda en las propiedades privadas del script, **no** en la hoja.
+3. En **Config** puedes apagar cada parte: *Read screenshots with AI*, *AI reply drafts for student emails* (Yes/No).
+Antes de activarla, confirma con la oficina que se puede enviar a Anthropic el roster, los screenshots y los correos de estudiantes.
+Sin clave todo sigue funcionando: OCR gratis y borradores con plantilla.
 
 ## Uso diario
 
@@ -113,7 +131,7 @@ El resto del panel:
 
 Si Populi incluye la **hora del escaneo**, el sistema decide Present, Tardy o Absent con la regla de 15 y 30 minutos, contados desde la hora real de inicio (hoja **Sessions**).
 
-**Zoom (C3 HA 105, C4 SB 100). Los screenshots se leen solos, sin IA y sin costo:**
+**Zoom (C3 HA 105, C4 SB 100). Los screenshots se leen solos (OCR gratis, o Claude si activaste la IA):**
 
 1. Usa la misma estructura de carpetas que ya tienes, pero dentro de **TA Inbox** en Google Drive:
    ```

@@ -61,7 +61,7 @@
   .btn[disabled] { opacity: .55; cursor: default; }
 
   /* KPIs */
-  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; }
   .kpi { padding: 14px 18px; }
   .kpi .n { font-size: 26px; font-weight: 700; line-height: 1.2; }
   .kpi .l { color: var(--ink2); font-size: 13px; }
@@ -192,6 +192,20 @@
   .task.followup .ic { background: var(--brand-soft); color: var(--brand2); }
   .task.excuse .ic { background: var(--e-bg); color: var(--e); }
   .task.populi .ic { background: #f0ebfa; color: #6b3fa0; }
+  .task.mail .ic { background: #e6f4ff; color: #0b6bcb; }
+  .task.mail.late .ic { background: var(--a-bg); color: var(--a); }
+  .ml { padding: 16px 18px; margin-bottom: 12px; }
+  .ml.closed { opacity: .75; }
+  .ml .top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .ml .who { font-size: 16px; font-weight: 600; }
+  .ml .subj { margin: 8px 0 2px; font-weight: 600; }
+  .ml .sum { color: var(--ink2); }
+  .ml .exc { background: var(--e-bg); color: var(--e); border-radius: 8px; padding: 8px 12px; margin-top: 10px; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .ml textarea { width: 100%; box-sizing: border-box; min-height: 170px; margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 12px;
+    font: inherit; font-size: 13px; line-height: 1.5; background: #f9fafb; resize: vertical; }
+  .ml .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+  .ml .rw { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; align-items: center; }
+  .ml .rw input { border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; min-width: 200px; flex: 1; }
   .task b { font-weight: 600; }
   .alldone { padding: 22px; text-align: center; color: var(--p); font-weight: 600; }
   /* week tiles */
@@ -274,7 +288,7 @@ function call(fn) {
   var args = Array.prototype.slice.call(arguments, 1);
   busy(true);
   return new Promise(function (ok, fail) {
-    google.script.run.withSuccessHandler(function (r) { busy(false); ok(r); })
+    google.script.run.withSuccessHandler(function (r) { busy(false); if (!READS[fn]) afterWrite(); ok(r); })
       .withFailureHandler(function (e) { busy(false); toast('Something went wrong: ' + (e && e.message || e), true); fail(e); })[fn].apply(null, args);
   });
 }
@@ -309,6 +323,7 @@ function renderNav() {
   var h = '<div class="logo">TA Attendance</div><div class="logo-sub">' + (o.week ? 'Week ' + o.week + ' · ' : '') + esc(shortDate(o.today)) + '</div>';
   h += item('home', 'Home', '', '');
   h += item('review', 'Questions', o.openQuestions ? '<span class="badge alert">' + o.openQuestions + '</span>' : '', '');
+  h += item('mail', 'Student emails', o.mailWaiting ? '<span class="badge alert">' + o.mailWaiting + '</span>' : '', '');
   h += item('followups', 'Follow-ups', o.pendingFollowups ? '<span class="badge">' + o.pendingFollowups + '</span>' : '', '');
   h += item('reports', 'Weekly reports', '', '');
   h += '<div class="nav-h">Classes</div>';
@@ -339,7 +354,10 @@ document.addEventListener('click', function (e) {
 function render() {
   renderNav();
   $('main').innerHTML = '<div class="skeleton"></div>';
-  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity, reports: viewReports, student: viewStudent };
+  renderView();
+}
+function renderView() {
+  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity, reports: viewReports, student: viewStudent, mail: viewMail };
   (views[S.view] || viewHome)();
 }
 /* Speed: every page shows its last copy at once (this browser tab only), then the fresh one when it arrives. */
@@ -349,10 +367,42 @@ function cacheRead(k) {
   if (MEM[k]) return MEM[k];
   try { var v = sessionStorage.getItem('ta:' + k); return v ? JSON.parse(v) : null; } catch (e) { return null; }
 }
-function cacheWrite(k, v) { MEM[k] = v; try { sessionStorage.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
+function cacheWrite(k, v) { MEM[k] = v; STAMP[k] = Date.now(); try { sessionStorage.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
+/* Calls that only read. Any other call is a write: copies older than it are re-checked, and everything reloads in the background. */
+var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1,
+  apiStudent: 1, apiMail: 1, apiShotFiles: 1 };
+var STAMP = {}, FRESH_MS = 60000;
+function afterWrite() {
+  STAMP = {};
+  clearTimeout(afterWrite.t);
+  afterWrite.t = setTimeout(function () { loadAll(false); }, 1500);
+}
+/** Speed: one call brings every screen's data (Home, classes, questions, follow-ups, reports, emails). */
+function seedAll(a) {
+  cacheWrite(ckey('apiOverview'), a.overview);
+  Object.keys(a.classes).forEach(function (id) { cacheWrite(ckey('apiClass', [id]), a.classes[id]); });
+  cacheWrite(ckey('apiQuestions'), a.questions);
+  cacheWrite(ckey('apiFollowups'), a.followups);
+  cacheWrite(ckey('apiReportWeeks'), a.reportWeeks);
+  cacheWrite(ckey('apiMail'), a.mail);
+  S.overview = a.overview;
+}
+function loadAll(redraw) {
+  return new Promise(function (ok) {
+    google.script.run.withSuccessHandler(function (a) {
+      var before = JSON.stringify(cacheRead(ckey('apiOverview'))) + JSON.stringify(cacheRead(ckey('apiMail')));
+      seedAll(a); renderNav();
+      var typing = document.activeElement && /TEXTAREA|INPUT/.test(document.activeElement.tagName);
+      var changed = before !== JSON.stringify(a.overview) + JSON.stringify(a.mail);
+      if (redraw !== false && changed && !typing && /^(home|class|review|followups|mail)$/.test(S.view)) { S.nav = (S.nav || 0) + 1; renderView(); }
+      ok(a);
+    }).withFailureHandler(function () { ok(null); }).apiAll();
+  });
+}
 function fresh(fn, args, draw) {
   var k = ckey(fn, args), nav = S.nav, old = cacheRead(k), oldJson = old ? JSON.stringify(old) : '';
   if (old) draw(old, true);
+  if (old && STAMP[k] && Date.now() - STAMP[k] < FRESH_MS) return Promise.resolve(old); // just loaded: no need to ask again
   return call.apply(null, [fn].concat(args || [])).then(function (d) {
     cacheWrite(k, d);
     if (S.nav === nav && JSON.stringify(d) !== oldJson) draw(d, false);
@@ -373,7 +423,6 @@ function refreshOverview() {
 function viewHome() {
   fresh('apiOverview', [], function (o, cached) {
     S.overview = o; renderNav();
-    if (!cached && !S.prefetched) { S.prefetched = true; prefetch(o); }
     var losing = 0, limit = 0;
     o.classes.forEach(function (c) { losing += c.states.failing; limit += c.states['at-limit']; });
     var h = '<div class="row"><div><h1>Good ' + greeting() + ', Diego</h1><p class="sub">' + (o.week ? 'Week ' + o.week + ' of 10 · ' : '') + esc(longToday(o.today)) + '</p></div><div class="spacer"></div>' +
@@ -382,6 +431,7 @@ function viewHome() {
     h += '<h2 style="margin-top:6px">To do' + (o.tasks.length ? ' <span class="muted small">(' + o.tasks.length + ')</span>' : '') + '</h2><div class="card todo">' +
       (o.tasks.length ? o.tasks.map(taskRow).join('') : '<div class="alldone">✓ All caught up. Nothing pending.</div>') + '</div>';
     h += '<h2>At a glance</h2><div class="kpis">' +
+      kpi(o.mailWaiting || 0, 'Student emails waiting', o.mailWaiting ? 'warn' : '', 'mail') +
       kpi(o.openQuestions, 'Names to confirm', o.openQuestions ? 'warn' : '', 'review') +
       kpi(o.pendingFollowups, 'Follow-ups to send in Populi', o.pendingFollowups ? 'warn' : '', 'followups') +
       kpi(limit, 'Students with no absences left', limit ? 'warn' : '', '') +
@@ -396,14 +446,73 @@ function viewHome() {
     return '<div class="card kpi ' + cls + (go ? ' click' : '') + '"' + (go ? ' data-go="' + go + '"' : '') + '><div class="n">' + n + '</div><div class="l">' + label + '</div></div>';
   }
 }
-/** After Home: quietly load every class page so opening one is instant. */
-function prefetch(o) {
-  o.classes.reduce(function (p, c) { return p.then(function () { return quiet('apiClass', [c.id]); }); }, Promise.resolve());
+/* ---------- Student emails ---------- */
+var REWRITES = [['Shorter', 'Make it shorter.'], ['More formal', 'Make it more formal.'], ['Ask for the doctor\'s phone', 'Ask for the phone number of the doctor or hospital so the office can verify the excuse.'],
+  ['Excuse forwarded', 'Say the excuse was received and forwarded to the office, which verifies it within a week.'], ['Absences left', 'Tell them clearly how many absences they have left and the 80% minimum.'],
+  ['In Spanish', 'Write the reply in Spanish.']];
+function viewMail() {
+  fresh('apiMail', [], function (list) {
+    S.mail = list;
+    var o = S.overview || {}, waiting = list.filter(function (m) { return m.status === 'Needs reply'; });
+    if (!S.mailFilter) S.mailFilter = 'reply';
+    var shown = S.mailFilter === 'reply' ? waiting : list;
+    var h = '<div class="row"><div><h1>Student emails</h1><p class="sub">Emails from your students to ' + esc(o.replyTo || 'your inbox') +
+      ' in the last ' + (o.mailDays || 14) + ' days, checked every 15 minutes. Each one comes with a reply draft' + (o.ai ? ' written by AI with the student\'s attendance' : '') + '.</p></div><div class="spacer"></div>' +
+      '<a class="btn" href="https://mail.google.com/mail/u/0/#inbox" target="_blank">Open Gmail</a><button class="btn primary" data-act="mailCheck">Check now</button></div>';
+    if (!o.ai) h += '<div class="card" style="padding:12px 16px;margin-bottom:12px">Replies are simple templates. For replies written for each situation: TA Attendance → Set Claude API key.</div>';
+    h += '<div class="seg" style="margin-bottom:12px"><button class="' + (S.mailFilter === 'reply' ? 'on' : '') + '" data-act="mailFilter" data-f="reply">Needs reply (' + waiting.length + ')</button>' +
+      '<button class="' + (S.mailFilter === 'all' ? 'on' : '') + '" data-act="mailFilter" data-f="all">All (' + list.length + ')</button></div>';
+    if (!shown.length) h += '<div class="card empty"><b>' + (S.mailFilter === 'reply' ? 'No student is waiting for an answer' : 'No student emails') + '</b>New emails from students on your rosters appear here.</div>';
+    shown.forEach(function (m) { h += mailCard(m, o.ai); });
+    $('main').innerHTML = h;
+  });
 }
+function mailCard(m, ai) {
+  var open = m.status === 'Needs reply';
+  var wait = open ? (m.waiting < 1 ? 'just now' : m.waiting < 48 ? m.waiting + ' h' : Math.floor(m.waiting / 24) + ' days') : '';
+  var h = '<div class="card ml' + (open ? '' : ' closed') + '" data-thread="' + esc(m.threadId) + '"><div class="top"><span class="who">' + esc(m.student) + '</span>' +
+    m.classes.map(function (k) {
+      var cls = k.state === 'failing' || k.state === 'at-limit' ? 'bad' : k.state === 'warning' ? 'warn' : 'good';
+      return '<span class="chip ' + cls + '" title="Counted absences · attendance">' + esc(k.code) + ' · ' + k.effective + ' abs · ' + k.pct + '%</span>';
+    }).join('') +
+    (m.category ? '<span class="chip">' + esc(m.category) + '</span>' : '') + '<div class="spacer"></div>' +
+    (open ? '<span class="chip ' + (m.waiting >= 24 ? 'bad' : 'warn') + '">Waiting ' + wait + '</span>' : '<span class="chip good">' + esc(m.status) + '</span>') +
+    '<span class="small muted">' + esc(m.received) + '</span></div>' +
+    '<div class="subj">' + esc(m.subject) + '</div><div class="sum small">' + esc(m.summary) + '</div>';
+  if (m.excuse) {
+    h += '<div class="exc small"><b>Medical excuse</b> ' + esc(m.excuse) + '<div class="spacer"></div>' +
+      '<button class="btn sm" data-act="mailForward">Forward to the office (draft)</button></div>';
+  }
+  if (!open && S.mailOpen !== m.threadId) {
+    return h + '<div class="acts"><button class="btn sm" data-act="mailShow">Show reply</button>' +
+      '<a class="btn sm" target="_blank" href="https://mail.google.com/mail/u/0/#all/' + esc(m.threadId) + '">Open in Gmail</a>' +
+      (m.status !== 'Answered' ? '<button class="btn sm" data-act="mailStatus" data-s="Needs reply">Needs reply</button>' : '') + '</div></div>';
+  }
+  h += '<textarea class="draft" spellcheck="true">' + esc(m.draft) + '</textarea>' +
+    '<div class="acts"><button class="btn sm primary" data-act="mailCopy">Copy reply</button>' +
+    '<button class="btn sm" data-act="mailGmail">Put in Gmail as a draft</button>' +
+    '<a class="btn sm" target="_blank" href="https://mail.google.com/mail/u/0/#all/' + esc(m.threadId) + '">Open in Gmail</a><div class="spacer"></div>' +
+    '<button class="btn sm" data-act="mailStatus" data-s="Answered">✓ Answered</button>' +
+    '<button class="btn sm" data-act="mailStatus" data-s="No reply needed">No reply needed</button></div>';
+  if (ai) {
+    h += '<div class="rw"><span class="small muted">Rewrite:</span>' + REWRITES.map(function (r, i) {
+      return '<button class="btn sm" data-act="mailRewrite" data-i="' + i + '">' + esc(r[0]) + '</button>';
+    }).join('') + '<input placeholder="Or tell it what to say…" class="rwIn"><button class="btn sm" data-act="mailRewrite">Rewrite</button></div>';
+  }
+  return h + '</div>';
+}
+function mailOf(b) { var c = b.closest('.ml'); return { card: c, id: c.getAttribute('data-thread'), m: (S.mail || []).filter(function (x) { return x.threadId === c.getAttribute('data-thread'); })[0] }; }
+function mailSet(id, change) {
+  var list = cacheRead(ckey('apiMail')) || [];
+  list.forEach(function (x) { if (x.threadId === id) Object.assign(x, change); });
+  cacheWrite(ckey('apiMail'), list);
+  if (S.overview && change.status && change.status !== 'Needs reply') { S.overview.mailWaiting = Math.max(0, (S.overview.mailWaiting || 1) - 1); renderNav(); }
+}
+
 function taskRow(t) {
-  var icon = { question: '?', load: '!', followup: '✉', excuse: '+', populi: '☑' }[t.type] || '•';
+  var icon = { question: '?', load: '!', followup: '✉', excuse: '+', populi: '☑', mail: '@' }[t.type] || '•';
   var g = t.go || {};
-  return '<div class="task ' + t.type + '" data-go="' + esc(g.view || 'home') + '"' + (g.classId ? ' data-class="' + esc(g.classId) + '"' : '') +
+  return '<div class="task ' + t.type + (t.late ? ' late' : '') + '" data-go="' + esc(g.view || 'home') + '"' + (g.classId ? ' data-class="' + esc(g.classId) + '"' : '') +
     (g.date ? ' data-date="' + esc(g.date) + '"' : '') + (g.studentId ? ' data-sid="' + esc(g.studentId) + '"' : '') + '>' +
     '<span class="ic">' + icon + '</span><span><b>' + esc(t.text) + '</b><div class="small muted">' + esc(t.sub || '') + '</div></span><span class="btn sm">Open</span></div>';
 }
@@ -539,8 +648,16 @@ function shotsCard(d) {
       var n = sh[p] || 0;
       return '<div class="card dz' + (S.activePhase === p ? ' active' : '') + '" data-phase="' + p + '"><b>' + info[p][0] + '</b><div class="small muted">' + info[p][1] + '</div>' +
         '<div class="dz-n">' + (n ? '<span class="chip good">' + n + ' screenshot' + (n === 1 ? '' : 's') + ' read</span> <a class="small" data-act="clearShots" data-phase="' + p + '">clear</a>' : '<span class="muted small">Drop images here</span>') + '</div></div>';
-    }).join('') + '</div><div id="upStatus" class="small muted" style="margin:6px 2px 0"></div>' +
+    }).join('') + '</div>' + aiLine(d) + '<div id="upStatus" class="small muted" style="margin:6px 2px 0"></div>' +
     '<input type="file" id="shotInput" accept="image/*" multiple style="display:none">';
+}
+/** Whether Claude reads the screenshots, and a button to read older ones again with AI. */
+function aiLine(d) {
+  var sh = d.shots || {}, total = (sh.present || 0) + (sh.tardy || 0) + (sh.end || 0);
+  if (!d.aiOn) return '<div class="small muted" style="margin:6px 2px 0">Names are read with the free OCR. To read them with AI (more precise): TA Attendance → Set Claude API key.</div>';
+  var left = total - (d.aiShots || 0);
+  return '<div class="small muted" style="margin:6px 2px 0"><span class="chip good">AI</span> Names are read with Claude' +
+    (left > 0 ? ' · ' + left + ' screenshot' + (left === 1 ? '' : 's') + ' read only with OCR <button class="btn sm" data-act="readAi">Read with AI</button>' : '') + '</div>';
 }
 function setupDrops() {
   document.querySelectorAll('.dz').forEach(function (z) {
@@ -583,24 +700,60 @@ function shrink(file) {
 function uploadShots(phase, files) {
   files = files.filter(function (f) { return /^image\//.test(f.type); });
   if (!files.length) { toast('Drop image files (PNG or JPG)', true); return; }
-  var label = { present: '15 min', tardy: '31 min', end: 'last screenshot' }[phase], i = 0, names = 0;
+  var label = { present: '15 min', tardy: '31 min', end: 'last screenshot' }[phase], i = 0, names = 0, aiErr = '';
+  var how = S.sess && S.sess.aiOn ? ' with AI' : '';
   var status = function (t) { var el = $('upStatus'); if (el) el.textContent = t; };
-  var next = function () {
-    if (i >= files.length) {
-      status('Analyzing the class with all the screenshots…');
+  var done = 0, failed = false;
+  // Three at a time: each one is saved, read (OCR, and Claude when on) and added on its own.
+  var worker = function () {
+    if (i >= files.length || failed) return Promise.resolve();
+    var f = files[i++];
+    return shrink(f).then(function (b64) {
+      return call('apiUploadShot', S.classId, S.date, phase, f.name.replace(/\.\w+$/, '') + '.jpg', 'image/jpeg', b64);
+    }).then(function (r) {
+      names += r.names; if (r.aiError) aiErr = r.aiError;
+      status('Read ' + (++done) + ' of ' + files.length + ' ' + label + ' screenshot' + (files.length === 1 ? '' : 's') + how + '…');
+      return worker();
+    }, function (e) { failed = true; throw e; });
+  };
+  status('Reading ' + files.length + ' ' + label + ' screenshot' + (files.length === 1 ? '' : 's') + how + '…');
+  var pool = [];
+  for (var w = 0; w < Math.min(3, files.length); w++) pool.push(worker());
+  Promise.all(pool).then(function () {
+    status('Analyzing the class with all the screenshots…');
+    return call('apiAnalyzeSession', S.classId, S.date).then(function (r) {
+      status(''); toast('Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some (' + aiErr + '); the OCR was used' : ''), !!aiErr);
+      MEM = {}; try { sessionStorage.clear(); } catch (e) { /* ignore */ }
+      viewSession();
+    });
+  }).catch(function () { status('Stopped. The screenshots read so far are saved; drop the rest again.'); });
+}
+/** Read with AI the screenshots that were only read with OCR, then analyze the class again. */
+function readAi() {
+  var status = function (t) { var el = $('upStatus'); if (el) el.textContent = t; };
+  status('Looking for screenshots…');
+  call('apiShotFiles', S.classId, S.date).then(function (f) {
+    var todo = [];
+    ['present', 'tardy', 'end'].forEach(function (p) { f[p].forEach(function (x) { if (!x.done) todo.push({ p: p, x: x }); }); });
+    var i = 0, done = 0;
+    var worker = function () {
+      if (i >= todo.length) return Promise.resolve();
+      var t = todo[i++];
+      return call('apiAiReadFile', S.classId, S.date, t.p, t.x.index, t.x.id).then(function () {
+        status('Read ' + (++done) + ' of ' + todo.length + ' screenshots with AI…');
+        return worker();
+      });
+    };
+    status('Reading ' + todo.length + ' screenshots with AI…');
+    return Promise.all([worker(), worker(), worker()]).then(function () {
+      status('Analyzing the class…');
       return call('apiAnalyzeSession', S.classId, S.date).then(function (r) {
         status(''); toast('Done: ' + String(r.msg).split('. ')[0]);
         MEM = {}; try { sessionStorage.clear(); } catch (e) { /* ignore */ }
         viewSession();
       });
-    }
-    var f = files[i++];
-    status('Reading ' + label + ' screenshot ' + i + ' of ' + files.length + '…');
-    return shrink(f).then(function (b64) {
-      return call('apiUploadShot', S.classId, S.date, phase, f.name.replace(/\.\w+$/, '') + '.jpg', 'image/jpeg', b64);
-    }).then(function (r) { names += r.names; return next(); });
-  };
-  next().catch(function () { status('Stopped. The screenshots read so far are saved; drop the rest again.'); });
+    });
+  }).catch(function () { status('Stopped. Try again: the screenshots already read are kept.'); });
 }
 function letterOf(s) { return /^accepted$/i.test(s.excuse || '') ? 'E' : String(s.status || '').charAt(0); }
 function picker(k, sid, date) {
@@ -721,7 +874,7 @@ function questionCard(q) {
     '<button class="btn sm ghost" data-act="answer" data-row="' + q.row + '" data-ans="ignore">Not a student</button></div></div>';
 }
 function viewReview() {
-  call('apiQuestions').then(function (qs) {
+  fresh('apiQuestions', [], function (qs) {
     var h = '<h1>Names to confirm</h1><p class="sub">When a Zoom name could be two students, or doesn\'t look like anyone, the system asks instead of guessing. Your answer is remembered for next time.</p>';
     h += qs.length ? qs.map(questionCard).join('') : '<div class="card empty"><b>All clear</b>Every name in the screenshots was recognized.</div>';
     $('main').innerHTML = h;
@@ -730,8 +883,7 @@ function viewReview() {
 
 /* ---------- Follow-ups ---------- */
 function viewFollowups() {
-  Promise.all([call('apiFollowups'), S.overview ? Promise.resolve(S.overview) : refreshOverview()]).then(function (r) {
-    var list = r[0];
+  fresh('apiFollowups', [], function (list) {
     var h = '<h1>Follow-ups to send in Populi</h1><p class="sub">For each one: in the class Roster select the students by #, then Actions → Email selected students. Paste the subject and message, check the visibility boxes and send.</p>';
     if (!list.length) h += '<div class="card empty"><b>Nothing to send</b>New follow-ups appear here after each class.</div>';
     list.forEach(function (f) {
@@ -755,7 +907,7 @@ function viewFollowups() {
 
 /* ---------- Weekly reports ---------- */
 function viewReports() {
-  call('apiReportWeeks').then(function (d) {
+  fresh('apiReportWeeks', [], function (d) {
     S.weeks = d;
     if (!S.reportWeek) S.reportWeek = d.current;
     var h = '<h1>Weekly reports</h1><p class="sub">Pick a week to see its report: who was absent or tardy that week and who is losing the course, for every class. ' +
@@ -803,6 +955,39 @@ var ACTIONS = {
     }, function () { b.disabled = false; b.textContent = 'Process inbox now'; });
   },
   filter: function (b) { S.filter = b.getAttribute('data-f'); document.querySelectorAll('#seg button').forEach(function (x) { x.classList.toggle('on', x === b); }); drawClassTable(); },
+  readAi: function () { readAi(); },
+  mailFilter: function (b) { S.mailFilter = b.getAttribute('data-f'); viewMail(); },
+  mailShow: function (b) { S.mailOpen = mailOf(b).id; viewMail(); },
+  mailCheck: function (b) {
+    b.disabled = true; b.textContent = 'Checking…';
+    call('apiCheckMail').then(function (r) { toast(r.changed ? r.changed + ' email(s) updated' : 'No new student emails'); STAMP = {}; refreshOverview(); viewMail(); },
+      function () { b.disabled = false; b.textContent = 'Check now'; });
+  },
+  mailCopy: function (b) { copy(mailOf(b).card.querySelector('textarea').value, 'Reply'); },
+  mailGmail: function (b) {
+    var x = mailOf(b), text = x.card.querySelector('textarea').value;
+    b.disabled = true;
+    call('apiMailToGmail', x.id, text).then(function () { b.disabled = false; mailSet(x.id, { draft: text }); toast('Draft saved in Gmail, in the same conversation. Review it and press Send there.'); },
+      function () { b.disabled = false; });
+  },
+  mailStatus: function (b) {
+    var x = mailOf(b), st = b.getAttribute('data-s');
+    mailSet(x.id, { status: st }); S.mailOpen = null; viewMail();
+    call('apiMailStatus', x.id, st).then(function () { toast(st === 'Needs reply' ? 'Moved back to Needs reply' : 'Marked: ' + st); });
+  },
+  mailRewrite: function (b) {
+    var x = mailOf(b), i = b.getAttribute('data-i'), ta = x.card.querySelector('textarea');
+    var how = i != null ? REWRITES[+i][1] : x.card.querySelector('.rwIn').value.trim();
+    if (!how) { toast('Write what the reply should say', true); return; }
+    ta.style.opacity = .5; b.disabled = true;
+    call('apiMailRedraft', x.id, how).then(function (r) { ta.value = r.draft; ta.style.opacity = 1; b.disabled = false; mailSet(x.id, { draft: r.draft }); },
+      function () { ta.style.opacity = 1; b.disabled = false; });
+  },
+  mailForward: function (b) {
+    var x = mailOf(b);
+    b.disabled = true;
+    call('apiMailForwardExcuse', x.id).then(function (r) { toast('Draft to ' + r.to + ' saved in Gmail (with the attachments). Review it and send.'); }, function () { b.disabled = false; });
+  },
   ocrTab: function (b) { S.ocrTab = b.getAttribute('data-p'); $('ocrCard').innerHTML = ocrPanel(S.sess); },
   noise: function (b) { S.showNoise = b.checked; $('ocrCard').innerHTML = ocrPanel(S.sess); },
   saveStart: function () {
@@ -897,7 +1082,11 @@ function answer(row, ans, b) {
   }, function () { if (card) card.style.opacity = 1; });
 }
 
-render();
+(function start() {
+  var cached = cacheRead(ckey('apiOverview'));
+  if (cached) { S.overview = cached; render(); loadAll(); }
+  else { busy(true); loadAll(false).then(function () { busy(false); render(); }); }
+})();
 </script>
 </body>
 </html>

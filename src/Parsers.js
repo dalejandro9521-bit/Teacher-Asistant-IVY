@@ -371,8 +371,30 @@ function screenshotStatuses(phases, roster, ignore, opts) {
     else if (unknown) note(unknown, ph, null);
   }
 
+  var ai = opts.ai || {};
   ['present', 'tardy', 'end'].forEach(function (ph) {
-    (phases[ph] || []).forEach(function (text) {
+    (phases[ph] || []).forEach(function (text, i) {
+      var aiRes = (ai[ph] || [])[i];
+      if (aiRes) {
+        // Claude read this screenshot: trust sure matches, ask about the rest.
+        aiObservations(aiRes, roster).forEach(function (o) {
+          if (o.ignored) return;
+          var cph = ph;
+          if (o.kind === 'chat') {
+            var when = start != null && o.time != null ? classify(o.time - start, c) : (ph === 'end' ? '' : ph === 'present' ? STATUS.P : STATUS.T);
+            cph = when === STATUS.P ? 'present' : when === STATUS.T ? 'tardy' : 'late';
+          }
+          if (o.sure) {
+            seen[cph][o.student.id] = true;
+            if (o.kind === 'chat' && o.time != null && !(o.student.id in chatAt)) chatAt[o.student.id] = o.time;
+          } else if (o.candidates.length) {
+            note(o.name, cph, { doubt: o.candidates });
+          } else if (looksLikeName_(o.name) && !(skip.length && matchStudent({ name: o.name }, skip))) {
+            note(o.name, cph, null);
+          }
+        });
+        return;
+      }
       var shot = readScreenshotText(text);
       shot.tiles.forEach(function (t) { see([t], ph); });
       shot.chat.forEach(function (m) {
@@ -441,9 +463,20 @@ function screenshotDiagnostics(phases, roster, ignore, opts) {
     if (doubt) return { result: 'doubt', who: doubt.map(function (s) { return '#' + (s.order || '?') + ' ' + s.name; }).join(' / ') };
     return names.some(looksLikeName_) ? { result: 'unknown', who: '' } : { result: 'noise', who: '' };
   }
-  var out = { phases: {} };
+  var out = { phases: {} }, ai = opts.ai || {};
   ['present', 'tardy', 'end'].forEach(function (ph) {
-    out.phases[ph] = (phases[ph] || []).map(function (text) {
+    out.phases[ph] = (phases[ph] || []).map(function (text, i) {
+      var aiRes = (ai[ph] || [])[i];
+      if (aiRes) {
+        return aiObservations(aiRes, roster).map(function (o) {
+          var pct = ' (AI ' + Math.round((o.confidence || 0) * 100) + '%)';
+          var res = o.ignored ? 'ignored' : o.sure ? 'match' : o.candidates.length ? 'doubt' : 'unknown';
+          var who = o.ignored ? '' : o.sure ? '#' + (o.student.order || '?') + ' ' + o.student.name + pct
+            : o.candidates.map(function (s) { return '#' + (s.order || '?') + ' ' + s.name; }).join(' / ') + (o.candidates.length ? pct : '');
+          var late = o.kind === 'chat' && opts.start != null && o.time != null ? Math.floor(o.time - opts.start) : null;
+          return { text: o.name, kind: o.kind, time: o.time != null ? minToLabel(o.time) : '', minute: late, result: res, who: who, how: o.sure ? 'ai' : '' };
+        });
+      }
       var shot = readScreenshotText(text), lines = [];
       shot.tiles.forEach(function (t) { lines.push(Object.assign({ text: t, kind: 'tile' }, judge([t]))); });
       shot.chat.forEach(function (m) {
@@ -454,5 +487,81 @@ function screenshotDiagnostics(phases, roster, ignore, opts) {
       return lines;
     });
   });
+  return out;
+}
+
+/* ---------- AI reading of screenshots (results from Claude, see aiReadShot_ in Code.js) ---------- */
+
+/** JSON schema Claude fills for one screenshot. roster_number: the # in Populi order; 0 = not on the roster; -1 = TA/professor. */
+var AI_SHOT_SCHEMA = {
+  type: 'object', additionalProperties: false, required: ['participants', 'chat', 'unreadable'],
+  properties: {
+    participants: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['shown_name', 'roster_number', 'confidence', 'alternatives', 'where'],
+        properties: {
+          shown_name: { type: 'string' }, roster_number: { type: 'integer' }, confidence: { type: 'number' },
+          alternatives: { type: 'array', items: { type: 'integer' } },
+          where: { type: 'string', enum: ['video', 'participants_list', 'other'] }
+        }
+      }
+    },
+    chat: {
+      type: 'array',
+      items: {
+        type: 'object', additionalProperties: false,
+        required: ['sender', 'text', 'time', 'roster_number', 'confidence', 'alternatives'],
+        properties: {
+          sender: { type: 'string' }, text: { type: 'string' }, time: { type: 'string' }, roster_number: { type: 'integer' },
+          confidence: { type: 'number' }, alternatives: { type: 'array', items: { type: 'integer' } }
+        }
+      }
+    },
+    unreadable: { type: 'integer' }
+  }
+};
+
+var AI_SURE = 0.75; // below this, Diego is asked
+
+/** The instructions + roster text sent with each screenshot. */
+function aiShotPrompt(roster, ignore, phaseLabel) {
+  return 'This is a screenshot of a Zoom class (' + phaseLabel + '). Identify every person you can see and every chat message.\n\n' +
+    'CLASS ROSTER (number = order in Populi):\n' +
+    roster.map(function (s) {
+      return '#' + s.order + ' ' + s.name + (s.aliases && s.aliases.length ? '  (also shows as: ' + s.aliases.join('; ') + ')' : '');
+    }).join('\n') +
+    '\n\nNOT STUDENTS (use roster_number -1): ' + (ignore.length ? ignore.join('; ') : 'none') + ', anyone labeled Host, Co-host or Professor.\n\n' +
+    'Rules:\n' +
+    '- participants: one entry per name you can read on a video tile or in the participants list (not the chat). ' +
+    'shown_name exactly as written. roster_number = the roster # of that student, 0 if nobody on the roster matches.\n' +
+    '- Students often use only a first name, a second name, a nickname, a device name ("iPhone de Ana"), different spelling ' +
+    '(Z/S, Y/I, missing letters) or the name written together. Match them when the evidence is clear.\n' +
+    '- confidence: 0 to 1. Use 0.9+ only when you are sure. If two students could match (e.g. two with the same first name), ' +
+    'put the best one in roster_number with low confidence and the others in alternatives. Never invent a match.\n' +
+    '- chat: one entry per chat message: sender as shown, the message text (students type their full name), time exactly as shown ' +
+    '(e.g. "6:44 PM"), and the roster match of the person (use the text they typed and the sender name).\n' +
+    '- unreadable: how many video tiles have a name you cannot read.';
+}
+
+/**
+ * One AI-read screenshot → observations in the same shape the OCR path uses:
+ * [{kind:'tile'|'chat', name, time, student|null, sure, candidates:[students], ignored}]
+ */
+function aiObservations(result, roster) {
+  var byOrder = {};
+  roster.forEach(function (s) { if (s.order) byOrder[s.order] = s; });
+  var out = [];
+  function one(kind, name, time, num, conf, alts) {
+    var s = num > 0 ? byOrder[num] || null : null;
+    var cands = [];
+    if (s) cands.push(s);
+    (alts || []).forEach(function (n) { if (byOrder[n] && cands.indexOf(byOrder[n]) < 0) cands.push(byOrder[n]); });
+    out.push({ kind: kind, name: name, time: time, student: s, sure: !!s && conf >= AI_SURE && cands.length <= 1 || (!!s && conf >= 0.9),
+      candidates: cands, ignored: num === -1, confidence: conf });
+  }
+  (result.participants || []).forEach(function (p) { one('tile', p.shown_name, null, p.roster_number, p.confidence, p.alternatives); });
+  (result.chat || []).forEach(function (m) { one('chat', m.text || m.sender, hmToMin(m.time), m.roster_number, m.confidence, m.alternatives); });
   return out;
 }

@@ -669,7 +669,8 @@ test('screenshots dropped in the dashboard: upload → OCR → analysis, clear o
 
   // 15 min: Ana; 31 min: Beto; last: Ana + Beto (Caro never came)
   let r = env.gas.apiUploadShot('C3', '2026-10-05', 'present', 'shot1.jpg', 'image/jpeg', b64('Ana Uno\nProfessor X'));
-  assert.deepEqual(j(r), { phase: 'present', names: 2, count: 1 });
+  assert.deepEqual(j(r), { phase: 'present', names: 2, count: 1, ai: false, aiError: '' });
+  assert.equal(env.ai.requests.length, 0, 'no API key → no AI call');
   env.gas.apiUploadShot('C3', '2026-10-05', 'tardy', 'shot2.jpg', 'image/jpeg', b64('Ana Uno\nBeto Dos'));
   env.gas.apiUploadShot('C3', '2026-10-05', 'end', 'shot3.jpg', 'image/jpeg', b64('Beto Dos'));
   assert.equal(env.ocr.calls, 3);
@@ -696,4 +697,134 @@ test('screenshots dropped in the dashboard: upload → OCR → analysis, clear o
   env.gas.apiAnalyzeSession('C3', '2026-10-05');
   assert.equal(env.row('2026-10-05', 'C3', '11').Status, 'Present');
   assert.deepEqual(j(env.gas.apiSession('C3', '2026-10-05')).shots, { present: 1, tardy: 1, end: 1 });
+});
+
+test('with a Claude API key, screenshots are read by AI: sure matches count, doubts go to Review', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const j = x => JSON.parse(JSON.stringify(x));
+  env.props.ANTHROPIC_API_KEY = 'sk-ant-test';
+  env.inbox().addFile('BIO 101 roster.csv', ['Student ID,Populi Name,Course Abbrv,Type', '11,Ana Uno,BIO 101,student',
+    '12,Beto Dos,BIO 101,student', '13,Caro Tres,BIO 101,student', '14,Caro Tress,BIO 101,student'].join('\n'));
+  env.gas.tick();
+  const b64 = t => Buffer.from(t).toString('base64');
+  const p = (shown, n, conf, alts) => ({ shown_name: shown, roster_number: n, confidence: conf, alternatives: alts || [], where: 'tile' });
+  // The OCR text is garbage on purpose: the result must come from the AI reading.
+  env.ai.reply = body => {
+    const prompt = body.messages[0].content[1].text;
+    assert.match(prompt, /Ana Uno/);
+    assert.equal(body.messages[0].content[0].type, 'image');
+    assert.equal(body.output_config.format.type, 'json_schema');
+    if (/15 minutes/.test(prompt)) return { participants: [p('ana u.', 1, 0.95), p('Prof X', -1, 0.99), p('Caro T', 3, 0.5, [4])], chat: [], unreadable: false };
+    return { participants: [p('ana u.', 1, 0.95), p('beto', 2, 0.92)], chat: [], unreadable: false };
+  };
+  let r = env.gas.apiUploadShot('C3', '2026-10-05', 'present', 's1.jpg', 'image/jpeg', b64('###'));
+  assert.equal(r.ai, true);
+  assert.equal(env.ai.requests[0].headers['x-api-key'], 'sk-ant-test');
+  assert.equal(env.ai.requests[0].body.model, 'claude-opus-5-5');
+  env.gas.apiUploadShot('C3', '2026-10-05', 'tardy', 's2.jpg', 'image/jpeg', b64('###'));
+  env.gas.apiUploadShot('C3', '2026-10-05', 'end', 's3.jpg', 'image/jpeg', b64('###'));
+  env.gas.apiAnalyzeSession('C3', '2026-10-05');
+  assert.equal(env.row('2026-10-05', 'C3', '11').Status, 'Present');
+  assert.equal(env.row('2026-10-05', 'C3', '12').Status, 'Tardy');
+  const qs = j(env.gas.apiQuestions());
+  assert.ok(JSON.stringify(qs).includes('Caro T'), 'the unsure name is asked about');
+
+  // AI errors never block: the OCR reading is used instead
+  env.ai.reply = () => { throw new Error('overloaded'); };
+  r = env.gas.apiUploadShot('C3', '2026-10-05', 'end', 's4.jpg', 'image/jpeg', b64('Ana Uno'));
+  assert.equal(r.ai, false);
+  assert.match(r.aiError, /overloaded/);
+  // and it can be read again later
+  const files = j(env.gas.apiShotFiles('C3', '2026-10-05'));
+  assert.equal(files.end.length, 2);
+  assert.equal(files.end[1].done, false);
+  env.ai.reply = () => ({ participants: [p('Ana Uno', 1, 0.99)], chat: [], unreadable: false });
+  assert.equal(env.gas.apiAiReadFile('C3', '2026-10-05', 'end', 1, files.end[1].id).names, 1);
+  assert.equal(j(env.gas.apiShotFiles('C3', '2026-10-05')).end[1].done, true);
+});
+
+test('student emails: sorted, excuse marks the absence, reply drafts, answered threads close, to-do shows waiting time', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const j = x => JSON.parse(JSON.stringify(x));
+  env.inbox().addFile('Zoom screenshots 2026-10-05 [C3].csv', ['Student,Date,Status', 'Ana Maria Lopez,2026-10-05,Absent',
+    'Brian Smith,2026-10-05,Present', 'Carla Pérez,2026-10-05,Tardy', 'David Kim,2026-10-05,Present'].join('\n'));
+  env.setNow('2026-10-06T00:30:00Z');
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C3', '1001').Status, 'Absent');
+
+  // Without AI: word rules + a template
+  env.mail.receive({ from: 'Ana Lopez <ana@ivy.edu>', subject: 'Doctor note', body: 'Hi, I was sick on Monday. Attached is my doctor note.', attachments: ['note.pdf'], at: '2026-10-06T13:00:00Z' });
+  env.mail.receive({ from: 'Someone <spam@x.com>', subject: 'Offer', body: 'Buy now' });
+  const brian = env.mail.receive({ from: 'brian@ivy.edu', subject: 'Zoom link?', body: 'What is the zoom link for tonight?', at: '2026-10-06T13:00:00Z' });
+  env.setNow('2026-10-07T15:00:00Z');
+  env.gas.tick();
+  let m = j(env.gas.apiMail());
+  assert.equal(m.length, 2, 'only students');
+  const ana = m.find(x => x.email === 'ana@ivy.edu');
+  assert.equal(ana.category, 'Medical excuse');
+  assert.equal(ana.status, 'Needs reply');
+  assert.equal(ana.waiting, 26);
+  assert.match(ana.draft, /^Hi Ana,[\s\S]*received it[\s\S]*Diego/);
+  assert.match(ana.excuse, /Marked Received · BIO 101 · 2026-10-05/);
+  assert.equal(env.row('2026-10-05', 'C3', '1001').Excuse, 'Received');
+  assert.equal(ana.classes[0].effective, 1);
+  assert.ok(env.mail.threads[0].labels.has('TA/Medical excuse') && env.mail.threads[0].labels.has('TA/Needs reply'));
+  const tasks = j(env.gas.apiOverview()).tasks.filter(t => t.type === 'mail');
+  assert.equal(tasks.length, 2);
+  assert.match(tasks[0].text, /waiting 26 h/);
+
+  // Nothing new → no rework; my reply closes the thread
+  env.mail.receive({ thread: brian, from: 'Diego <dgomez230@ivy.edu>', body: 'Here it is.' });
+  env.gas.tick();
+  m = j(env.gas.apiMail());
+  assert.equal(m.find(x => x.email === 'brian@ivy.edu').status, 'Answered');
+  assert.ok(!brian.labels.has('TA/Needs reply'));
+
+  // Put the reply in Gmail, forward the excuse to the office as a draft, close by hand
+  env.gas.apiMailToGmail(ana.threadId, 'Hi Ana, thanks!');
+  assert.equal(env.mail.replies[0].body, 'Hi Ana, thanks!');
+  env.gas.apiMailForwardExcuse(ana.threadId);
+  assert.match(env.mail.drafts.at(-1).subject, /Medical excuse – Ana Maria Lopez/);
+  env.gas.apiMailStatus(ana.threadId, 'Done');
+  assert.equal(j(env.gas.apiOverview()).tasks.filter(t => t.type === 'mail').length, 0);
+});
+
+test('student emails with AI: Claude gets the record and the rules, writes the reply; redraft on request; apiAll has everything', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const j = x => JSON.parse(JSON.stringify(x));
+  env.props.ANTHROPIC_API_KEY = 'sk-ant-test';
+  env.inbox().addFile('Zoom screenshots 2026-10-05 [C3].csv', ['Student,Date,Status', 'Ana Maria Lopez,2026-10-05,Present',
+    'Brian Smith,2026-10-05,Absent', 'Carla Pérez,2026-10-05,Present', 'David Kim,2026-10-05,Present'].join('\n'));
+  env.setNow('2026-10-06T00:30:00Z');
+  env.gas.tick();
+  const reply = (over) => Object.assign({ category: 'absence_notice', needs_reply: true, urgency: 'normal', summary: 'Will miss next class',
+    excuse: { is_excuse: false, class_date: '', has_doctor_phone: false, for_someone_else: false, missing: [] }, reply: 'Hi Brian, you have 1 absence left.' }, over);
+  env.ai.reply = body => {
+    const text = body.messages[0].content[0].text;
+    assert.match(body.system, /at most 2 absences/);
+    assert.match(body.system, /never .*professor|Do not send it to your professor/i);
+    assert.match(text, /Student: Brian Smith/);
+    assert.match(text, /2026-10-05 Absent/);
+    assert.match(text, /absences left: 1/);
+    return /shorter/.test(text) ? reply({ reply: 'Hi Brian, 1 left.' }) : reply();
+  };
+  env.mail.receive({ from: 'Brian <brian@ivy.edu>', subject: 'Next Monday', body: 'I will not be able to come next Monday.\n\nOn Mon, Oct 5 Diego wrote:\n> old text' });
+  // out of time in this run: listed as waiting, drafted on the next run
+  env.gas.scanMail_(env.gas.load_(), -1);
+  assert.equal(env.ai.requests.length, 0);
+  assert.equal(j(env.gas.apiMail())[0].status, 'Needs reply');
+  env.gas.tick();
+  const m = j(env.gas.apiMail())[0];
+  assert.equal(m.category, 'Will miss / missed class');
+  assert.equal(m.draft, 'Hi Brian, you have 1 absence left.');
+  assert.equal(m.by, 'AI');
+  assert.ok(!JSON.stringify(env.ai.requests[0].body).includes('old text'), 'quoted text removed');
+  assert.equal(env.gas.apiMailRedraft(m.threadId, 'shorter').draft, 'Hi Brian, 1 left.');
+
+  const all = j(env.gas.apiAll());
+  assert.deepEqual(Object.keys(all.classes).sort(), ['C1', 'C2', 'C3', 'C4']);
+  assert.equal(all.overview.mailWaiting, 1);
+  assert.equal(all.overview.ai, true);
+  assert.equal(all.mail[0].draft, 'Hi Brian, 1 left.');
+  assert.ok(Array.isArray(all.questions) && Array.isArray(all.followups) && all.reportWeeks.weeks.length === 10);
 });

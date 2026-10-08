@@ -224,3 +224,129 @@ function buildWeeklyReport(p) {
     html: html.join('')
   };
 }
+
+/* ---------- student emails (Gmail inbox) ---------- */
+
+var MAIL_CATEGORIES = ['medical_excuse', 'absence_notice', 'attendance_question', 'grades_or_assignments', 'zoom_or_tech', 'thanks_or_fyi', 'other'];
+
+var MAIL_CATEGORY_LABEL = {
+  medical_excuse: 'Medical excuse', absence_notice: 'Will miss / missed class', attendance_question: 'Attendance question',
+  grades_or_assignments: 'Grades / assignments', zoom_or_tech: 'Zoom / tech', thanks_or_fyi: 'Thanks / FYI', other: 'Other'
+};
+
+/** What Claude returns for one student email thread (structured output). */
+var MAIL_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  required: ['category', 'needs_reply', 'urgency', 'summary', 'excuse', 'reply'],
+  properties: {
+    category: { type: 'string', enum: MAIL_CATEGORIES },
+    needs_reply: { type: 'boolean', description: 'false only for thanks/FYI messages that need no answer' },
+    urgency: { type: 'string', enum: ['high', 'normal', 'low'] },
+    summary: { type: 'string', description: 'One short sentence: what the student wants' },
+    excuse: {
+      type: 'object', additionalProperties: false,
+      required: ['is_excuse', 'class_date', 'has_doctor_phone', 'for_someone_else', 'missing'],
+      properties: {
+        is_excuse: { type: 'boolean', description: 'The student sends (or says they attach) a medical excuse' },
+        class_date: { type: 'string', description: 'YYYY-MM-DD of the class the excuse is for, or "" if not clear' },
+        has_doctor_phone: { type: 'boolean' },
+        for_someone_else: { type: 'boolean', description: 'The appointment was for another person (guardian/companion)' },
+        missing: { type: 'array', items: { type: 'string' }, description: 'What the excuse still needs, per the rules' }
+      }
+    },
+    reply: { type: 'string', description: 'The full reply, ready to paste, signed by the TA' }
+  }
+};
+
+/** Strip quoted older messages ("On ... wrote:", "> ...") and signatures noise from a plain-text email body. */
+function cleanMailBody(text) {
+  var lines = String(text || '').replace(/\r/g, '').split('\n'), out = [];
+  for (var i = 0; i < lines.length; i++) {
+    var l = lines[i];
+    if (/^On .{5,200}wrote:\s*$/.test(l) || /^-{2,}\s*Original Message/i.test(l) || /^From: .+/.test(l) && out.length) break;
+    if (/^>/.test(l)) continue;
+    out.push(l);
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+/** Without AI: a rough category from the words used. */
+function mailCategoryGuess(text, attachments) {
+  var t = String(text || '').toLowerCase();
+  if (/(doctor|medical|hospital|clinic|urgent care|sick|illness|appointment|excuse|note from|surgery|emergency room|covid|fever)/.test(t)) {
+    return { category: 'medical_excuse', isExcuse: /(excuse|note|attach|doctor'?s? (note|letter))/.test(t) || (attachments || []).length > 0 };
+  }
+  if (/(won'?t be able|will not be able|can'?t (make|attend|come)|miss(ed)? (the )?class|absent|absence|late)/.test(t)) return { category: 'absence_notice', isExcuse: false };
+  if (/(attendance|marked|present|tardy)/.test(t)) return { category: 'attendance_question', isExcuse: false };
+  if (/(grade|assignment|homework|essay|paper|quiz|exam|due|syllabus)/.test(t)) return { category: 'grades_or_assignments', isExcuse: false };
+  if (/(zoom|link|password|meeting id|audio|camera|connection)/.test(t)) return { category: 'zoom_or_tech', isExcuse: false };
+  if (/^(\s*(thank(s| you)|ok|okay|got it|great|perfect)\b)/.test(t) && t.length < 200) return { category: 'thanks_or_fyi', isExcuse: false };
+  return { category: 'other', isExcuse: false };
+}
+
+/** The rules Claude must follow when writing to a student. */
+function mailSystemPrompt(cfg) {
+  var c = rulesConfig_(cfg);
+  return 'You help ' + (cfg.taName || 'the Teacher Assistant') + ', a Teacher Assistant at a college, answer emails from students. ' +
+    'You read the thread and the student\'s attendance record, sort the email, and write a reply the TA can paste as is.\n\n' +
+    'Attendance rules of every course:\n' +
+    '- The course has ' + c.totalSessions + ' weekly classes; each absence is ' + Math.round(100 / c.totalSessions) + '% of attendance. ' +
+    'Students need at least ' + c.minAttendancePct + '%, so at most ' + c.maxAbsences + ' absences.\n' +
+    '- Minutes 0-' + c.presentUntilMin + ' after the start: Present. Minutes ' + (c.presentUntilMin + 1) + '-' + c.tardyUntilMin +
+    ': Tardy. Later: Absent. Every ' + c.tardiesPerAbsence + ' tardies count as 1 absence. Checking in and leaving before the end counts as Absent.\n' +
+    '- ' + medicalExcuseText_(cfg).replace(/\n+/g, ' ') + '\n\n' +
+    'How to reply:\n' +
+    '- Warm, brief and professional. Use the student\'s first name. Reply in the language the student wrote in.\n' +
+    '- Use only the facts given (dates, statuses, counts). Never invent dates, grades or decisions.\n' +
+    '- The TA does not excuse absences or change grades: the office verifies medical excuses within a week. ' +
+    'If an excuse arrived, thank them, say it was received and goes to the office for verification, and list anything it still needs ' +
+    '(full name, doctor or hospital phone number, guardian/companion note when it was for someone else).\n' +
+    '- Questions about grades or course content go to the professor; questions about attendance are answered by the TA.\n' +
+    '- If the student says they will miss class, remind them how many absences they have left.\n' +
+    '- End with this signature, exactly:\n' + signature_(cfg);
+}
+
+/**
+ * The user message for one thread.
+ * p: {student:{name}, classes:[{label, records:[{date,status,excuse}], tally}], messages:[{from, mine, date, body, attachments}],
+ *     today, instruction}
+ */
+function mailUserPrompt(p) {
+  var cfg = p.cfg || {}, c = rulesConfig_(cfg);
+  var lines = ['Today is ' + p.today + '.', '', 'Student: ' + p.student.name];
+  (p.classes || []).forEach(function (k) {
+    var t = k.tally;
+    lines.push('', 'Class: ' + k.label + ' (' + k.when + ')');
+    lines.push('Attendance so far: ' + (k.records.length ? k.records.map(function (r) {
+      return r.date + ' ' + (r.status || 'no status') + (r.excuse ? ' (excuse ' + r.excuse + ')' : '');
+    }).join('; ') : 'no classes recorded yet'));
+    lines.push('Counted absences: ' + t.effective + ' of ' + c.maxAbsences + ' (' + t.absences + ' absences, ' + t.tardies +
+      ' tardies) · absences left: ' + Math.max(0, t.remaining) + ' · attendance ' + t.pct + '%');
+  });
+  if (!(p.classes || []).length) lines.push('(This sender is not on any class roster.)');
+  lines.push('', 'Email thread, oldest first:');
+  p.messages.forEach(function (m) {
+    lines.push('', '--- ' + (m.mine ? 'TA' : 'Student') + ' · ' + m.date + (m.attachments.length ? ' · attachments: ' + m.attachments.join(', ') : '') + ' ---');
+    lines.push(m.body.slice(0, 4000));
+  });
+  if (p.instruction) lines.push('', 'The TA asks for the reply: ' + p.instruction);
+  return lines.join('\n');
+}
+
+/** Without AI: a simple reply to adapt. */
+function mailTemplateReply(p) {
+  var cfg = p.cfg || {}, first = String(p.student.name || '').split(/\s+/)[0] || 'there', c = rulesConfig_(cfg);
+  var body;
+  if (p.category === 'medical_excuse') {
+    body = 'Thank you for sending your medical excuse. I received it and I will pass it to ' + (cfg.officeName || 'the main office') +
+      ', which verifies it and updates your attendance within one week.\n\nPlease make sure it includes your full name and a phone number ' +
+      'for the doctor or hospital. If the appointment was for someone else, the note must say that you were there as their guardian or companion.';
+  } else if (p.category === 'absence_notice' && p.classes && p.classes[0]) {
+    var t = p.classes[0].tally;
+    body = 'Thank you for letting me know. Right now you have ' + t.effective + ' of ' + c.maxAbsences + ' absences in ' + p.classes[0].label +
+      ', so you have ' + Math.max(0, t.remaining) + ' left. Remember you need at least ' + c.minAttendancePct + '% attendance to pass.\n\n' + medicalExcuseText_(cfg);
+  } else {
+    body = 'Thank you for your email. ';
+  }
+  return 'Hi ' + first + ',\n\n' + body + '\n\nBest regards,\n' + signature_(cfg);
+}

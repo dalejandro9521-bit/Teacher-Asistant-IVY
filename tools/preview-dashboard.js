@@ -32,8 +32,24 @@ env.sheet('Attendance').appendRow(['2026-10-05', 'C1', '200', names[0], 'Absent'
 env.sheet('Attendance').appendRow(['2026-10-05', 'C1', '201', names[1], 'Absent', '', 'Populi']);
 g.tick(); // HA 103 has no open questions → its follow-up is ready
 
+// Student emails, read by "Claude" (canned answers here)
+env.props.ANTHROPIC_API_KEY = 'sk-ant-preview';
+env.ai.reply = body => {
+  const t = body.messages[0].content[0].text, excuse = /doctor/.test(t);
+  return { category: excuse ? 'medical_excuse' : 'absence_notice', needs_reply: true, urgency: 'normal',
+    summary: excuse ? 'Sends a doctor note for Monday\'s class.' : 'Will miss next Monday because of work.',
+    excuse: { is_excuse: excuse, class_date: excuse ? '2026-10-05' : '', has_doctor_phone: false, for_someone_else: false, missing: excuse ? ['doctor or hospital phone number'] : [] },
+    reply: excuse ? 'Hi Ana,\n\nThank you for sending your doctor\'s note. I received it and passed it to the main office, which verifies it within one week.\n\nCould you send me the phone number of the clinic? The office needs it to verify the note.\n\nBest regards,\nDiego Gomez\nTeacher Assistant\ndgomez230@ivy.edu'
+      : 'Hi Bruno,\n\nThank you for letting me know. You have 0 of 2 absences so far, so you still have 2 left. Remember you need at least 80% attendance to pass.\n\nBest regards,\nDiego Gomez' };
+};
+const s0 = names.indexOf('Ana Alba'), s1 = names.indexOf('Bruno Brito');
+env.mail.receive({ from: 'Ana Alba <s' + s0 + '@ivy.edu>', subject: 'Doctor note for Monday', body: 'Hello, I was at the doctor on Monday. Attached is the note.', attachments: ['note.pdf'], at: '2026-10-05T01:00:00Z' });
+env.mail.receive({ from: 'Bruno <s' + s1 + '@ivy.edu>', subject: 'Next class', body: 'I will not be able to come next Monday because of work.', at: '2026-10-06T00:30:00Z' });
+g.tick();
+
 const api = {};
-['apiOverview', 'apiQuestions', 'apiFollowups'].forEach(f => { api[f] = JSON.parse(JSON.stringify(g[f]())); });
+api.apiAll = JSON.parse(JSON.stringify(g.apiAll()));
+['apiOverview', 'apiQuestions', 'apiFollowups', 'apiMail'].forEach(f => { api[f] = JSON.parse(JSON.stringify(g[f]())); });
 api.apiClass = { C3: JSON.parse(JSON.stringify(g.apiClass('C3'))), C1: JSON.parse(JSON.stringify(g.apiClass('C1'))) };
 api.apiSession = JSON.parse(JSON.stringify(g.apiSession('C3', '2026-10-05')));
 api.apiReportWeeks = JSON.parse(JSON.stringify(g.apiReportWeeks()));
@@ -44,9 +60,12 @@ api.apiWeeklyReport = JSON.parse(JSON.stringify(g.apiWeeklyReport(1)));
 const stub = `window.__API = ${JSON.stringify(api)};
 window.google = { script: { run: (function make(ok, fail) {
   const r = { withSuccessHandler: f => make(f, fail), withFailureHandler: f => make(ok, f) };
-  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots'].forEach(n => {
+  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots','apiAll','apiMail','apiMailStatus','apiMailToGmail','apiMailForwardExcuse','apiCheckMail','apiMailRedraft'].forEach(n => {
     r[n] = (...a) => setTimeout(() => { let v = window.__API[n]; if (n === 'apiClass') v = v[a[0]] || v.C3; if (n === 'apiProcessNow') v = { files: 0, sent: 0 };
-      if (n === 'apiAnswer') v = { note: 'Linked to #12 Malek Bay' }; ok(v === undefined ? true : v); }, 50);
+      if (n === 'apiAnswer') v = { note: 'Linked to #12 Malek Bay' };
+      if (n === 'apiMailRedraft') v = { draft: 'Hi Ana,\\n\\nGot it, thanks! I sent it to the office.\\n\\nDiego' };
+      if (n === 'apiMailForwardExcuse') v = { to: 'office@ivy.edu' };
+      if (n === 'apiCheckMail') v = { changed: 0 }; ok(v === undefined ? true : v); }, 50);
   });
   return r; })() } };`;
 
@@ -57,7 +76,7 @@ window.google = { script: { run: (function make(ok, fail) {
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'Dashboard.html'), 'utf8')
     .replace('<script>', '<script>' + stub + '</script>\n<script>');
   const errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  page.on('pageerror', e => { errors.push(e.message); console.error('PAGE ERROR', e.message); });
   await page.route('**/fonts.googleapis.com/**', r => r.abort()); // no network here; the system font is the fallback
   await page.setContent(html, { waitUntil: 'load' });
   const shot = async (name) => { await page.waitForTimeout(400); await page.screenshot({ path: path.join(out, name + '.png') }); };
@@ -65,6 +84,16 @@ window.google = { script: { run: (function make(ok, fail) {
   await page.click('.cls[data-class="C3"]'); await shot('2-class');
   await page.click('.wt.ok'); await shot('3-session');
   await page.click('[data-act="ocrTab"][data-p="end"]'); await shot('4-session-last-screenshot');
+  // drop 4 screenshots in "15 min": uploaded 3 at a time, then one analysis
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+  await page.evaluate(() => { const orig = window.google.script.run; window.__calls = [];
+    window.google.script.run = new Proxy(orig, { get: (t, k) => k === 'withSuccessHandler' ? (f) => { const r = orig.withSuccessHandler(f);
+      return new Proxy(r, { get: (t2, k2) => k2 === 'withFailureHandler' ? (g) => { const r2 = r.withFailureHandler(g);
+        return new Proxy(r2, { get: (t3, k3) => (...a) => { window.__calls.push(k3); return r2[k3](...a); } }); } : t2[k2] }); } : t[k] }); });
+  await page.setInputFiles('#shotInput', [1, 2, 3, 4].map(n => ({ name: 's' + n + '.png', mimeType: 'image/png', buffer: png })));
+  await page.waitForTimeout(1500);
+  const calls = await page.evaluate(() => window.__calls);
+  if (calls.filter(c => c === 'apiUploadShot').length !== 4 || !calls.includes('apiAnalyzeSession')) { console.error('upload calls', calls); process.exit(1); }
   await page.click('[data-go="class"][data-class="C3"]'); await page.waitForTimeout(300); await page.click('.wt.ok'); await page.waitForTimeout(400);
   await page.locator('.more').first().click(); await shot('3b-session-menu');
   await page.click('[data-act="rec"][data-change*="excuse"]'); await shot('3c-session-after-edit');
@@ -72,6 +101,8 @@ window.google = { script: { run: (function make(ok, fail) {
   await page.click('[data-go="review"]'); await shot('5-questions');
   await page.click('[data-go="followups"]'); await shot('6-followups');
   await page.click('[data-go="reports"]'); await shot('7-weekly-report');
+  await page.click('[data-go="mail"]'); await shot('8-student-emails');
+  await page.click('[data-act="mailRewrite"][data-i="0"]'); await shot('8b-email-rewritten');
   await browser.close();
   if (errors.length) { console.error('Page errors:', errors); process.exit(1); }
   console.log('Screenshots in', out);

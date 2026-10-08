@@ -18,7 +18,9 @@ var SHEETS = {
     'Open questions', 'Populi updated', 'Updated'],
   Review: ['Created', 'Class ID', 'Date', 'Name seen', 'Seen in', 'Suggestions', 'Student (# or name, or "ignore")', 'Done', 'Notes'],
   Outbox: ['Time', 'Type', 'To', 'Subject', 'Mode', 'Body'],
-  'Inbox log': ['Time', 'File', 'Kind', 'Class', 'Dates', 'Result']
+  'Inbox log': ['Time', 'File', 'Kind', 'Class', 'Dates', 'Result'],
+  Mail: ['Thread ID', 'Received', 'Student ID', 'Student', 'Email', 'Class ID', 'Subject', 'Category', 'Summary', 'Status',
+    'Waiting since', 'Draft', 'Excuse', 'Last message ID', 'Read by', 'Updated']
 };
 
 // [key, label in the Config sheet, default, note]
@@ -33,6 +35,11 @@ var CONFIG_FIELDS = [
   ['populiVisibility', 'Populi visibility', 'Academic Admin, Account Admin, Admissions Admin, Staff, Academic Auditor, Admissions', 'Boxes to check under Visibility when you send a follow-up from Populi.'],
   ['bcc', 'BCC on student notices', '', 'Optional, e.g. the office, so they keep a copy.'],
   ['noticesFrom', 'Send notices from', '', 'Absences before this date are not emailed (so importing old weeks does not spam students).'],
+  ['aiScreenshots', 'Read screenshots with AI', 'Yes', 'Claude reads each screenshot with the roster (most accurate). Needs the API key: TA Attendance → Set Claude API key.'],
+  ['aiMail', 'AI reply drafts for student emails', 'Yes', 'Claude sorts student emails and writes a reply draft.'],
+  ['aiModel', 'AI model', 'claude-opus-5-5', 'Most accurate Claude model.'],
+  ['aiEffort', 'AI effort', 'medium', 'low / medium / high. Higher = more careful but slower.'],
+  ['mailDays', 'Check student emails from the last (days)', 14, ''],
   ['ignoreNames', 'Ignore in screenshots', 'Diego Gomez; Professor', 'Names that are not students (you, the professors), separated by ";".'],
   ['markMissing', 'Mark students missing from a file absent', 'Yes', 'Zoom report or Populi list of check-ins: whoever is not in it is Absent.'],
   ['termStart', 'Term start', '2026-10-05', 'First day of week 1 (yyyy-mm-dd). Used for "Week N" in the report.'],
@@ -50,7 +57,7 @@ var CONFIG_FIELDS = [
   ['excuseReviewDays', 'Days for the office to verify an excuse', 7, '']
 ];
 
-var NUMERIC_KEYS = ['reportHour', 'reminderHour', 'totalSessions', 'maxAbsences', 'minAttendancePct', 'presentUntilMin',
+var NUMERIC_KEYS = ['mailDays', 'reportHour', 'reminderHour', 'totalSessions', 'maxAbsences', 'minAttendancePct', 'presentUntilMin',
   'tardyUntilMin', 'tardiesPerAbsence', 'noIdLimit', 'earlyLeaveGraceMin', 'excuseReviewDays'];
 
 var DEFAULT_CLASSES = [
@@ -73,6 +80,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Open the Drive inbox folder', 'showInbox')
     .addItem('Set up / repair sheets', 'setup')
+    .addItem('Set Claude API key', 'setApiKey')
     .addItem('Turn on automations', 'installTriggers')
     .addToUi();
 }
@@ -204,9 +212,12 @@ function runAll_(ctx) {
   var sent = sendPendingNotices_(ctx);
   var office = checkNoId_(ctx);
   save_(ctx.att);
+  var mail = 0;
+  try { mail = scanMail_(ctx); } catch (e) { appendRow_('Inbox log', [nowStr_(), 'Gmail', 'error', '', '', String(e && e.message || e)]); }
+  save_(ctx.att);
   refreshSummary_(ctx);
   refreshGrids_(ctx);
-  return { files: log.length, reruns: reruns, sent: sent, office: office, log: log };
+  return { files: log.length, reruns: reruns, sent: sent, office: office, mail: mail, log: log };
 }
 
 function weeklyReport() {
@@ -340,11 +351,11 @@ function handleScreenshotFolder_(ctx, folder) {
 }
 
 /** Screenshot text of one class → attendance rows, questions for Diego in Review, and the Sessions row. */
-function processScreenshotSession_(ctx, cls, date, phases, folderId, images) {
+function processScreenshotSession_(ctx, cls, date, phases, folderId, images, ai) {
   var start = sessionStart_(ctx, cls, date);
   var roster = roster_(ctx, cls.id);
   var res = screenshotStatuses(phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
-    { start: start, cfg: ctx.cfg });
+    { start: start, cfg: ctx.cfg, ai: ai });
   var entries = res.results.map(function (x) {
     return { student: x.student, status: x.status, leftEarly: x.leftEarly, source: 'Zoom screenshots', notes: x.note };
   });
@@ -880,7 +891,7 @@ function rerunSessions_(ctx, rerun) {
         var folder = DriveApp.getFolderById(id), it = folder.getFilesByName('ocr.json');
         if (!it.hasNext()) return;
         var saved = JSON.parse(it.next().getBlob().getDataAsString());
-        var msg = processScreenshotSession_(ctx, cls, date, saved.phases, id, saved.images);
+        var msg = processScreenshotSession_(ctx, cls, date, saved.phases, id, saved.images, saved.ai);
         appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (re-run)', 'screenshots', cls.id, date, msg]);
       } else {
         var file = DriveApp.getFileById(id);
@@ -945,8 +956,9 @@ function apiOverview() {
   return out;
 }
 
-function overview_() {
-  var ctx = load_(), recs = records_(ctx), totals = tally(recs, ctx.cfg), y = yearOf_(ctx);
+function overview_(ctx) {
+  ctx = ctx || load_();
+  var recs = records_(ctx), totals = tally(recs, ctx.cfg), y = yearOf_(ctx);
   var classes = ctx.classes.filter(function (c) { return c.active; }).map(function (cls) {
     var roster = roster_(ctx, cls.id), mine = recs.filter(function (r) { return r.classId === cls.id; });
     var dates = mine.map(function (r) { return r.date; }).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
@@ -968,10 +980,26 @@ function overview_() {
   return {
     today: today_(), week: termWeek(today_(), ctx.cfg.termStart), mode: mode_(ctx.cfg), classes: classes, tasks: tasks_(ctx),
     pendingFollowups: fu.rows.filter(function (r) { return !fu.get(r, 'Done'); }).length,
+    mailWaiting: (function (mt) { return mt.rows.filter(function (r) { return mt.get(r, 'Status') === 'Needs reply'; }).length; })(table_('Mail')),
+    ai: !!apiKey_(), replyTo: ctx.cfg.replyTo, mailDays: ctx.cfg.mailDays,
     openQuestions: ctx.revT.rows.filter(function (r) { return !ctx.revT.get(r, 'Done'); }).length,
     log: rowsOf_(log).slice(-15).reverse(),
     inboxUrl: ctx.cfg.inboxFolderId ? 'https://drive.google.com/drive/folders/' + ctx.cfg.inboxFolderId : ''
   };
+}
+
+/**
+ * Speed: everything the dashboard shows, in one call (the sheets are read once). The page keeps it and draws every
+ * screen from it; writes go in the background.
+ */
+function apiAll() {
+  var hit = cacheGet_('all');
+  if (hit) return hit;
+  var ctx = load_(), out = { overview: overview_(ctx), classes: {}, questions: questions_(ctx), followups: followups_(ctx),
+    reportWeeks: reportWeeks_(ctx), mail: mail_(ctx), at: nowStr_() };
+  ctx.classes.filter(function (c) { return c.active; }).forEach(function (c) { out.classes[c.id] = class_(c.id, ctx); });
+  cachePut_('all', out, 120);
+  return out;
 }
 
 /** One class: students in Populi order × weeks. */
@@ -983,8 +1011,9 @@ function apiClass(classId) {
   return out;
 }
 
-function class_(classId) {
-  var ctx = load_(), cls = classById_(ctx, classId);
+function class_(classId, ctx) {
+  ctx = ctx || load_();
+  var cls = classById_(ctx, classId);
   if (!cls) throw new Error('No class ' + classId);
   var recs = records_(ctx).filter(function (r) { return r.classId === cls.id; }), totals = tally(recs, ctx.cfg);
   var dates = recs.map(function (r) { return r.date; }).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
@@ -1044,7 +1073,7 @@ function apiSession(classId, date) {
     week: termWeek(date, ctx.cfg.termStart),
     students: roster.map(function (s) { return Object.assign({ id: s.id, order: s.order, name: s.name }, byStudent[s.id] || { status: '' }); }),
     questions: rowsOf_(ctx.revT).filter(function (q) { return q['Class ID'] === cls.id && parseDateCell(q.Date, y) === date; }),
-    ocr: null
+    ocr: null, aiOn: aiOn_(ctx.cfg, 'aiScreenshots'), aiShots: 0
   };
   out.shots = { present: 0, tardy: 0, end: 0 };
   if (srow && st.get(srow, 'Source') === 'Zoom screenshots' && st.get(srow, 'Source ID')) {
@@ -1054,7 +1083,8 @@ function apiSession(classId, date) {
         var saved = JSON.parse(it.next().getBlob().getDataAsString());
         ['present', 'tardy', 'end'].forEach(function (k) { out.shots[k] = ((saved.phases || {})[k] || []).length; });
         out.ocr = screenshotDiagnostics(saved.phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
-          { start: sessionStart_(ctx, cls, date), cfg: ctx.cfg });
+          { start: sessionStart_(ctx, cls, date), cfg: ctx.cfg, ai: saved.ai });
+        out.aiShots = ['present', 'tardy', 'end'].reduce(function (n, k) { return n + ((saved.ai || {})[k] || []).filter(Boolean).length; }, 0);
         out.folderUrl = folder.getUrl();
       }
     } catch (err) { out.ocrError = String(err && err.message || err); }
@@ -1062,8 +1092,9 @@ function apiSession(classId, date) {
   return out;
 }
 
-function apiQuestions() {
-  var ctx = load_();
+function apiQuestions() { return questions_(load_()); }
+
+function questions_(ctx) {
   return rowsOf_(ctx.revT).filter(function (q) { return !q.Done; }).map(function (q) {
     var cls = classById_(ctx, q['Class ID']);
     q.classLabel = cls ? classLabel(cls) : q['Class ID'];
@@ -1099,8 +1130,10 @@ function apiSetStart(classId, date, text) {
 }
 
 /** Pending follow-ups; each says if a student's status changed after it was written (don't send it as is). */
-function apiFollowups() {
-  var ctx = load_(), y = yearOf_(ctx);
+function apiFollowups() { return followups_(load_()); }
+
+function followups_(ctx) {
+  var y = yearOf_(ctx);
   return rowsOf_(table_('Follow-ups')).filter(function (f) { return !f.Done; }).map(function (f) {
     var classId = String(f.Class || '').split(' · ')[0], date = parseDateCell(f['Class date'], y);
     var want = /Tardy/.test(f.Type) ? STATUS.T : /Absent|LeftEarly/.test(f.Type) ? STATUS.A : '';
@@ -1128,8 +1161,10 @@ function apiFollowupDone(row) {
 }
 
 /** Weeks of the term for the report picker. */
-function apiReportWeeks() {
-  var ctx = load_(), today = today_(), out = [];
+function apiReportWeeks() { return reportWeeks_(load_()); }
+
+function reportWeeks_(ctx) {
+  var today = today_(), out = [];
   var now = termWeek(today, ctx.cfg.termStart) || 1;
   for (var w = 1; w <= rulesConfig_(ctx.cfg).totalSessions; w++) {
     var start = weekStartOf_(ctx, w);
@@ -1247,8 +1282,15 @@ function tasks_(ctx) {
     out.push({ type: 'populi', text: 'Tick the participation boxes in Populi · ' + cls.course.split(':')[0] + ' · ' + longDate(date).replace(/, \d{4}$/, ''),
       sub: 'Open the class in the dashboard: same order as Populi. Then press "Done in Populi".', go: { view: 'session', classId: cls.id, date: date } });
   });
-  var order = { question: 0, load: 1, followup: 2, excuse: 3, populi: 4 };
-  return out.sort(function (a, b) { return order[a.type] - order[b.type]; });
+  var mt = table_('Mail');
+  mt.rows.forEach(function (r) {
+    if (mt.get(r, 'Status') !== 'Needs reply') return;
+    var h = hoursSince_(mt.get(r, 'Waiting since'));
+    out.push({ type: 'mail', text: 'Reply to ' + mt.get(r, 'Student') + ' · ' + (mt.get(r, 'Category') || 'email') + ' · waiting ' + (h < 1 ? 'less than 1 h' : h < 48 ? h + ' h' : Math.floor(h / 24) + ' days'),
+      sub: mt.get(r, 'Summary') || mt.get(r, 'Subject'), late: h >= 24, go: { view: 'mail' } });
+  });
+  var order = { question: 0, mail: 1, load: 2, followup: 3, excuse: 4, populi: 5 };
+  return out.sort(function (a, b) { return order[a.type] - order[b.type] || (b.late ? 1 : 0) - (a.late ? 1 : 0); });
 }
 
 /** Change one student's record for one class (quick editing from the dashboard). */
@@ -1355,6 +1397,300 @@ function apiStudent(classId, studentId) {
   };
 }
 
+/* ---------- Claude (AI) ---------- */
+
+function apiKey_() { return PropertiesService.getScriptProperties().getProperty('ANTHROPIC_API_KEY') || ''; }
+
+function aiOn_(cfg, key) { return yes_(cfg[key]) && !!apiKey_(); }
+
+/** Menu: store the Anthropic API key in the script's private properties (never in the sheet). */
+function setApiKey() {
+  var ui = SpreadsheetApp.getUi();
+  var r = ui.prompt('Claude API key', 'Paste your Anthropic API key (starts with sk-ant-). It is stored privately in this script, not in the sheet.', ui.ButtonSet.OK_CANCEL);
+  if (r.getSelectedButton() !== ui.Button.OK) return;
+  var key = r.getResponseText().trim();
+  if (!/^sk-ant-/.test(key)) { ui.alert('That does not look like an Anthropic API key.'); return; }
+  PropertiesService.getScriptProperties().setProperty('ANTHROPIC_API_KEY', key);
+  ui.alert('Saved. Screenshots and student emails will now be read with Claude.');
+}
+
+/**
+ * One Claude request (Messages API over HTTPS; Apps Script has no SDK). Returns the parsed JSON that matches `schema`.
+ * content: the user message content blocks. Uses structured outputs and the default refusal fallback.
+ */
+function aiJson_(cfg, system, content, schema, maxTokens) {
+  var body = {
+    model: cfg.aiModel || 'claude-opus-5-5',
+    max_tokens: maxTokens || 8000,
+    system: system,
+    messages: [{ role: 'user', content: content }],
+    output_config: { effort: cfg.aiEffort || 'medium', format: { type: 'json_schema', schema: schema } },
+    fallbacks: 'default'
+  };
+  var res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+    method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+    headers: { 'x-api-key': apiKey_(), 'anthropic-version': '2023-06-01', 'anthropic-beta': 'server-side-fallback-2026-07-01' },
+    payload: JSON.stringify(body)
+  });
+  var code = res.getResponseCode(), data = JSON.parse(res.getContentText() || '{}');
+  if (code !== 200) throw new Error('Claude API ' + code + ': ' + ((data.error && data.error.message) || 'error'));
+  if (data.stop_reason === 'refusal') throw new Error('Claude declined this request');
+  var text = (data.content || []).filter(function (b) { return b.type === 'text'; }).map(function (b) { return b.text; }).join('');
+  return JSON.parse(text);
+}
+
+/** Claude reads one screenshot with the class roster. → AI_SHOT_SCHEMA result */
+function aiReadShot_(ctx, cls, phase, blob) {
+  var st = table_('Students'), roster = st.rows.map(function (r) { return studentFrom_(st, r); })
+    .filter(function (s) { return s.classId === cls.id && s.active; })
+    .sort(function (a, b) { return (a.order || 1e6) - (b.order || 1e6); });
+  var ignore = String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String);
+  var label = { present: 'taken about 15 minutes after the start', tardy: 'taken about 31 minutes after the start',
+    end: 'taken about one hour after the start, before the TA leaves' }[phase];
+  var content = [
+    { type: 'image', source: { type: 'base64', media_type: blob.getContentType() || 'image/jpeg', data: Utilities.base64Encode(blob.getBytes()) } },
+    { type: 'text', text: aiShotPrompt(roster, ignore, label) }
+  ];
+  return aiJson_(ctx.cfg, 'You take attendance for a college class from Zoom screenshots. You are careful: you only match a name to a ' +
+    'student when the evidence is clear, and you report doubts instead of guessing.', content, AI_SHOT_SCHEMA, 16000);
+}
+
+/* ---------- student emails (Gmail) ---------- */
+
+var MAIL_LABELS = { reply: 'TA/Needs reply', excuse: 'TA/Medical excuse' };
+
+function myEmails_(cfg) {
+  var out = [String(cfg.replyTo || '').toLowerCase()];
+  try { out.push(String(Session.getEffectiveUser().getEmail() || '').toLowerCase()); } catch (e) { /* not available */ }
+  return out.filter(String);
+}
+
+function emailOf_(from) {
+  var m = String(from || '').match(/<([^>]+)>/);
+  return (m ? m[1] : String(from || '')).trim().toLowerCase();
+}
+
+function gmailLabel_(name) {
+  try { return GmailApp.getUserLabelByName(name) || GmailApp.createLabel(name); } catch (e) { return null; }
+}
+
+/** The student (by email) with each of their classes: records and totals, for the AI and the dashboard. */
+function mailStudent_(ctx, email) {
+  var mine = ctx.students.filter(function (s) { return s.active && String(s.email).toLowerCase() === email; });
+  if (!mine.length) return null;
+  var recs = records_(ctx), totals = tally(recs, ctx.cfg);
+  return {
+    id: mine[0].id, name: mine[0].name, email: email,
+    classes: mine.map(function (s) {
+      var cls = classById_(ctx, s.classId);
+      if (!cls) return null;
+      return {
+        id: cls.id, label: classLabel(cls), code: cls.course.split(':')[0], when: cls.day + ' ' + classTime(cls),
+        records: recs.filter(function (r) { return r.classId === cls.id && r.studentId === s.id; })
+          .sort(function (a, b) { return a.date < b.date ? -1 : 1; })
+          .map(function (r) { return { date: r.date, status: r.status, excuse: r.excuse }; }),
+        tally: totals[cls.id + '|' + s.id] || emptyTally(ctx.cfg)
+      };
+    }).filter(Boolean)
+  };
+}
+
+function threadMessages_(thread, me) {
+  return thread.getMessages().map(function (m) {
+    var from = emailOf_(m.getFrom());
+    return {
+      id: m.getId(), from: from, mine: me.indexOf(from) >= 0, date: Utilities.formatDate(m.getDate(), tz_(), 'yyyy-MM-dd HH:mm'),
+      body: cleanMailBody(m.getPlainBody()),
+      attachments: (m.getAttachments ? m.getAttachments() : []).map(function (a) { return a.getName(); })
+    };
+  });
+}
+
+/** Ask Claude to sort the thread and write the reply. */
+function aiMail_(ctx, who, msgs, instruction) {
+  var prompt = mailUserPrompt({ cfg: ctx.cfg, today: today_(), student: who, classes: who.classes, messages: msgs.slice(-6), instruction: instruction });
+  return aiJson_(ctx.cfg, mailSystemPrompt(ctx.cfg), [{ type: 'text', text: prompt }], MAIL_SCHEMA, 6000);
+}
+
+/** Without AI: same shape as MAIL_SCHEMA, from simple word rules and a template. */
+function plainMail_(ctx, who, msgs) {
+  var last = msgs.filter(function (m) { return !m.mine; }).slice(-1)[0] || msgs[msgs.length - 1];
+  var g = mailCategoryGuess(last.body, last.attachments);
+  return { category: g.category, needs_reply: g.category !== 'thanks_or_fyi', urgency: 'normal',
+    summary: last.body.replace(/\s+/g, ' ').slice(0, 140),
+    excuse: { is_excuse: g.isExcuse, class_date: '', has_doctor_phone: /\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/.test(last.body), for_someone_else: false, missing: [] },
+    reply: mailTemplateReply({ cfg: ctx.cfg, student: who, classes: who.classes, category: g.category }) };
+}
+
+/** An excuse arrived by email: mark that absence (or the latest one without an excuse) as "Received". */
+function markExcuseFromMail_(ctx, who, classDate) {
+  var t = ctx.att, y = yearOf_(ctx), best = null;
+  who.classes.forEach(function (k) {
+    var s = ctx.students.filter(function (x) { return x.classId === k.id && String(x.email).toLowerCase() === who.email; })[0];
+    t.rows.forEach(function (r) {
+      if (t.get(r, 'Class ID') !== k.id || t.get(r, 'Student ID') !== s.id) return;
+      var st = normalizeStatus(t.get(r, 'Status')), d = parseDateCell(t.get(r, 'Date'), y);
+      if (st !== STATUS.A && st !== STATUS.T) return;
+      if (classDate ? d !== classDate : t.get(r, 'Excuse')) return;
+      if (!best || d > best.date) best = { row: r, date: d, cls: k };
+    });
+  });
+  if (!best) return 'No absence found to attach it to';
+  if (!t.get(best.row, 'Excuse')) {
+    t.set(best.row, 'Excuse', 'Received');
+    t.set(best.row, 'Excuse date', today_());
+    var n = t.get(best.row, 'Notes');
+    t.set(best.row, 'Notes', (n ? n + ' · ' : '') + 'Medical excuse received by email (' + today_() + ')');
+    t.set(best.row, 'Updated', nowStr_());
+  }
+  return 'Marked Received · ' + best.cls.code + ' · ' + best.date;
+}
+
+/**
+ * Student emails of the last days: one row per thread in "Mail". New student messages are sorted and get a reply draft
+ * (Claude when on, otherwise a template). Answered threads (your reply is the last message) close on their own.
+ */
+function scanMail_(ctx, budgetMs) {
+  var cfg = ctx.cfg, me = myEmails_(cfg), mt = table_('Mail'), byId = {}, n = 0, t0 = Date.now();
+  budgetMs = budgetMs || 150000; // Apps Script stops a run at 6 minutes: what is left waits for the next run
+  mt.rows.forEach(function (r) { byId[mt.get(r, 'Thread ID')] = r; });
+  var useAi = aiOn_(cfg, 'aiMail'), labels = null;
+  var threads = GmailApp.search('in:inbox newer_than:' + (cfg.mailDays || 14) + 'd', 0, 100);
+  threads.forEach(function (th) {
+    var msgs = threadMessages_(th, me), students = msgs.filter(function (m) { return !m.mine; });
+    if (!students.length) return;
+    var who = null;
+    for (var i = students.length - 1; i >= 0 && !who; i--) who = mailStudent_(ctx, students[i].from);
+    if (!who) return;
+    var id = th.getId(), r = byId[id], last = msgs[msgs.length - 1];
+    if (!r) { r = blankRow_(mt); mt.rows.push(r); byId[id] = r; mt.set(r, 'Thread ID', id); }
+    var lastMine = -1, lastStudent = -1;
+    msgs.forEach(function (m, k) { if (m.mine) lastMine = k; else lastStudent = k; });
+    mt.set(r, 'Student ID', who.id); mt.set(r, 'Student', who.name); mt.set(r, 'Email', who.email);
+    mt.set(r, 'Class ID', who.classes.map(function (k) { return k.id; }).join(', '));
+    mt.set(r, 'Subject', th.getFirstMessageSubject());
+    mt.set(r, 'Received', msgs[lastStudent].date);
+    labels = labels || { reply: gmailLabel_(MAIL_LABELS.reply), excuse: gmailLabel_(MAIL_LABELS.excuse) };
+    if (lastMine > lastStudent) {
+      if (mt.get(r, 'Status') !== 'Answered') { mt.set(r, 'Status', 'Answered'); mt.set(r, 'Updated', nowStr_()); n++; }
+      if (labels.reply) try { th.removeLabel(labels.reply); } catch (e) { /* ignore */ }
+      return;
+    }
+    if (mt.get(r, 'Last message ID') === last.id) return; // nothing new since the last look
+    var res = null, by = 'rules';
+    if (useAi && Date.now() - t0 > budgetMs) { if (!mt.get(r, 'Status')) mt.set(r, 'Status', 'Needs reply'); return; }
+    if (useAi) {
+      try { res = aiMail_(ctx, who, msgs); by = 'AI'; } catch (e) { by = 'rules (AI error: ' + String(e && e.message || e).slice(0, 80) + ')'; }
+    }
+    res = res || plainMail_(ctx, who, msgs);
+    var firstWaiting = msgs[lastMine + 1] || last;
+    mt.set(r, 'Category', MAIL_CATEGORY_LABEL[res.category] || res.category);
+    mt.set(r, 'Summary', res.summary);
+    mt.set(r, 'Status', res.needs_reply ? 'Needs reply' : 'No reply needed');
+    mt.set(r, 'Waiting since', firstWaiting.date);
+    mt.set(r, 'Draft', res.reply);
+    mt.set(r, 'Read by', by);
+    if (res.excuse && res.excuse.is_excuse && !mt.get(r, 'Excuse')) {
+      var missing = (res.excuse.missing || []).length ? ' · missing: ' + res.excuse.missing.join(', ') : '';
+      mt.set(r, 'Excuse', markExcuseFromMail_(ctx, who, res.excuse.class_date) + missing);
+      if (labels.excuse) try { th.addLabel(labels.excuse); } catch (e) { /* ignore */ }
+    }
+    if (res.needs_reply && labels.reply) try { th.addLabel(labels.reply); } catch (e) { /* ignore */ }
+    mt.set(r, 'Last message ID', last.id);
+    mt.set(r, 'Updated', nowStr_());
+    n++;
+  });
+  save_(mt);
+  return n;
+}
+
+function hoursSince_(stamp) {
+  var m = String(stamp || '').match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})$/);
+  if (!m) return 0;
+  var now = nowStr_(), nm = now.match(/^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2})$/);
+  return Math.max(0, Math.round(((dayNum(nm[1]) - dayNum(m[1])) * 1440 + (+nm[2] - +m[2]) * 60 + (+nm[3] - +m[3])) / 60));
+}
+
+function mail_(ctx) {
+  var mt = table_('Mail'), order = { 'Needs reply': 0, 'No reply needed': 1, Answered: 2, Done: 3 };
+  return mt.rows.map(function (r, i) {
+    var who = mailStudent_(ctx, mt.get(r, 'Email'));
+    return {
+      row: i, threadId: mt.get(r, 'Thread ID'), student: mt.get(r, 'Student'), studentId: mt.get(r, 'Student ID'), email: mt.get(r, 'Email'),
+      subject: mt.get(r, 'Subject'), category: mt.get(r, 'Category'), summary: mt.get(r, 'Summary'), status: mt.get(r, 'Status'),
+      received: mt.get(r, 'Received'), waiting: mt.get(r, 'Status') === 'Needs reply' ? hoursSince_(mt.get(r, 'Waiting since')) : 0,
+      draft: mt.get(r, 'Draft'), excuse: mt.get(r, 'Excuse'), by: mt.get(r, 'Read by'),
+      classes: who ? who.classes.map(function (k) {
+        return { id: k.id, code: k.code, effective: k.tally.effective, remaining: Math.max(0, k.tally.remaining), pct: k.tally.pct, state: k.tally.state };
+      }) : []
+    };
+  }).sort(function (a, b) { return (order[a.status] || 0) - (order[b.status] || 0) || b.waiting - a.waiting || (a.received < b.received ? 1 : -1); });
+}
+
+function apiMail() { return mail_(load_()); }
+
+/** Look for new student emails now (instead of waiting for the 15-minute job). */
+function apiCheckMail() {
+  var n = 0;
+  withLock_(function () { var ctx = load_(); n = scanMail_(ctx); save_(ctx.att); });
+  return { changed: n };
+}
+
+function mailRow_(threadId) {
+  var mt = table_('Mail'), r = mt.rows.filter(function (x) { return mt.get(x, 'Thread ID') === threadId; })[0];
+  if (!r) throw new Error('Email not found');
+  return { t: mt, r: r };
+}
+
+/** Write the reply again, e.g. "shorter", "more formal", "ask for the doctor's phone". */
+function apiMailRedraft(threadId, instruction) {
+  var ctx = load_(), m = mailRow_(threadId), th = GmailApp.getThreadById(threadId);
+  var who = mailStudent_(ctx, m.t.get(m.r, 'Email'));
+  if (!who) throw new Error('Student not found');
+  var msgs = threadMessages_(th, myEmails_(ctx.cfg)), res;
+  if (aiOn_(ctx.cfg, 'aiMail')) res = aiMail_(ctx, who, msgs, instruction);
+  else throw new Error('AI is off. Set the Claude API key (TA Attendance → Set Claude API key).');
+  m.t.set(m.r, 'Draft', res.reply);
+  m.t.set(m.r, 'Updated', nowStr_());
+  save_(m.t);
+  return { draft: res.reply };
+}
+
+/** Save the (edited) reply as a Gmail draft in the same thread. */
+function apiMailToGmail(threadId, text) {
+  var m = mailRow_(threadId), th = GmailApp.getThreadById(threadId), cfg = config_();
+  th.createDraftReply(text, { replyTo: cfg.replyTo });
+  m.t.set(m.r, 'Draft', text);
+  save_(m.t);
+  return { url: 'https://mail.google.com/mail/u/0/#drafts' };
+}
+
+/** Status by hand: Answered, No reply needed, Done, or back to Needs reply. */
+function apiMailStatus(threadId, status) {
+  var m = mailRow_(threadId);
+  m.t.set(m.r, 'Status', status);
+  m.t.set(m.r, 'Updated', nowStr_());
+  save_(m.t);
+  if (status !== 'Needs reply') {
+    var l = GmailApp.getUserLabelByName(MAIL_LABELS.reply);
+    if (l) try { GmailApp.getThreadById(threadId).removeLabel(l); } catch (e) { /* ignore */ }
+  }
+  return true;
+}
+
+/** A draft that forwards the student's excuse (with its attachments) to the office. */
+function apiMailForwardExcuse(threadId) {
+  var cfg = config_(), m = mailRow_(threadId), th = GmailApp.getThreadById(threadId), me = myEmails_(cfg);
+  var msg = th.getMessages().filter(function (x) { return me.indexOf(emailOf_(x.getFrom())) < 0; }).slice(-1)[0];
+  var to = cfg.officeEmail || cfg.replyTo;
+  var body = 'Hello,\n\nPlease find below the medical excuse that ' + m.t.get(m.r, 'Student') + ' (' + m.t.get(m.r, 'Email') + ') sent me' +
+    (m.t.get(m.r, 'Excuse') ? ' (' + m.t.get(m.r, 'Excuse').replace(/^Marked Received · /, 'class: ') + ')' : '') +
+    '. Could you verify it and update the attendance?\n\nThank you,\n' + signature_(cfg) + '\n\n---------- Forwarded message ----------\n' +
+    'From: ' + msg.getFrom() + '\nDate: ' + Utilities.formatDate(msg.getDate(), tz_(), 'yyyy-MM-dd HH:mm') + '\nSubject: ' + msg.getSubject() + '\n\n' + msg.getPlainBody();
+  GmailApp.createDraft(to, 'Medical excuse – ' + m.t.get(m.r, 'Student'), body, { attachments: msg.getAttachments(), replyTo: cfg.replyTo });
+  return { to: to, url: 'https://mail.google.com/mail/u/0/#drafts' };
+}
+
 /* ---------- screenshots dropped in the dashboard ---------- */
 
 var PHASE_FOLDERS = { present: '1. Present', tardy: '2. Tardy', end: '3. Absent' };
@@ -1377,10 +1713,12 @@ function sessionFolder_(ctx, cls, date) {
 
 function readOcrJson_(folder) {
   var it = folder.getFilesByName('ocr.json');
-  if (!it.hasNext()) return { file: null, data: { images: 0, phases: { present: [], tardy: [], end: [] } } };
-  var file = it.next(), data = JSON.parse(file.getBlob().getDataAsString());
-  data.phases = data.phases || {};
-  ['present', 'tardy', 'end'].forEach(function (k) { data.phases[k] = data.phases[k] || []; });
+  var data = { images: 0 }, file = null;
+  if (it.hasNext()) { file = it.next(); data = JSON.parse(file.getBlob().getDataAsString()); }
+  ['phases', 'ai', 'files'].forEach(function (f) {
+    data[f] = data[f] || {};
+    ['present', 'tardy', 'end'].forEach(function (k) { data[f][k] = data[f][k] || []; });
+  });
   return { file: file, data: data };
 }
 
@@ -1403,24 +1741,66 @@ function loadLite_() {
 
 function apiUploadShot(classId, date, phase, name, mime, base64) {
   if (!PHASE_FOLDERS[phase]) throw new Error('Unknown moment: ' + phase);
-  var out;
+  var ctx, cls, folder, file;
+  // 1. Save the image (locked: the class folder must be created once).
   withLock_(function () {
-    var ctx = loadLite_(), cls = classById_(ctx, classId);
+    ctx = loadLite_(); cls = classById_(ctx, classId);
     if (!cls) throw new Error('No class ' + classId);
-    var folder = sessionFolder_(ctx, cls, date);
+    folder = sessionFolder_(ctx, cls, date);
     save_(ctx.sessT);
     var blob = Utilities.newBlob(Utilities.base64Decode(base64), mime || 'image/jpeg', name || 'screenshot.jpg');
-    var file = subfolder_(folder, PHASE_FOLDERS[phase]).createFile(blob);
-    var text = ocrText_(file);
+    file = subfolder_(folder, PHASE_FOLDERS[phase]).createFile(blob);
+  });
+  if (!file) throw new Error('Busy — try again in a few seconds.');
+  // 2. Read it (slow, so not locked): free OCR always, and Claude when it is on.
+  var text = ocrText_(file), ai = null, aiError = '';
+  if (aiOn_(ctx.cfg, 'aiScreenshots')) {
+    try { ai = aiReadShot_(ctx, cls, phase, file.getBlob()); } catch (e) { aiError = String(e && e.message || e); }
+  }
+  // 3. Add it to the class's saved readings.
+  var out;
+  withLock_(function () {
     var saved = readOcrJson_(folder);
     saved.data.phases[phase].push(text);
+    saved.data.ai[phase].push(ai);
+    saved.data.files[phase].push(file.getId());
     saved.data.images = (saved.data.images || 0) + 1;
     writeOcrJson_(folder, saved);
-    var shot = readScreenshotText(text);
-    out = { phase: phase, names: shot.tiles.length + shot.chat.length, count: saved.data.phases[phase].length };
+    var n = ai ? (ai.participants || []).length + (ai.chat || []).length : (function (x) { return x.tiles.length + x.chat.length; })(readScreenshotText(text));
+    out = { phase: phase, names: n, count: saved.data.phases[phase].length, ai: !!ai, aiError: aiError };
   });
   if (!out) throw new Error('Busy — try again in a few seconds.');
   return out;
+}
+
+/** Screenshots of a class saved before AI was on (or where AI failed): their Drive ids, to read them again with AI. */
+function apiShotFiles(classId, date) {
+  var ctx = loadLite_(), cls = classById_(ctx, classId), folder = sessionFolder_(ctx, cls, date), saved = readOcrJson_(folder);
+  var out = {};
+  ['present', 'tardy', 'end'].forEach(function (k) {
+    var ids = saved.data.files[k];
+    if (ids.length !== saved.data.phases[k].length) {
+      // Older folders: same order as the OCR (by file name).
+      var it = subfolder_(folder, PHASE_FOLDERS[k]).getFiles(), list = [];
+      while (it.hasNext()) { var f = it.next(); if (/^image\//.test(f.getMimeType())) list.push(f); }
+      ids = list.sort(function (a, b) { return a.getName() < b.getName() ? -1 : 1; }).map(function (f) { return f.getId(); });
+    }
+    out[k] = ids.map(function (id, i) { return { id: id, index: i, done: !!saved.data.ai[k][i] }; });
+  });
+  return out;
+}
+
+/** Read one saved screenshot with AI and store the result in its slot. */
+function apiAiReadFile(classId, date, phase, index, fileId) {
+  var ctx = loadLite_(), cls = classById_(ctx, classId), folder = sessionFolder_(ctx, cls, date);
+  var ai = aiReadShot_(ctx, cls, phase, DriveApp.getFileById(fileId).getBlob());
+  withLock_(function () {
+    var saved = readOcrJson_(folder);
+    saved.data.ai[phase][index] = ai;
+    saved.data.files[phase][index] = fileId;
+    writeOcrJson_(folder, saved);
+  });
+  return { ok: true, names: (ai.participants || []).length + (ai.chat || []).length };
 }
 
 /** After the uploads: analyze the class with every screenshot read so far. */
@@ -1429,7 +1809,7 @@ function apiAnalyzeSession(classId, date) {
   withLock_(function () {
     var ctx = load_(), cls = classById_(ctx, classId);
     var folder = sessionFolder_(ctx, cls, date), saved = readOcrJson_(folder);
-    msg = processScreenshotSession_(ctx, cls, date, saved.data.phases, folder.getId(), saved.data.images || 0);
+    msg = processScreenshotSession_(ctx, cls, date, saved.data.phases, folder.getId(), saved.data.images || 0, saved.data.ai);
     appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (dashboard)', 'screenshots', cls.id, date, msg]);
     runLight_(ctx);
   });
@@ -1445,7 +1825,7 @@ function apiClearShots(classId, date, phase) {
     while (files.hasNext()) files.next().setTrashed(true);
     var saved = readOcrJson_(folder);
     saved.data.images = Math.max(0, (saved.data.images || 0) - saved.data.phases[phase].length);
-    saved.data.phases[phase] = [];
+    saved.data.phases[phase] = []; saved.data.ai[phase] = []; saved.data.files[phase] = [];
     writeOcrJson_(folder, saved);
   });
   return true;
@@ -1494,6 +1874,13 @@ function dateFromName_(name) {
 /** A sheet as a header-addressable table of display strings. */
 function table_(name) {
   var sh = ss_().getSheetByName(name);
+  if (!sh && SHEETS[name] && name !== 'Config') {
+    // A sheet added by an update: create it on its own.
+    sh = ss_().insertSheet(name);
+    sh.getRange(1, 1, 1, SHEETS[name].length).setValues([SHEETS[name]]).setFontWeight('bold');
+    sh.setFrozenRows(1);
+    sh.getRange(1, 1, sh.getMaxRows(), SHEETS[name].length).setNumberFormat('@');
+  }
   if (!sh) throw new Error('Missing sheet "' + name + '". Run TA Attendance → Set up / repair sheets.');
   var vals = sh.getDataRange().getDisplayValues();
   var header = vals[0] || [];

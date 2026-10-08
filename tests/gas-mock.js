@@ -141,7 +141,7 @@ function makeEnv(opts) {
     getName() { return this.name; }
     getMimeType() { return this.mime; }
     getDateCreated() { return this.created; }
-    getBlob() { return { getDataAsString: () => this.content }; }
+    getBlob() { const c = this.content, m = this.mime, n = this.name; return { getDataAsString: () => c, getBytes: () => Array.from(Buffer.from(String(c))), getContentType: () => m, getName: () => n }; }
     getUrl() { return 'https://drive.google.com/file/d/' + this.id; }
     setContent(c) { this.content = c; return this; }
     setTrashed(v) { this.trashed = v; if (v) this.folder.files = this.folder.files.filter(f => f !== this); }
@@ -171,10 +171,47 @@ function makeEnv(opts) {
   const DocumentApp = { openById: id => ({ getBody: () => ({ getText: () => drive.docs[id].text }) }) };
 
   /* ---- Gmail etc. ---- */
-  const mail = { sent: [], drafts: [] };
+  const mail = { sent: [], drafts: [], threads: [], labels: {}, replies: [] };
+  let mailId = 1;
+  class GThread {
+    constructor(subject) { this.id = 'th' + mailId++; this.subject = subject; this.msgs = []; this.labels = new Set(); }
+    getId() { return this.id; }
+    getMessages() { return this.msgs.slice(); }
+    getFirstMessageSubject() { return this.subject; }
+    addLabel(l) { this.labels.add(l.name); return this; }
+    removeLabel(l) { this.labels.delete(l.name); return this; }
+    createDraftReply(body, o) { mail.replies.push({ thread: this.id, body, ...o }); }
+  }
+  // test helper: add an email to a thread (a new thread when none is given). Returns the thread.
+  mail.receive = ({ thread, from, body, subject, attachments, at }) => {
+    const th = thread || (mail.threads.push(new GThread(subject || '(no subject)')), mail.threads[mail.threads.length - 1]);
+    const id = 'msg' + mailId++, date = new FakeDate(at ? new RealDate(at).getTime() : NOW);
+    th.msgs.push({ getId: () => id, getFrom: () => from, getDate: () => date, getPlainBody: () => body, getSubject: () => th.subject,
+      getAttachments: () => (attachments || []).map(n => ({ getName: () => n })) });
+    return th;
+  };
   const GmailApp = {
     sendEmail: (to, subject, body, o) => mail.sent.push({ to, subject, body, ...o }),
-    createDraft: (to, subject, body, o) => mail.drafts.push({ to, subject, body, ...o })
+    createDraft: (to, subject, body, o) => mail.drafts.push({ to, subject, body, ...o }),
+    search: () => mail.threads.slice(),
+    getThreadById: id => mail.threads.find(t => t.id === id),
+    getUserLabelByName: n => mail.labels[n] || null,
+    createLabel: n => (mail.labels[n] = { name: n })
+  };
+  /* ---- Script properties and Claude API ---- */
+  const props = {};
+  const PropertiesService = { getScriptProperties: () => ({ getProperty: k => (k in props ? props[k] : null), setProperty: (k, v) => { props[k] = String(v); } }) };
+  // ai.reply(body) → the JSON object Claude would return (as structured output); ai.requests records each call.
+  const ai = { requests: [], reply: () => ({}), status: 200 };
+  const UrlFetchApp = {
+    fetch: (url, o) => {
+      const body = JSON.parse(o.payload);
+      ai.requests.push({ url, headers: o.headers, body });
+      let text, code = ai.status;
+      try { text = JSON.stringify({ stop_reason: 'end_turn', content: [{ type: 'text', text: JSON.stringify(ai.reply(body)) }] }); }
+      catch (e) { code = 500; text = JSON.stringify({ error: { message: e.message } }); }
+      return { getResponseCode: () => code, getContentText: () => text };
+    }
   };
   const triggers = [];
   const service = { url: '' };
@@ -190,12 +227,13 @@ function makeEnv(opts) {
     }
   };
   const blob = (data, type, name) => ({
-    getDataAsString: () => data, getContentType: () => type, getName: () => name,
+    getDataAsString: () => data, getContentType: () => type, getName: () => name, getBytes: () => Array.from(Buffer.from(String(data))),
     getAs: t => blob(data, t, name), setName: n => blob(data, type, n)
   });
   const Utilities = {
     newBlob: (data, type, name) => blob(Array.isArray(data) ? Buffer.from(data).toString('utf8') : data, type, name),
     base64Decode: b => Array.from(Buffer.from(b, 'base64')),
+    base64Encode: b => Buffer.from(Array.isArray(b) ? b : String(b)).toString('base64'),
     formatDate(d, tz, fmt) {
       const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new RealDate(d.getTime())).map(x => [x.type, x.value]));
@@ -204,8 +242,8 @@ function makeEnv(opts) {
   };
   const ctx = {
     Date: FakeDate, console, Math, JSON, String, Number, Object, Array, RegExp, Error, isNaN, parseFloat, parseInt,
-    SpreadsheetApp, DriveApp, GmailApp, ScriptApp, Utilities, Drive, DocumentApp,
-    Session: { getScriptTimeZone: () => TZ },
+    SpreadsheetApp, DriveApp, GmailApp, ScriptApp, Utilities, Drive, DocumentApp, PropertiesService, UrlFetchApp,
+    Session: { getScriptTimeZone: () => TZ, getEffectiveUser: () => ({ getEmail: () => 'ta@ivy.edu' }) },
     CacheService: { getScriptCache: () => ({ get: k => cacheStore.has(k) ? cacheStore.get(k) : null, put: (k, v) => { cacheStore.set(k, v); } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     HtmlService: { createHtmlOutput: () => chain(), createHtmlOutputFromFile: () => chain() }
@@ -216,7 +254,7 @@ function makeEnv(opts) {
     vm.runInContext(fs.readFileSync(path.join(src, f), 'utf8'), ctx, { filename: f });
   });
   return {
-    gas: ctx, sheets, mail, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot, service, dialogs, cacheStore,
+    gas: ctx, sheets, mail, props, ai, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot, service, dialogs, cacheStore,
     setNow: iso => { NOW = new RealDate(iso).getTime(); },
     sheet: n => sheets[n]
   };
