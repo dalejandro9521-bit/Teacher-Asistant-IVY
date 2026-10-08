@@ -77,6 +77,7 @@ function makeEnv(opts) {
   }
   const sheets = {};
   const toasts = [];
+  const cacheStore = new Map();
   const dialogs = [];
   const ss = {
     getSheetByName: n => sheets[n] || null,
@@ -142,6 +143,7 @@ function makeEnv(opts) {
     getDateCreated() { return this.created; }
     getBlob() { return { getDataAsString: () => this.content }; }
     getUrl() { return 'https://drive.google.com/file/d/' + this.id; }
+    setContent(c) { this.content = c; return this; }
     setTrashed(v) { this.trashed = v; if (v) this.folder.files = this.folder.files.filter(f => f !== this); }
     moveTo(folder) { this.folder.files = this.folder.files.filter(f => f !== this); folder.files.push(this); this.folder = folder; }
   }
@@ -192,7 +194,8 @@ function makeEnv(opts) {
     getAs: t => blob(data, t, name), setName: n => blob(data, type, n)
   });
   const Utilities = {
-    newBlob: (data, type, name) => blob(data, type, name),
+    newBlob: (data, type, name) => blob(Array.isArray(data) ? Buffer.from(data).toString('utf8') : data, type, name),
+    base64Decode: b => Array.from(Buffer.from(b, 'base64')),
     formatDate(d, tz, fmt) {
       const p = Object.fromEntries(new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
         hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).formatToParts(new RealDate(d.getTime())).map(x => [x.type, x.value]));
@@ -203,6 +206,7 @@ function makeEnv(opts) {
     Date: FakeDate, console, Math, JSON, String, Number, Object, Array, RegExp, Error, isNaN, parseFloat, parseInt,
     SpreadsheetApp, DriveApp, GmailApp, ScriptApp, Utilities, Drive, DocumentApp,
     Session: { getScriptTimeZone: () => TZ },
+    CacheService: { getScriptCache: () => ({ get: k => cacheStore.has(k) ? cacheStore.get(k) : null, put: (k, v) => { cacheStore.set(k, v); } }) },
     LockService: { getScriptLock: () => ({ tryLock: () => true, releaseLock() {} }) },
     HtmlService: { createHtmlOutput: () => chain(), createHtmlOutputFromFile: () => chain() }
   };
@@ -212,7 +216,7 @@ function makeEnv(opts) {
     vm.runInContext(fs.readFileSync(path.join(src, f), 'utf8'), ctx, { filename: f });
   });
   return {
-    gas: ctx, sheets, mail, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot, service, dialogs,
+    gas: ctx, sheets, mail, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot, service, dialogs, cacheStore,
     setNow: iso => { NOW = new RealDate(iso).getTime(); },
     sheet: n => sheets[n]
   };

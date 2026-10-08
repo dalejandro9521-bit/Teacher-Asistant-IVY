@@ -53,6 +53,11 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
 - Dashboard extras: `tasks_()` builds the Home to-do list (missing attendance by schedule, questions, follow-ups, excuses
   over 7 days, Populi boxes for Zoom); `apiSetRecord` is the one way the panel edits a student's record (status, left early,
   no ID, excuse Received/Accepted/Rejected, office → Present) and always marks it `Manual`.
+- Speed: `apiOverview`/`apiClass` are cached (CacheService, generation bumped by every `save_`/`appendRow_`/onEdit);
+  dashboard actions use `runLight_` (no inbox, no Grid/Summary rewrite). The page shows cached data first (`fresh()`),
+  prefetches classes, and edits are optimistic.
+- Screenshots can be dropped in the dashboard (`apiUploadShot` → OCR → `ocr.json` in the class folder under
+  TA Inbox/Processed, then `apiAnalyzeSession`); `apiClearShots` removes one moment.
 - `table_()` adds missing columns from `SHEETS` on its own, so new columns don't need "Set up" again.
 - `tests/gas-mock.js` runs the real `src/` files in a VM with fake SpreadsheetApp/DriveApp/GmailApp/ScriptApp.
 

@@ -655,3 +655,45 @@ test('Open dashboard: over the sheet, or straight to the full-page web app once 
   env.gas.openDashboard();
   assert.equal(env.dialogs.length, 2);
 });
+
+test('screenshots dropped in the dashboard: upload → OCR → analysis, clear one moment, cache never stale', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const j = x => JSON.parse(JSON.stringify(x));
+  env.sheet('Classes').put(4, 2, 'HA 105: Introduction to Ethics'); // C3
+  env.inbox().addFile('HA 105 roster.csv', ['Student ID,Populi Name,Course Abbrv,Type', '11,Ana Uno,HA 105,student',
+    '12,Beto Dos,HA 105,student', '13,Caro Tres,HA 105,student'].join('\n'));
+  env.gas.tick();
+  const b64 = t => Buffer.from(t).toString('base64');
+  const ov1 = j(env.gas.apiOverview());                     // cached now
+  assert.equal(ov1.classes.find(c => c.id === 'C3').sessions, 0);
+
+  // 15 min: Ana; 31 min: Beto; last: Ana + Beto (Caro never came)
+  let r = env.gas.apiUploadShot('C3', '2026-10-05', 'present', 'shot1.jpg', 'image/jpeg', b64('Ana Uno\nProfessor X'));
+  assert.deepEqual(j(r), { phase: 'present', names: 2, count: 1 });
+  env.gas.apiUploadShot('C3', '2026-10-05', 'tardy', 'shot2.jpg', 'image/jpeg', b64('Ana Uno\nBeto Dos'));
+  env.gas.apiUploadShot('C3', '2026-10-05', 'end', 'shot3.jpg', 'image/jpeg', b64('Beto Dos'));
+  assert.equal(env.ocr.calls, 3);
+  const an = env.gas.apiAnalyzeSession('C3', '2026-10-05');
+  assert.match(an.msg, /3 screenshot\(s\).*1 tardy/);
+  assert.equal(env.row('2026-10-05', 'C3', '11').Status, 'Absent');        // not in the last screenshot
+  assert.equal(env.row('2026-10-05', 'C3', '12').Status, 'Tardy');
+  assert.equal(env.row('2026-10-05', 'C3', '13').Status, 'Absent');
+  const se = j(env.gas.apiSession('C3', '2026-10-05'));
+  assert.deepEqual(se.shots, { present: 1, tardy: 1, end: 1 });
+  // the files live in Drive under TA Inbox / Processed / HA 105 - Week 01 - 10.05.26
+  const done = env.inbox().folders.find(f => f.name === 'Processed');
+  const sf = done.folders.find(f => f.name === 'HA 105 - Week 01 - 10.05.26');
+  assert.ok(sf);
+  assert.equal(sf.folders.find(f => f.name === '1. Present').files.length, 1);
+
+  // the overview was cached before; the writes made it fresh again
+  assert.equal(j(env.gas.apiOverview()).classes.find(c => c.id === 'C3').sessions, 1);
+
+  // wrong last screenshot → clear it, drop the right one, re-analyze: Ana stayed
+  env.gas.apiClearShots('C3', '2026-10-05', 'end');
+  assert.equal(sf.folders.find(f => f.name === '3. Absent').files.length, 0);
+  env.gas.apiUploadShot('C3', '2026-10-05', 'end', 'shot4.jpg', 'image/jpeg', b64('Ana Uno\nBeto Dos'));
+  env.gas.apiAnalyzeSession('C3', '2026-10-05');
+  assert.equal(env.row('2026-10-05', 'C3', '11').Status, 'Present');
+  assert.deepEqual(j(env.gas.apiSession('C3', '2026-10-05')).shots, { present: 1, tardy: 1, end: 1 });
+});

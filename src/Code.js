@@ -79,6 +79,7 @@ function onOpen() {
 
 /** Typing in Status / Left early / No ID marks the row as yours, so imports never overwrite it. */
 function onEdit(e) {
+  bumpCache_(); // the dashboard must not show data older than an edit in the sheet
   if (!e || !e.range) return;
   var sh = e.range.getSheet();
   if (sh.getName() !== 'Attendance' || e.range.getRow() < 2) return;
@@ -175,6 +176,20 @@ function tick() {
       toast_((r.files ? r.files + ' file(s) processed. ' : '') + r.sent + ' student notice(s), ' + r.office + ' office notice(s).');
     }
   });
+}
+
+/**
+ * What a click in the dashboard needs: answers, re-runs, notices. Fast: no Drive inbox listing and no rewriting of the
+ * Grid/Summary sheets (the 15-minute job refreshes those).
+ */
+function runLight_(ctx) {
+  var reruns = rerunSessions_(ctx, answerQuestions_(ctx));
+  applyManualFlags_(ctx);
+  save_(ctx.att); save_(ctx.studentsT); save_(ctx.sessT); save_(ctx.revT);
+  var sent = sendPendingNotices_(ctx);
+  var office = checkNoId_(ctx);
+  save_(ctx.att);
+  return { files: 0, reruns: reruns, sent: sent, office: office, log: [] };
 }
 
 /** Everything the 15-minute job does, on an already loaded context. */
@@ -923,6 +938,14 @@ function rowsOf_(t) {
 
 /** Home: one card per class + what needs attention. */
 function apiOverview() {
+  var hit = cacheGet_('overview');
+  if (hit) return hit;
+  var out = overview_();
+  cachePut_('overview', out, 120); // the to-do list depends on the clock, so keep it short
+  return out;
+}
+
+function overview_() {
   var ctx = load_(), recs = records_(ctx), totals = tally(recs, ctx.cfg), y = yearOf_(ctx);
   var classes = ctx.classes.filter(function (c) { return c.active; }).map(function (cls) {
     var roster = roster_(ctx, cls.id), mine = recs.filter(function (r) { return r.classId === cls.id; });
@@ -953,6 +976,14 @@ function apiOverview() {
 
 /** One class: students in Populi order × weeks. */
 function apiClass(classId) {
+  var hit = cacheGet_('class:' + classId);
+  if (hit) return hit;
+  var out = class_(classId);
+  cachePut_('class:' + classId, out, 300);
+  return out;
+}
+
+function class_(classId) {
   var ctx = load_(), cls = classById_(ctx, classId);
   if (!cls) throw new Error('No class ' + classId);
   var recs = records_(ctx).filter(function (r) { return r.classId === cls.id; }), totals = tally(recs, ctx.cfg);
@@ -1015,11 +1046,13 @@ function apiSession(classId, date) {
     questions: rowsOf_(ctx.revT).filter(function (q) { return q['Class ID'] === cls.id && parseDateCell(q.Date, y) === date; }),
     ocr: null
   };
+  out.shots = { present: 0, tardy: 0, end: 0 };
   if (srow && st.get(srow, 'Source') === 'Zoom screenshots' && st.get(srow, 'Source ID')) {
     try {
       var folder = DriveApp.getFolderById(st.get(srow, 'Source ID')), it = folder.getFilesByName('ocr.json');
       if (it.hasNext()) {
         var saved = JSON.parse(it.next().getBlob().getDataAsString());
+        ['present', 'tardy', 'end'].forEach(function (k) { out.shots[k] = ((saved.phases || {})[k] || []).length; });
         out.ocr = screenshotDiagnostics(saved.phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
           { start: sessionStart_(ctx, cls, date), cfg: ctx.cfg });
         out.folderUrl = folder.getUrl();
@@ -1046,7 +1079,7 @@ function apiAnswer(row, answer) {
     var ctx = load_(), t = ctx.revT, r = t.rows[row];
     if (!r) throw new Error('Question not found');
     t.set(r, 'Student (# or name, or "ignore")', String(answer || '').trim());
-    res = runAll_(ctx);
+    res = runLight_(ctx);
     res.note = t.get(r, 'Done') || t.get(r, 'Notes');
   });
   return res;
@@ -1060,7 +1093,7 @@ function apiSetStart(classId, date, text) {
     if (min == null) throw new Error('Not a time: ' + text);
     setSessionStart_(ctx, cls, date, min, true);
     save_(ctx.sessT);
-    res = runAll_(ctx);
+    res = runLight_(ctx);
   });
   return res;
 }
@@ -1161,11 +1194,12 @@ function classOver_(ctx, cls, date) {
 
 function attRow_(ctx, classId, date, studentId) {
   var t = ctx.att, y = yearOf_(ctx);
-  for (var i = 0; i < t.rows.length; i++) {
-    var r = t.rows[i];
-    if (t.get(r, 'Class ID') === classId && t.get(r, 'Student ID') === studentId && parseDateCell(t.get(r, 'Date'), y) === date) return r;
+  // Index the Attendance rows once per request (rows added later are found by the fallback scan).
+  if (!ctx._attIdx || ctx._attIdxN !== t.rows.length) {
+    ctx._attIdx = {}; ctx._attIdxN = t.rows.length;
+    t.rows.forEach(function (r) { ctx._attIdx[parseDateCell(t.get(r, 'Date'), y) + '|' + t.get(r, 'Class ID') + '|' + t.get(r, 'Student ID')] = r; });
   }
-  return null;
+  return ctx._attIdx[date + '|' + classId + '|' + studentId] || null;
 }
 
 /** Everything that still needs Diego, most urgent first. */
@@ -1288,7 +1322,7 @@ function apiFinishSession(classId, date) {
     var ctx = load_(), cls = classById_(ctx, classId);
     sessionRow_(ctx, cls, date, true);
     save_(ctx.sessT);
-    res = runAll_(ctx);
+    res = runLight_(ctx);
   });
   return res || { busy: true };
 }
@@ -1319,6 +1353,102 @@ function apiStudent(classId, studentId) {
           excuseDate: parseDateCell(t.get(r, 'Excuse date'), y), notes: t.get(r, 'Notes'), notified: t.get(r, 'Notified'), source: t.get(r, 'Source') } : null };
     })
   };
+}
+
+/* ---------- screenshots dropped in the dashboard ---------- */
+
+var PHASE_FOLDERS = { present: '1. Present', tardy: '2. Tardy', end: '3. Absent' };
+
+/** The Drive folder that holds this class's screenshots for that date (created under TA Inbox / Processed). */
+function sessionFolder_(ctx, cls, date) {
+  var row = sessionRow_(ctx, cls, date, true), t = ctx.sessT, id = t.get(row, 'Source ID');
+  if (t.get(row, 'Source') === 'Zoom screenshots' && id) {
+    try { return DriveApp.getFolderById(id); } catch (e) { /* deleted: make a new one */ }
+  }
+  var inbox = DriveApp.getFolderById(ctx.cfg.inboxFolderId), done = subfolder_(inbox, 'Processed');
+  var p = date.split('-'), week = termWeek(date, ctx.cfg.termStart) || '';
+  var name = cls.course.split(':')[0] + ' - Week ' + (week < 10 ? '0' : '') + week + ' - ' + p[1] + '.' + p[2] + '.' + p[0].slice(2);
+  var f = subfolder_(done, name);
+  Object.keys(PHASE_FOLDERS).forEach(function (k) { subfolder_(f, PHASE_FOLDERS[k]); });
+  t.set(row, 'Source', 'Zoom screenshots');
+  t.set(row, 'Source ID', f.getId());
+  return f;
+}
+
+function readOcrJson_(folder) {
+  var it = folder.getFilesByName('ocr.json');
+  if (!it.hasNext()) return { file: null, data: { images: 0, phases: { present: [], tardy: [], end: [] } } };
+  var file = it.next(), data = JSON.parse(file.getBlob().getDataAsString());
+  data.phases = data.phases || {};
+  ['present', 'tardy', 'end'].forEach(function (k) { data.phases[k] = data.phases[k] || []; });
+  return { file: file, data: data };
+}
+
+function writeOcrJson_(folder, saved) {
+  var json = JSON.stringify(saved.data);
+  if (saved.file) saved.file.setContent(json); else saved.file = folder.createFile('ocr.json', json, 'application/json');
+}
+
+/** One screenshot from the dashboard: saved in Drive, read with OCR, added to that moment. Returns how much it read. */
+/** Only what saving a screenshot needs (Config, Classes, Sessions): much faster than reading every sheet. */
+function loadLite_() {
+  var ctx = { cfg: config_() }, ct = table_('Classes');
+  ctx.classes = ct.rows.map(function (r) {
+    return { id: ct.get(r, 'Class ID'), course: ct.get(r, 'Course'), section: ct.get(r, 'Section'), day: ct.get(r, 'Day'),
+      start: hmToMin(ct.get(r, 'Start')), end: hmToMin(ct.get(r, 'End')), mode: ct.get(r, 'Mode'), active: true };
+  }).filter(function (c) { return c.id && c.start != null; });
+  ctx.sessT = table_('Sessions');
+  return ctx;
+}
+
+function apiUploadShot(classId, date, phase, name, mime, base64) {
+  if (!PHASE_FOLDERS[phase]) throw new Error('Unknown moment: ' + phase);
+  var out;
+  withLock_(function () {
+    var ctx = loadLite_(), cls = classById_(ctx, classId);
+    if (!cls) throw new Error('No class ' + classId);
+    var folder = sessionFolder_(ctx, cls, date);
+    save_(ctx.sessT);
+    var blob = Utilities.newBlob(Utilities.base64Decode(base64), mime || 'image/jpeg', name || 'screenshot.jpg');
+    var file = subfolder_(folder, PHASE_FOLDERS[phase]).createFile(blob);
+    var text = ocrText_(file);
+    var saved = readOcrJson_(folder);
+    saved.data.phases[phase].push(text);
+    saved.data.images = (saved.data.images || 0) + 1;
+    writeOcrJson_(folder, saved);
+    var shot = readScreenshotText(text);
+    out = { phase: phase, names: shot.tiles.length + shot.chat.length, count: saved.data.phases[phase].length };
+  });
+  if (!out) throw new Error('Busy — try again in a few seconds.');
+  return out;
+}
+
+/** After the uploads: analyze the class with every screenshot read so far. */
+function apiAnalyzeSession(classId, date) {
+  var msg;
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId);
+    var folder = sessionFolder_(ctx, cls, date), saved = readOcrJson_(folder);
+    msg = processScreenshotSession_(ctx, cls, date, saved.data.phases, folder.getId(), saved.data.images || 0);
+    appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (dashboard)', 'screenshots', cls.id, date, msg]);
+    runLight_(ctx);
+  });
+  return { msg: msg };
+}
+
+/** Remove the screenshots of one moment (e.g. you dropped the wrong ones). */
+function apiClearShots(classId, date, phase) {
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId), folder = sessionFolder_(ctx, cls, date);
+    save_(ctx.sessT);
+    var sub = subfolder_(folder, PHASE_FOLDERS[phase]), files = sub.getFiles();
+    while (files.hasNext()) files.next().setTrashed(true);
+    var saved = readOcrJson_(folder);
+    saved.data.images = Math.max(0, (saved.data.images || 0) - saved.data.phases[phase].length);
+    saved.data.phases[phase] = [];
+    writeOcrJson_(folder, saved);
+  });
+  return true;
 }
 
 function apiProcessNow() {
@@ -1386,12 +1516,28 @@ function table_(name) {
 
 function blankRow_(t) { return t.header.map(function () { return ''; }); }
 
+/* Short-lived cache of what the dashboard reads; any write starts a new generation, so it is never stale. */
+function cache_() { try { return CacheService.getScriptCache(); } catch (e) { return null; } }
+function cacheGen_() { var c = cache_(); return (c && c.get('gen')) || '0'; }
+function bumpCache_() { var c = cache_(); if (c) c.put('gen', String(Date.now()) + Math.random(), 21600); }
+function cacheGet_(key) {
+  var c = cache_(); if (!c) return null;
+  var v = c.get(cacheGen_() + ':' + key);
+  try { return v ? JSON.parse(v) : null; } catch (e) { return null; }
+}
+function cachePut_(key, obj, seconds) {
+  var c = cache_(); if (!c) return;
+  try { c.put(cacheGen_() + ':' + key, JSON.stringify(obj), seconds || 300); } catch (e) { /* too big to cache: fine */ }
+}
+
 function save_(t) {
+  bumpCache_();
   if (!t.rows.length) return;
   t.sheet.getRange(2, 1, t.rows.length, t.header.length).setValues(t.rows);
 }
 
 function appendRow_(name, row) {
+  bumpCache_();
   var sh = ss_().getSheetByName(name);
   if (sh) sh.appendRow(row.map(function (v) { return String(v).slice(0, 49000); }));
 }

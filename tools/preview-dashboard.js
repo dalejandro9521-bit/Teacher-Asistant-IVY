@@ -44,7 +44,7 @@ api.apiWeeklyReport = JSON.parse(JSON.stringify(g.apiWeeklyReport(1)));
 const stub = `window.__API = ${JSON.stringify(api)};
 window.google = { script: { run: (function make(ok, fail) {
   const r = { withSuccessHandler: f => make(f, fail), withFailureHandler: f => make(ok, f) };
-  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone'].forEach(n => {
+  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots'].forEach(n => {
     r[n] = (...a) => setTimeout(() => { let v = window.__API[n]; if (n === 'apiClass') v = v[a[0]] || v.C3; if (n === 'apiProcessNow') v = { files: 0, sent: 0 };
       if (n === 'apiAnswer') v = { note: 'Linked to #12 Malek Bay' }; ok(v === undefined ? true : v); }, 50);
   });

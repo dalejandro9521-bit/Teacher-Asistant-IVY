@@ -238,6 +238,11 @@
     .wtiles, .weeks { grid-template-columns: repeat(2, 1fr); }
     .loading { left: 0; }
   }
+  .dzs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .dz { padding: 18px; border: 2px dashed #cbd2d9; text-align: center; cursor: pointer; box-shadow: none; transition: all .15s; }
+  .dz:hover, .dz.active { border-color: var(--brand2); background: var(--brand-soft); }
+  .dz.over { border-color: var(--p); background: var(--p-bg); }
+  .dz .dz-n { margin-top: 10px; }
   .changed { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 13px; }
   .report table { width: auto; }
 </style>
@@ -295,7 +300,7 @@ function copy(text, what) {
 
 /* ---------- navigation ---------- */
 function go(view, params) {
-  S.view = view; Object.assign(S, params || {});
+  S.view = view; Object.assign(S, params || {}); S.nav = (S.nav || 0) + 1;
   if (view !== 'session') S.ocrTab = 'present';
   render();
 }
@@ -337,13 +342,38 @@ function render() {
   var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity, reports: viewReports, student: viewStudent };
   (views[S.view] || viewHome)();
 }
+/* Speed: every page shows its last copy at once (this browser tab only), then the fresh one when it arrives. */
+var MEM = {};
+function ckey(fn, args) { return fn + ':' + JSON.stringify(args || []); }
+function cacheRead(k) {
+  if (MEM[k]) return MEM[k];
+  try { var v = sessionStorage.getItem('ta:' + k); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+}
+function cacheWrite(k, v) { MEM[k] = v; try { sessionStorage.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
+function fresh(fn, args, draw) {
+  var k = ckey(fn, args), nav = S.nav, old = cacheRead(k), oldJson = old ? JSON.stringify(old) : '';
+  if (old) draw(old, true);
+  return call.apply(null, [fn].concat(args || [])).then(function (d) {
+    cacheWrite(k, d);
+    if (S.nav === nav && JSON.stringify(d) !== oldJson) draw(d, false);
+    return d;
+  });
+}
+/** Load in the background without the loading bar (to make the next click instant). */
+function quiet(fn, args) {
+  return new Promise(function (ok) {
+    google.script.run.withSuccessHandler(function (d) { cacheWrite(ckey(fn, args), d); ok(d); }).withFailureHandler(function () { ok(null); })[fn].apply(null, args || []);
+  });
+}
 function refreshOverview() {
-  return call('apiOverview').then(function (o) { S.overview = o; renderNav(); return o; });
+  return fresh('apiOverview', [], function (o) { S.overview = o; renderNav(); });
 }
 
 /* ---------- Home ---------- */
 function viewHome() {
-  refreshOverview().then(function (o) {
+  fresh('apiOverview', [], function (o, cached) {
+    S.overview = o; renderNav();
+    if (!cached && !S.prefetched) { S.prefetched = true; prefetch(o); }
     var losing = 0, limit = 0;
     o.classes.forEach(function (c) { losing += c.states.failing; limit += c.states['at-limit']; });
     var h = '<div class="row"><div><h1>Good ' + greeting() + ', Diego</h1><p class="sub">' + (o.week ? 'Week ' + o.week + ' of 10 · ' : '') + esc(longToday(o.today)) + '</p></div><div class="spacer"></div>' +
@@ -365,6 +395,10 @@ function viewHome() {
   function kpi(n, label, cls, go) {
     return '<div class="card kpi ' + cls + (go ? ' click' : '') + '"' + (go ? ' data-go="' + go + '"' : '') + '><div class="n">' + n + '</div><div class="l">' + label + '</div></div>';
   }
+}
+/** After Home: quietly load every class page so opening one is instant. */
+function prefetch(o) {
+  o.classes.reduce(function (p, c) { return p.then(function () { return quiet('apiClass', [c.id]); }); }, Promise.resolve());
 }
 function taskRow(t) {
   var icon = { question: '?', load: '!', followup: '✉', excuse: '+', populi: '☑' }[t.type] || '•';
@@ -407,7 +441,7 @@ function longToday(d) {
 
 /* ---------- Class ---------- */
 function viewClass() {
-  call('apiClass', S.classId).then(function (d) {
+  fresh('apiClass', [S.classId], function (d) {
     S.cls = d;
     var h = '<div class="crumbs"><a data-go="home">Home</a> / ' + esc(d.cls.course.split(':')[0]) + '</div>' +
       '<div class="row"><div><h1>' + esc(d.cls.course) + '</h1><p class="sub">' + esc(d.cls.day) + ' · ' + esc(d.cls.time) + ' · ' + modeChip(d.cls.mode) + ' · ' + d.students.length + ' students in Populi order</p></div></div>';
@@ -454,7 +488,7 @@ function drawClassTable() {
 
 /* ---------- Session (one class, one date): see it, mark it, fix it ---------- */
 function viewSession() {
-  call('apiSession', S.classId, S.date).then(function (d) {
+  fresh('apiSession', [S.classId, S.date], function (d) {
     S.sess = d;
     var open = d.questions.filter(function (q) { return !q.Done; });
     var h = '<div class="crumbs"><a data-go="home">Home</a> / <a data-go="class" data-class="' + esc(d.cls.id) + '">' + esc(d.cls.course.split(':')[0]) + '</a> / ' + esc(shortDate(d.date)) + '</div>' +
@@ -463,6 +497,7 @@ function viewSession() {
       '<div class="card pad startbox"><span class="small muted">Class really started at</span><input id="startIn" value="' + esc(d.start) + '"><button class="btn sm primary" data-act="saveStart">Save &amp; re-check</button>' +
       '<span class="small muted">(scheduled ' + esc(d.scheduled) + ')</span></div></div>';
     h += '<div class="stats" id="sessStats"></div>';
+    if (d.zoom) h += shotsCard(d);
     if (open.length) {
       h += '<h2>Confirm these names <span class="muted small">— follow-ups for this class wait until you answer</span></h2>' + open.map(questionCard).join('');
     }
@@ -477,6 +512,7 @@ function viewSession() {
     if (d.ocr) h += '<h2>What the screenshots said <span class="muted small">— use this to check that the screenshots are read well</span></h2><div class="card" id="ocrCard">' + ocrPanel(d) + '</div>';
     $('main').innerHTML = h;
     drawSession();
+    if (d.zoom) setupDrops();
   });
 }
 function drawSession() {
@@ -494,6 +530,77 @@ function drawSession() {
   });
   $('sessTable').innerHTML = h + '</tbody></table>';
   function stat(k, n, l) { return '<div class="card stat ' + k + '"><div class="n">' + n + '</div><div class="small muted">' + l + '</div></div>'; }
+}
+function shotsCard(d) {
+  var info = { present: ['15 min', 'Present (minutes 0–15)'], tardy: ['31 min', 'Tardy (minutes 16–30)'], end: ['Last screenshot', 'Before you leave (who is still there)'] };
+  var sh = d.shots || {};
+  return '<h2>Zoom screenshots <span class="muted small">— drag them here, click to choose, or paste (Cmd+V) into the last zone you clicked</span></h2>' +
+    '<div class="dzs">' + ['present', 'tardy', 'end'].map(function (p) {
+      var n = sh[p] || 0;
+      return '<div class="card dz' + (S.activePhase === p ? ' active' : '') + '" data-phase="' + p + '"><b>' + info[p][0] + '</b><div class="small muted">' + info[p][1] + '</div>' +
+        '<div class="dz-n">' + (n ? '<span class="chip good">' + n + ' screenshot' + (n === 1 ? '' : 's') + ' read</span> <a class="small" data-act="clearShots" data-phase="' + p + '">clear</a>' : '<span class="muted small">Drop images here</span>') + '</div></div>';
+    }).join('') + '</div><div id="upStatus" class="small muted" style="margin:6px 2px 0"></div>' +
+    '<input type="file" id="shotInput" accept="image/*" multiple style="display:none">';
+}
+function setupDrops() {
+  document.querySelectorAll('.dz').forEach(function (z) {
+    z.addEventListener('dragover', function (e) { e.preventDefault(); z.classList.add('over'); });
+    z.addEventListener('dragleave', function () { z.classList.remove('over'); });
+    z.addEventListener('drop', function (e) {
+      e.preventDefault(); z.classList.remove('over');
+      S.activePhase = z.getAttribute('data-phase');
+      uploadShots(S.activePhase, Array.prototype.slice.call(e.dataTransfer.files));
+    });
+    z.addEventListener('click', function (e) {
+      if (e.target.closest('[data-act]')) return;
+      S.activePhase = z.getAttribute('data-phase');
+      document.querySelectorAll('.dz').forEach(function (x) { x.classList.toggle('active', x === z); });
+      $('shotInput').click();
+    });
+  });
+  var input = $('shotInput');
+  if (input) input.onchange = function () { uploadShots(S.activePhase || 'present', Array.prototype.slice.call(input.files)); input.value = ''; };
+}
+document.addEventListener('paste', function (e) {
+  if (S.view !== 'session' || !S.sess || !S.sess.zoom) return;
+  var files = Array.prototype.slice.call((e.clipboardData || {}).files || []);
+  if (files.length) uploadShots(S.activePhase || 'present', files);
+});
+/** Shrinks a screenshot (keeps it sharp enough to read) so it uploads fast. → base64 JPEG */
+function shrink(file) {
+  return new Promise(function (ok, fail) {
+    var img = new Image(), url = URL.createObjectURL(file);
+    img.onload = function () {
+      var w = Math.min(img.width, 2400), h = Math.round(img.height * w / img.width), c = document.createElement('canvas');
+      c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      ok(c.toDataURL('image/jpeg', 0.9).split(',')[1]);
+    };
+    img.onerror = function () { fail(new Error('Not an image: ' + file.name)); };
+    img.src = url;
+  });
+}
+function uploadShots(phase, files) {
+  files = files.filter(function (f) { return /^image\//.test(f.type); });
+  if (!files.length) { toast('Drop image files (PNG or JPG)', true); return; }
+  var label = { present: '15 min', tardy: '31 min', end: 'last screenshot' }[phase], i = 0, names = 0;
+  var status = function (t) { var el = $('upStatus'); if (el) el.textContent = t; };
+  var next = function () {
+    if (i >= files.length) {
+      status('Analyzing the class with all the screenshots…');
+      return call('apiAnalyzeSession', S.classId, S.date).then(function (r) {
+        status(''); toast('Done: ' + String(r.msg).split('. ')[0]);
+        MEM = {}; try { sessionStorage.clear(); } catch (e) { /* ignore */ }
+        viewSession();
+      });
+    }
+    var f = files[i++];
+    status('Reading ' + label + ' screenshot ' + i + ' of ' + files.length + '…');
+    return shrink(f).then(function (b64) {
+      return call('apiUploadShot', S.classId, S.date, phase, f.name.replace(/\.\w+$/, '') + '.jpg', 'image/jpeg', b64);
+    }).then(function (r) { names += r.names; return next(); });
+  };
+  next().catch(function () { status('Stopped. The screenshots read so far are saved; drop the rest again.'); });
 }
 function letterOf(s) { return /^accepted$/i.test(s.excuse || '') ? 'E' : String(s.status || '').charAt(0); }
 function picker(k, sid, date) {
@@ -714,13 +821,32 @@ var ACTIONS = {
   },
   copy: function (b) { copy(b.getAttribute('data-text'), b.getAttribute('data-what')); },
   menu: function (b) { openMenu(b); },
+  clearShots: function (b) {
+    var p = b.getAttribute('data-phase');
+    if (!confirm('Remove the screenshots of this moment? You can drop them again.')) return;
+    call('apiClearShots', S.classId, S.date, p).then(function () { toast('Removed. Drop the right screenshots, then it re-checks.'); viewSession(); });
+  },
   rec: function (b) {
     $('menu').classList.remove('on');
     var sid = b.getAttribute('data-sid'), date = b.getAttribute('data-date'), change = JSON.parse(b.getAttribute('data-change'));
-    call('apiSetRecord', S.classId, date, sid, change).then(function (r) {
+    // Instant: show the change now, save in the background, undo it if saving fails.
+    var s0 = S.view === 'session' ? S.sess.students.filter(function (x) { return x.id === sid; })[0] : null, before = s0 ? JSON.stringify(s0) : '';
+    if (s0) {
+      if (change.status) { s0.status = change.status; if (change.status !== 'Absent') s0.left = false; }
+      if (change.leftEarly !== undefined) { s0.left = change.leftEarly; if (change.leftEarly) s0.status = 'Absent'; }
+      if (change.noId !== undefined) s0.noId = change.noId;
+      if (change.excuse !== undefined) s0.excuse = change.excuse;
+      if (change.office === 'Present') { s0.status = 'Present'; s0.left = false; }
+      drawSession();
+    }
+    call('apiSetRecord', S.classId, date, sid, change).catch(function () {
+      if (s0) { Object.assign(s0, JSON.parse(before)); drawSession(); }
+    }).then(function (r) {
+      if (!r) return;
       if (S.view === 'session') {
         var s = S.sess.students.filter(function (x) { return x.id === sid; })[0];
         Object.assign(s, { status: r.status, left: r.left, noId: r.noId, excuse: r.excuse, notes: r.notes });
+        cacheWrite(ckey('apiSession', [S.classId, S.date]), S.sess);
         drawSession();
       } else if (S.view === 'student') { viewStudent(); }
       toast('Saved · now ' + r.effective + ' counted absence' + (r.effective === 1 ? '' : 's') + ', ' + r.pct + '% (' + r.stateLabel + ')');

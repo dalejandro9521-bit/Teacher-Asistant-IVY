@@ -78,6 +78,17 @@ El botón **⋯** de cada estudiante permite:
 
 Todo queda anotado con la fecha.
 
+**Screenshots de Zoom, arrastrando:** en la semana de una clase de Zoom hay 3 zonas: **15 min**, **31 min** y **Last screenshot**.
+- Arrastra las imágenes (o haz clic para elegirlas, o pégalas con Cmd+V en la última zona que tocaste).
+- Cada imagen se guarda en Drive, se lee con el OCR y, al terminar, la clase se analiza sola.
+- Si pusiste una imagen en la zona equivocada, presiona **clear** en esa zona y vuelve a soltar las correctas.
+
+**Velocidad:**
+- Cada página muestra al instante lo último que viste y se actualiza en segundo plano.
+- Los botones P/T/A/E responden sin esperar.
+- Al abrir Home, el panel carga las clases por adelantado.
+- Las hojas Grid y Summary se rehacen en el trabajo de cada 15 minutos, no en cada clic.
+
 **Ficha del estudiante:** haz clic en un nombre para ver sus 10 semanas, sus totales y las notas, y para corregir cualquier semana.
 
 **Follow-ups seguros:** si después de preparar un correo cambias el estado de un estudiante (por ejemplo, la oficina lo pasó a Present),
