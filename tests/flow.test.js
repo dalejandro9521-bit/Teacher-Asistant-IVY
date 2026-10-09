@@ -641,6 +641,9 @@ test('to-do list, quick marking of an on-campus class, excuses, office changes, 
   const sess = j(env.gas.apiSession('C1', '2026-10-05'));
   assert.deepEqual(sess.students.map(s => s.status), ['Present', 'Absent', 'Tardy', 'Present']);
   assert.ok(!j(env.gas.apiOverview()).tasks.some(t => t.type === 'load' && t.go.classId === 'C1'), 'loaded → off the list');
+  // Take attendance's week picker: the taken week is marked done, the rest stay open
+  const wk = j(env.gas.apiOverview()).classes.find(c => c.id === 'C1').weeks;
+  assert.deepEqual([wk.length, wk[0].date, wk[0].done, wk[1].done], [10, '2026-10-05', true, false]);
 
   // Done → follow-ups are prepared right away
   const fin = env.gas.apiFinishSession('C1', '2026-10-05');

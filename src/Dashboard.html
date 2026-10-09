@@ -284,9 +284,20 @@
   .side .card { padding: 16px; }
   .side label { display: block; font-size: 12px; font-weight: 600; color: var(--ink2); margin: 10px 0 4px; }
   .side input, .side select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; background: #fff; }
+  .wbar { display: flex; gap: 3px; margin-top: 6px; }
+  .wbar i { flex: 1; height: 6px; border-radius: 3px; background: #e3e7ec; }
+  .wbar i.done { background: var(--p); } .wbar i.missed { background: var(--a); } .wbar i.now { background: #fff; box-shadow: 0 0 0 1.5px var(--brand2) inset; }
+  .clsPick small.wtxt { margin-top: 3px; } .clsPick small.wtxt b { color: var(--ink); }
+  .weekPick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 4px; }
+  .weekPick button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 8px; text-align: left; font-size: 13px; cursor: pointer; color: var(--ink); }
+  .weekPick button small { display: block; color: var(--ink3); font-size: 11px; }
+  .weekPick button.missed { border-left: 4px solid var(--a); } .weekPick button.now { border-left: 4px solid var(--brand2); } .weekPick button.later { border-left: 4px solid var(--line); }
+  .weekPick button.on { background: var(--brand-soft); border-color: var(--brand2); box-shadow: 0 0 0 1px var(--brand2) inset; font-weight: 600; }
+  .redo { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 12px; }
   .takeCls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--line); border-left: 6px solid #6b3fa0; background: #fff; border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; }
   .takeCls.zoom { border-left-color: var(--e); }
   .takeCls.none { border-left-color: var(--line); color: var(--ink3); }
+  .takeCls .chip.wk { background: var(--brand2); color: #fff; font-size: 13px; }
   .takeCls .code { font-weight: 700; font-size: 18px; }
   .takeCls .nm { font-size: 15px; color: var(--ink2); }
   .clsPick { display: grid; grid-template-columns: 1fr; gap: 6px; }
@@ -516,6 +527,19 @@ function minOfDay(t) { var d = new Date(t); return d.getHours() * 60 + d.getMinu
 function classesInfo() { return (S.overview || {}).classes || []; }
 function classInfo(id) { return classesInfo().filter(function (c) { return c.id === id; })[0] || null; }
 function takeClass() { return classInfo(T.classId); }
+/** A class's 10 weeks: done (attendance taken), missed (past, not taken), now (this week) or later. */
+function classWeeks(c) {
+  var today = ymd(new Date()), mon = ymd(new Date(Date.now() - ((new Date().getDay() + 6) % 7) * 864e5)), sun = ymd(new Date(Date.parse(mon + 'T12:00:00') + 6 * 864e5));
+  return ((c && c.weeks) || []).map(function (w) {
+    return Object.assign({}, w, { state: w.done ? 'done' : w.date >= mon && w.date <= sun ? 'now' : w.date < today ? 'missed' : 'later' });
+  });
+}
+function weekOf(c, date) { return classWeeks(c).filter(function (w) { return w.date === date; })[0] || null; }
+/** The week to take next: the oldest one still missing, else this week, else the next one. */
+function nextWeek(c) {
+  var ws = classWeeks(c).filter(function (w) { return !w.done; });
+  return ws.filter(function (w) { return w.state === 'missed'; })[0] || ws.filter(function (w) { return w.state === 'now'; })[0] || ws[0] || null;
+}
 function isZoom(c) { return c && /zoom/i.test(c.mode || ''); }
 
 /** When a screenshot was taken: from the Mac's file name ("Screenshot 2026-10-05 at 6.15.32 PM"), else the file's time. */
@@ -611,7 +635,7 @@ function drawTake() {
   if (c) {
     var cp = String(c.course || '').split(':');
     h += '<div class="takeCls ' + (zoom ? 'zoom' : 'room') + '"><span class="code">' + esc(cp[0].trim()) + '</span>' + (cp.length > 1 ? '<span class="nm">' + esc(cp.slice(1).join(':').trim()) + '</span>' : '') +
-      modeChip(zoom ? 'Zoom' : roomLabel(c.mode)) + '<span class="muted small">' + esc(c.day) + ' · ' + esc(minLabel(c.startMin)) + (T.date ? ' · ' + esc(longToday(T.date)) : '') + '</span></div>';
+      modeChip(zoom ? 'Zoom' : roomLabel(c.mode)) + (weekOf(c, T.date) ? '<span class="chip wk">Week ' + weekOf(c, T.date).week + ' of ' + c.weeks.length + '</span>' : '') + '<span class="muted small">' + esc(c.day) + ' · ' + esc(minLabel(c.startMin)) + (T.date ? ' · ' + esc(longToday(T.date)) : '') + '</span></div>';
   } else h += '<div class="takeCls none">Pick the class on the right (or drop Zoom screenshots and it is found by their time).</div>';
   h += '<div class="take"><div>';
   h += '<div class="drop" id="drop"><div class="big">' + (T.files.length ? 'Drop more screenshots' : 'Drop the screenshots here') + '</div>' +
@@ -626,8 +650,10 @@ function drawTake() {
   h += '<div class="side"><div class="card"><b>Which class?</b><div class="clsPick" style="margin-top:8px">' + classesInfo().filter(function (x) { return x.active !== false; }).map(function (x) {
     return clsPickHTML(x);
   }).join('') + '</div>';
-  h += '<label for="takeDate">Date</label><input type="date" id="takeDate" value="' + esc(T.date) + '">';
+  h += weekPickHTML(c);
   if (zoom || !c) h += '<label for="takeStart">Class really started at</label><input id="takeStart" placeholder="' + esc(c ? minLabel(c.startMin) + ' (scheduled)' : '') + '" value="' + esc(T.start) + '">';
+  var tw = c && weekOf(c, T.date);
+  if (tw && tw.done) h += '<div class="redo">Week ' + tw.week + ' is already taken. Reading these screenshots will take it again.</div>';
   if (T.detected && c && T.files.length) h += '<div class="detected">Found by the screenshot times: ' + esc(c.course.split(':')[0]) + ' · ' + esc(longToday(T.date)) + '</div>';
   {
     var n = T.files.length - by.unsorted.length;
@@ -661,7 +687,32 @@ function clsPickHTML(x) {
   return '<button class="' + (zoom ? 'zoom' : 'room') + (x.id === T.classId ? ' on' : '') + '" data-act="takeCls" data-c="' + esc(x.id) + '">' +
     '<span class="top"><span class="code">' + esc(code) + '</span>' + (today ? '<span class="chip today">Today</span>' : '') + modeChip(zoom ? 'Zoom' : roomLabel(x.mode)) + '</span>' +
     (name ? '<span class="nm" title="' + esc(name) + '">' + esc(name) + '</span>' : '') +
-    '<small>' + esc(x.day) + ' · ' + esc(minLabel(x.startMin)) + (x.endMin ? ' – ' + esc(minLabel(x.endMin)) : '') + ' · ' + (zoom ? 'Zoom screenshots' : 'Populi screenshot') + '</small></button>';
+    '<small>' + esc(x.day) + ' · ' + esc(minLabel(x.startMin)) + (x.endMin ? ' – ' + esc(minLabel(x.endMin)) : '') + ' · ' + (zoom ? 'Zoom screenshots' : 'Populi screenshot') + '</small>' +
+    weekBar(x) + '</button>';
+}
+/** 10 small blocks, one per week: green taken, red missed, outlined this week, grey later. */
+function weekBar(c) {
+  var ws = classWeeks(c); if (!ws.length) return '';
+  var n = ws.filter(function (w) { return w.done; }).length, nx = nextWeek(c);
+  return '<span class="wbar">' + ws.map(function (w) { return '<i class="' + w.state + '" title="Week ' + w.week + ' · ' + esc(shortDate(w.date)) + '"></i>'; }).join('') + '</span>' +
+    '<small class="wtxt">' + n + ' of ' + ws.length + ' weeks taken' + (nx ? ' · next: <b>Week ' + nx.week + '</b>' : ' · all done') + '</small>';
+}
+/** Which week: only the weeks not taken yet (a taken week is fixed from its class page). */
+function weekPickHTML(c) {
+  if (!c || !(c.weeks || []).length || T.otherDate) {
+    return '<label for="takeDate">Date</label><input type="date" id="takeDate" value="' + esc(T.date) + '">';
+  }
+  var ws = classWeeks(c), open = ws.filter(function (w) { return !w.done && w.state !== 'later'; }), later = ws.filter(function (w) { return w.state === 'later'; })[0];
+  if (later) open.push(later);
+  var h = '<label>Which week?</label><div class="weekPick">' + (open.length ? open.map(function (w) {
+    return '<button class="' + w.state + (w.date === T.date ? ' on' : '') + '" data-act="takeWeek" data-d="' + esc(w.date) + '"><b>Week ' + w.week + '</b><small>' + esc(shortDate(w.date)) +
+      (w.state === 'now' ? ' · this week' : w.state === 'missed' ? ' · missing' : ' · next') + '</small></button>';
+  }).join('') : '<div class="small muted">Every week is taken.</div>') + '</div>';
+  var done = ws.filter(function (w) { return w.done; });
+  if (done.length) h += '<div class="small muted" style="margin-top:6px">Taken: week' + (done.length > 1 ? 's ' : ' ') + done.map(function (w) { return w.week; }).join(', ') +
+    ' (to fix one, <a data-go="class" data-class="' + esc(c.id) + '" style="cursor:pointer;color:var(--brand2)">open the class</a>).</div>';
+  h += '<div class="small" style="margin-top:4px"><a data-act="takeOtherDate" style="cursor:pointer;color:var(--ink3)">Another date…</a></div>';
+  return h;
 }
 function thumbHTML(x) {
   var c = takeClass(), m = c ? minOfDay(x.t) - takeStart() : null, sameDay = T.date && ymd(new Date(x.t)) === T.date;
@@ -721,7 +772,9 @@ function takeSubmit() {
   }).then(function (r) {
     toast(r.waiting ? r.msg : 'Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some; the OCR was used' : ''), !!aiErr);
     T.files.forEach(function (x) { URL.revokeObjectURL(x.url); });
-    T.files = []; T.busy = false; T.msg = ''; T.picked = false; T.detected = false;
+    T.files = []; T.busy = false; T.msg = ''; T.picked = false; T.detected = false; T.otherDate = false;
+    ((classInfo(classId) || {}).weeks || []).forEach(function (w) { if (w.date === date) w.done = true; });
+    T.classId = null;
     MEM = {}; storeClear();
     loadAll(false);
     go('session', { classId: classId, date: date });
@@ -1367,7 +1420,12 @@ function viewActivity() {
 
 /* ---------- actions ---------- */
 var ACTIONS = {
-  takeCls: function (b) { T.picked = true; setTakeClass(b.getAttribute('data-c'), T.date || ymd(new Date())); drawTake(); },
+  takeCls: function (b) {
+    var c = classInfo(b.getAttribute('data-c')), w = nextWeek(c);
+    T.picked = true; setTakeClass(c.id, w ? w.date : ymd(new Date())); drawTake();
+  },
+  takeWeek: function (b) { T.picked = true; setTakeClass(T.classId, b.getAttribute('data-d')); drawTake(); },
+  takeOtherDate: function () { T.otherDate = true; drawTake(); },
   takePick: function (b) {
     var c = classInfo(b.getAttribute('data-c')), d = b.getAttribute('data-d');
     T.picked = true; setTakeClass(c.id, d);

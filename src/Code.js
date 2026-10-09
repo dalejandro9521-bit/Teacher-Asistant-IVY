@@ -1079,6 +1079,7 @@ function overview_(ctx) {
     roster.forEach(function (s) { var t = totals[cls.id + '|' + s.id]; if (t && t.state in states) states[t.state]++; });
     return Object.assign(classInfo_(cls), {
       students: roster.length, sessions: dates.length, last: last, lastCounts: lastCounts, states: states,
+      weeks: classDates_(ctx, cls).map(function (d) { return { week: d.week, date: d.date, done: dates.indexOf(d.date) >= 0 }; }),
       questions: ctx.revT.rows.filter(function (r) { return ctx.revT.get(r, 'Class ID') === cls.id && !ctx.revT.get(r, 'Done'); }).length
     });
   });
