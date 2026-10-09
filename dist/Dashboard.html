@@ -214,6 +214,9 @@
   .wt:hover { border-color: var(--brand2); }
   .wt.ok { border-left-color: var(--p); } .wt.missing { border-left-color: var(--a); } .wt.future { opacity: .55; }
   .wt b { display: block; } .wt .small { margin-top: 3px; }
+  .wdrop { margin-top: 8px; padding: 7px 6px; border: 1.5px dashed var(--line); border-radius: 8px; text-align: center; font-size: 12px; color: var(--ink3); }
+  .wdrop:hover, .wt.over .wdrop { border-color: var(--brand2); color: var(--brand2); background: var(--brand-soft); }
+  .wt.over { border-color: var(--brand2); box-shadow: 0 0 0 2px var(--brand2) inset; }
   /* quick status buttons */
   .pick { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .pick button { border: 0; background: #fff; width: 32px; height: 28px; font-weight: 700; font-size: 12px; color: #9aa5b1; }
@@ -399,6 +402,8 @@ function renderNav() {
   }
 }
 document.addEventListener('click', function (e) {
+  var wp = e.target.closest('[data-act="weekPick"]');
+  if (wp) { var inp = $('weekInput'); inp.setAttribute('data-date', wp.closest('.wt').getAttribute('data-date')); inp.click(); return; }
   var b = e.target.closest('[data-go]');
   if (!e.target.closest('#menu') && !e.target.closest('[data-act="menu"]')) $('menu').classList.remove('on');
   if (b) {
@@ -420,14 +425,19 @@ function renderView() {
     student: viewStudent, mail: viewMail, take: viewTake, standing: viewStanding };
   (views[S.view] || viewHome)();
 }
-/* Speed: every page shows its last copy at once (this browser tab only), then the fresh one when it arrives. */
-var MEM = {};
+/* Speed: every page shows its last copy at once (kept in this Mac's browser, so the dashboard opens instantly next time too),
+   then the fresh one when it arrives. */
+var MEM = {}, STORE = (function () { try { localStorage.setItem('ta:t', '1'); localStorage.removeItem('ta:t'); return localStorage; } catch (e) { try { return sessionStorage; } catch (e2) { return null; } } })();
+function storeClear() {
+  if (!STORE) return;
+  try { Object.keys(STORE).filter(function (k) { return k.indexOf('ta:') === 0; }).forEach(function (k) { STORE.removeItem(k); }); } catch (e) { /* ignore */ }
+}
 function ckey(fn, args) { return fn + ':' + JSON.stringify(args || []); }
 function cacheRead(k) {
   if (MEM[k]) return MEM[k];
-  try { var v = sessionStorage.getItem('ta:' + k); return v ? JSON.parse(v) : null; } catch (e) { return null; }
+  try { var v = STORE && STORE.getItem('ta:' + k); return v ? JSON.parse(v) : null; } catch (e) { return null; }
 }
-function cacheWrite(k, v) { MEM[k] = v; STAMP[k] = Date.now(); try { sessionStorage.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
+function cacheWrite(k, v) { MEM[k] = v; STAMP[k] = Date.now(); try { if (STORE) STORE.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
 /* Calls that only read. Any other call is a write: copies older than it are re-checked, and everything reloads in the background. */
 var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1,
   apiStudent: 1, apiMail: 1, apiShotFiles: 1, apiStanding: 1 };
@@ -572,6 +582,14 @@ function addShots(files, pasted) {
   relane();
   if (S.view !== 'take') go('take'); else drawTake();
 }
+/** Screenshots dropped on one week of a class: that class and date are already known, so they go straight to sorting. */
+function weekShots(classId, date, files) {
+  if (T.busy) { toast('Wait until these screenshots are read', true); return; }
+  if (T.classId !== classId || T.date !== date) T.files = [];
+  T.picked = true; T.detected = false;
+  setTakeClass(classId, date);
+  addShots(files);
+}
 function viewTake() {
   takeDefault();
   $('main').innerHTML = '<div id="take"></div>';
@@ -687,7 +705,7 @@ function takeSubmit() {
     toast('Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some; the OCR was used' : ''), !!aiErr);
     T.files.forEach(function (x) { URL.revokeObjectURL(x.url); });
     T.files = []; T.busy = false; T.msg = ''; T.picked = false; T.detected = false;
-    MEM = {}; try { sessionStorage.clear(); } catch (e) { /* ignore */ }
+    MEM = {}; storeClear();
     loadAll(false);
     go('session', { classId: classId, date: date });
   }).catch(function () {
@@ -936,21 +954,23 @@ function viewClass() {
     S.cls = d;
     var h = '<div class="crumbs"><a data-go="home">Home</a> / ' + esc(d.cls.course.split(':')[0]) + '</div>' +
       '<div class="row"><div><h1>' + esc(d.cls.course) + '</h1><p class="sub">' + esc(d.cls.day) + ' · ' + esc(d.cls.time) + ' · ' + modeChip(d.cls.mode) + ' · ' + d.students.length + ' students in Populi order</p></div></div>';
-    h += '<h2>Weeks <span class="muted small">— click a week to see it, mark it, or fix it</span></h2><div class="wtiles">' + d.schedule.map(function (w) {
+    h += '<h2>Weeks <span class="muted small">— click a week to see it, mark it, or fix it' + (/zoom/i.test(d.cls.mode) ? ', or drop its screenshots on it' : '') + '</span></h2><div class="wtiles">' + d.schedule.map(function (w) {
       var cls = w.counts ? 'ok' : w.over ? 'missing' : 'future';
       var info = w.counts ? '<span style="color:var(--p)">' + w.counts.P + ' P</span> · <span style="color:var(--t)">' + w.counts.T + ' T</span> · <span style="color:var(--a)">' + w.counts.A + ' A</span>'
         : w.over ? '<span style="color:var(--a)">Not loaded yet</span>' : 'Upcoming';
       var extra = (w.questions ? ' <span class="chip warn">' + w.questions + ' to confirm</span>' : '') +
         (w.counts && /zoom/i.test(d.cls.mode) ? (w.populi ? ' <span class="chip good">Populi ✓</span>' : ' <span class="chip">Populi pending</span>') : '');
+      var drop = /zoom/i.test(d.cls.mode) && w.date <= ymd(new Date()) ? '<div class="wdrop" data-act="weekPick">⇪ Drop screenshots here</div>' : '';
       return '<div class="card wt ' + cls + '" data-go="session" data-date="' + esc(w.date) + '"><b>Week ' + w.week + ' · ' + esc(shortDate(w.date)) + '</b><div class="small">' + info + '</div>' +
-        (extra ? '<div style="margin-top:6px">' + extra + '</div>' : '') + '</div>';
-    }).join('') + '</div>';
+        (extra ? '<div style="margin-top:6px">' + extra + '</div>' : '') + drop + '</div>';
+    }).join('') + '</div><input type="file" id="weekInput" accept="image/*" multiple style="display:none">';
     h += '<div class="toolbar"><input class="search" id="search" placeholder="Search a student…" value="' + esc(S.search) + '">' +
       '<div class="seg" id="seg">' + ['all', 'risk', 'absent'].map(function (f) {
         return '<button class="' + (S.filter === f ? 'on' : '') + '" data-act="filter" data-f="' + f + '">' + { all: 'Everyone', risk: 'At risk', absent: 'Missed a class' }[f] + '</button>';
       }).join('') + '</div><div class="spacer"></div><span class="small muted">' + st('P') + ' present ' + st('T') + ' tardy ' + st('A') + ' absent ' + st('A', true) + ' left early ' + st('E') + ' excused</span></div>';
     h += '<div class="card tbl-wrap" id="classTable"></div>';
     $('main').innerHTML = h;
+    $('weekInput').onchange = function () { var inp = $('weekInput'); weekShots(S.classId, inp.getAttribute('data-date'), Array.prototype.slice.call(inp.files)); inp.value = ''; };
     drawClassTable();
     $('search').addEventListener('input', function (e) { S.search = e.target.value; drawClassTable(); });
   });
@@ -1107,7 +1127,7 @@ function uploadShots(phase, files) {
     status('Analyzing the class with all the screenshots…');
     return call('apiAnalyzeSession', S.classId, S.date).then(function (r) {
       status(''); toast('Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some (' + aiErr + '); the OCR was used' : ''), !!aiErr);
-      MEM = {}; try { sessionStorage.clear(); } catch (e) { /* ignore */ }
+      MEM = {}; storeClear();
       viewSession();
     });
   }).catch(function () { status('Stopped. The screenshots read so far are saved; drop the rest again.'); });
@@ -1133,7 +1153,7 @@ function readAi() {
       status('Analyzing the class…');
       return call('apiAnalyzeSession', S.classId, S.date).then(function (r) {
         status(''); toast('Done: ' + String(r.msg).split('. ')[0]);
-        MEM = {}; try { sessionStorage.clear(); } catch (e) { /* ignore */ }
+        MEM = {}; storeClear();
         viewSession();
       });
     });
@@ -1532,14 +1552,26 @@ document.addEventListener('click', function (e) {
   if (f && f.classList.contains('on') && !e.target.closest('#finder')) f.classList.remove('on');
   if (f && e.target.closest('#finder [data-go]')) f.classList.remove('on');
 });
-document.addEventListener('dragover', function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) { e.preventDefault(); var d = $('drop'); if (d) d.classList.add('over'); } });
-document.addEventListener('dragleave', function (e) { if (!e.relatedTarget) { var d = $('drop'); if (d) d.classList.remove('over'); } });
+function overWeek(on) {
+  document.querySelectorAll('.wt.over').forEach(function (x) { if (x !== on) x.classList.remove('over'); });
+  if (on) on.classList.add('over');
+}
+document.addEventListener('dragover', function (e) {
+  if (!(e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0)) return;
+  e.preventDefault();
+  var d = $('drop'); if (d) d.classList.add('over');
+  overWeek(e.target.closest && e.target.closest('.wt') && e.target.closest('.wt').querySelector('.wdrop') ? e.target.closest('.wt') : null);
+});
+document.addEventListener('dragleave', function (e) { if (!e.relatedTarget) { var d = $('drop'); if (d) d.classList.remove('over'); overWeek(null); } });
 document.addEventListener('drop', function (e) {
   if (e.target.closest && e.target.closest('.dz')) return; // the session's own drop zones
   var files = Array.prototype.slice.call((e.dataTransfer || {}).files || []);
+  overWeek(null);
   if (!files.length) return;
   e.preventDefault();
-  addShots(files);
+  var wk = S.view === 'class' && e.target.closest && e.target.closest('.wt');
+  if (wk && wk.querySelector('.wdrop')) weekShots(S.classId, wk.getAttribute('data-date'), files);
+  else addShots(files);
 });
 document.addEventListener('paste', function (e) {
   if (S.view === 'session') return; // the session view takes it in its own zone
