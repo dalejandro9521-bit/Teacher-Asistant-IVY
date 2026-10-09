@@ -284,10 +284,23 @@
   .side .card { padding: 16px; }
   .side label { display: block; font-size: 12px; font-weight: 600; color: var(--ink2); margin: 10px 0 4px; }
   .side input, .side select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; background: #fff; }
-  .clsPick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-  .clsPick button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 8px; text-align: left; font-size: 13px; }
-  .clsPick button small { display: block; color: var(--ink3); font-size: 11px; }
-  .clsPick button.on { border-color: var(--brand2); background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .takeCls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--line); border-left: 6px solid #6b3fa0; background: #fff; border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; }
+  .takeCls.zoom { border-left-color: var(--e); }
+  .takeCls.none { border-left-color: var(--line); color: var(--ink3); }
+  .takeCls .code { font-weight: 700; font-size: 18px; }
+  .takeCls .nm { font-size: 15px; color: var(--ink2); }
+  .clsPick { display: grid; grid-template-columns: 1fr; gap: 6px; }
+  .clsPick button { display: block; width: 100%; border: 1px solid var(--line); border-left: 5px solid #6b3fa0; background: #fff; border-radius: 8px; padding: 8px 10px; text-align: left; font-size: 13px; color: var(--ink); cursor: pointer; }
+  .clsPick button.zoom { border-left-color: var(--e); }
+  .clsPick button:hover { background: #fafbfc; }
+  .clsPick .top { display: flex; align-items: center; gap: 6px; }
+  .clsPick .code { font-weight: 700; font-size: 15px; }
+  .clsPick .top .chip { margin-left: auto; }
+  .clsPick .nm { display: block; color: var(--ink2); font-size: 12px; margin: 2px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .clsPick small { display: block; color: var(--ink3); font-size: 11px; }
+  .clsPick .today { background: var(--brand-soft); color: var(--brand); }
+  .clsPick button.on { border-color: var(--brand2); border-left-width: 5px; background: var(--brand-soft); box-shadow: 0 0 0 1px var(--brand2) inset; }
+  .clsPick button.on .code::before { content: "✓ "; color: var(--brand2); }
   .detected { font-size: 12px; color: var(--p); background: var(--p-bg); border-radius: 6px; padding: 6px 8px; margin-top: 8px; }
   .progress { height: 6px; background: #eef1f4; border-radius: 3px; overflow: hidden; margin-top: 10px; }
   .progress span { display: block; height: 100%; background: var(--brand2); transition: width .2s; }
@@ -595,6 +608,11 @@ function drawTake() {
   var h = '<div class="row"><div><h1>Take attendance</h1><p class="sub">' + (c && !zoom
     ? 'In person: drop the screenshot of Populi\'s attendance for this class (already marked). Each student is recorded exactly as Populi shows.'
     : 'Drop all the Zoom screenshots of a class at once, in any order. Each one goes to its column by the time it was taken, and the class is found on its own.') + '</p></div></div>';
+  if (c) {
+    var cp = String(c.course || '').split(':');
+    h += '<div class="takeCls ' + (zoom ? 'zoom' : 'room') + '"><span class="code">' + esc(cp[0].trim()) + '</span>' + (cp.length > 1 ? '<span class="nm">' + esc(cp.slice(1).join(':').trim()) + '</span>' : '') +
+      modeChip(zoom ? 'Zoom' : roomLabel(c.mode)) + '<span class="muted small">' + esc(c.day) + ' · ' + esc(minLabel(c.startMin)) + (T.date ? ' · ' + esc(longToday(T.date)) : '') + '</span></div>';
+  } else h += '<div class="takeCls none">Pick the class on the right (or drop Zoom screenshots and it is found by their time).</div>';
   h += '<div class="take"><div>';
   h += '<div class="drop" id="drop"><div class="big">' + (T.files.length ? 'Drop more screenshots' : 'Drop the screenshots here') + '</div>' +
     '<div class="muted">or click to choose them · or press <span class="kbd">⌘</span> <span class="kbd">V</span> right after a screenshot (it is placed by the time you paste it)</div></div>' +
@@ -605,8 +623,8 @@ function drawTake() {
       (by[k].length || k === 'unsorted' ? '' : '<div class="muted small">No screenshot yet</div>') + '</div>';
   }).join('') + '</div></div>';
   // side panel
-  h += '<div class="side"><div class="card"><b>Class</b><div class="clsPick" style="margin-top:8px">' + classesInfo().filter(function (x) { return x.active !== false; }).map(function (x) {
-    return '<button class="' + (x.id === T.classId ? 'on' : '') + '" data-act="takeCls" data-c="' + esc(x.id) + '">' + esc(x.course.split(':')[0]) + '<small>' + esc(x.day.slice(0, 3)) + ' · ' + esc(minLabel(x.startMin)) + '</small></button>';
+  h += '<div class="side"><div class="card"><b>Which class?</b><div class="clsPick" style="margin-top:8px">' + classesInfo().filter(function (x) { return x.active !== false; }).map(function (x) {
+    return clsPickHTML(x);
   }).join('') + '</div>';
   h += '<label for="takeDate">Date</label><input type="date" id="takeDate" value="' + esc(T.date) + '">';
   if (zoom || !c) h += '<label for="takeStart">Class really started at</label><input id="takeStart" placeholder="' + esc(c ? minLabel(c.startMin) + ' (scheduled)' : '') + '" value="' + esc(T.start) + '">';
@@ -634,6 +652,16 @@ function drawTake() {
   h += '</div></div>';
   el.innerHTML = h;
   setupTakeDrops();
+}
+function roomLabel(mode) { mode = String(mode || '').trim(); return !mode || /person/i.test(mode) ? 'In person' : 'In person · ' + mode; }
+/** One class in the Take attendance picker: code, name, Zoom / in person, day and time (today's class marked). */
+function clsPickHTML(x) {
+  var parts = String(x.course || '').split(':'), code = parts[0].trim(), name = parts.slice(1).join(':').trim(), zoom = isZoom(x);
+  var today = x.dayIndex === new Date().getDay();
+  return '<button class="' + (zoom ? 'zoom' : 'room') + (x.id === T.classId ? ' on' : '') + '" data-act="takeCls" data-c="' + esc(x.id) + '">' +
+    '<span class="top"><span class="code">' + esc(code) + '</span>' + (today ? '<span class="chip today">Today</span>' : '') + modeChip(zoom ? 'Zoom' : roomLabel(x.mode)) + '</span>' +
+    (name ? '<span class="nm" title="' + esc(name) + '">' + esc(name) + '</span>' : '') +
+    '<small>' + esc(x.day) + ' · ' + esc(minLabel(x.startMin)) + (x.endMin ? ' – ' + esc(minLabel(x.endMin)) : '') + ' · ' + (zoom ? 'Zoom screenshots' : 'Populi screenshot') + '</small></button>';
 }
 function thumbHTML(x) {
   var c = takeClass(), m = c ? minOfDay(x.t) - takeStart() : null, sameDay = T.date && ymd(new Date(x.t)) === T.date;
