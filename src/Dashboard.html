@@ -555,7 +555,7 @@ function refreshOverview() {
 /* ---------- Take attendance: drop every screenshot of a class at once ---------- */
 var LANES = {
   present: ['15 min', 'Seen here → Present'],
-  tardy: ['31 min', 'First seen here → Tardy'],
+  tardy: ['31 min', 'First seen here → still Present (no Tardy online)'],
   end: ['Last screenshot', 'Missing here → Absent (left early)'],
   unsorted: ['Not sorted', 'Taken outside the class time. Move each one to a column.'],
   populi: ['Populi attendance', 'Recorded exactly as marked in Populi']
@@ -1048,8 +1048,8 @@ function classCard(c) {
   if (total) {
     h += '<div class="bar"><span style="width:' + pct(c.lastCounts.P) + ';background:var(--p)"></span><span style="width:' + pct(c.lastCounts.T) + ';background:#f2a600"></span>' +
       '<span style="width:' + pct(c.lastCounts.A) + ';background:var(--a)"></span><span style="width:' + pct(c.lastCounts.E) + ';background:var(--e)"></span></div>' +
-      '<div class="legend"><span><i class="dot" style="background:var(--p)"></i>' + c.lastCounts.P + ' present</span><span><i class="dot" style="background:#f2a600"></i>' + c.lastCounts.T +
-      ' tardy</span><span><i class="dot" style="background:var(--a)"></i>' + c.lastCounts.A + ' absent</span></div>' +
+      '<div class="legend"><span><i class="dot" style="background:var(--p)"></i>' + c.lastCounts.P + ' present</span>' + (isZoom(c) && !c.lastCounts.T ? '' : '<span><i class="dot" style="background:#f2a600"></i>' + c.lastCounts.T +
+      ' tardy</span>') + '<span><i class="dot" style="background:var(--a)"></i>' + c.lastCounts.A + ' absent</span></div>' +
       '<div class="small muted" style="margin-top:6px">Last class: ' + esc(shortDate(c.last)) + ' · ' + c.sessions + ' class' + (c.sessions === 1 ? '' : 'es') + ' recorded</div>';
   } else {
     h += '<div class="small muted" style="margin-top:14px">No attendance recorded yet.</div>';
@@ -1089,7 +1089,7 @@ function viewClass() {
       '<button class="btn sm" data-act="rosterToggle">' + (S.rosterOpen ? 'Close roster' : 'Update roster') + '</button>' +
       '<div class="seg" id="seg">' + ['all', 'risk', 'absent'].map(function (f) {
         return '<button class="' + (S.filter === f ? 'on' : '') + '" data-act="filter" data-f="' + f + '">' + { all: 'Everyone', risk: 'At risk', absent: 'Missed a class' }[f] + '</button>';
-      }).join('') + '</div><div class="spacer"></div><span class="small muted">' + st('P') + ' present ' + st('T') + ' tardy ' + st('A') + ' absent ' + st('A', true) + ' left early ' + st('E') + ' excused</span></div>';
+      }).join('') + '</div><div class="spacer"></div><span class="small muted">' + st('P') + ' present ' + (isZoom(d.cls || d) ? '' : st('T') + ' tardy ') + st('A') + ' absent ' + st('A', true) + ' left early ' + st('E') + ' excused</span></div>';
     h += '<div class="card tbl-wrap" id="classTable"></div>';
     $('main').innerHTML = h;
     drawClassTable();
@@ -1202,22 +1202,22 @@ function drawSession() {
   if (!$('sessTable')) return;
   var d = S.sess, c = { P: 0, T: 0, A: 0, E: 0, left: 0, none: 0 };
   d.students.forEach(function (s) { var k = letterOf(s); if (k in c) c[k]++; else c.none++; if (s.left) c.left++; });
-  $('sessStats').innerHTML = stat('P', c.P, 'Present') + stat('T', c.T, 'Tardy') + stat('A', c.A, 'Absent') + (c.E ? stat('E', c.E, 'Excused') : '') +
+  $('sessStats').innerHTML = stat('P', c.P, 'Present') + (d.zoom && !c.T ? '' : stat('T', c.T, 'Tardy')) + stat('A', c.A, 'Absent') + (c.E ? stat('E', c.E, 'Excused') : '') +
     '<div class="card stat"><div class="n">' + c.left + '</div><div class="small muted">Left / disconnected early</div></div>' +
     (c.none ? '<div class="card stat" style="border-color:#f5c26b"><div class="n" style="color:var(--warn)">' + c.none + '</div><div class="small muted">No status yet</div></div>' : '');
   var h = '<table><thead><tr><th class="num">#</th><th>Student</th><th>Status</th><th>Flags</th><th>Why</th><th></th></tr></thead><tbody>';
   d.students.forEach(function (s, i) {
     var k = letterOf(s);
     h += '<tr data-i="' + i + '"' + (S.focusRow === i ? ' class="focus"' : '') + '><td class="num muted">' + (s.order || '') + '</td><td style="white-space:nowrap"><span class="name-link" data-go="student" data-sid="' + esc(s.id) + '">' + esc(s.name) + '</span></td>' +
-      '<td>' + picker(k, s.id, d.date) + '</td><td>' + flags(s) + '</td><td class="note">' + esc(s.notes || '') + '</td>' +
+      '<td>' + picker(k, s.id, d.date, d.zoom) + '</td><td>' + flags(s) + '</td><td class="note">' + esc(s.notes || '') + '</td>' +
       '<td><button class="more" data-act="menu" data-sid="' + esc(s.id) + '" data-date="' + esc(d.date) + '" title="More">⋯</button></td></tr>';
   });
   $('sessTable').innerHTML = h + '</tbody></table>' +
-    '<div class="small muted" style="padding:8px 12px">Keyboard: <span class="kbd">↑</span> <span class="kbd">↓</span> pick a student, then <span class="kbd">P</span> <span class="kbd">T</span> <span class="kbd">A</span> <span class="kbd">E</span></div>';
+    '<div class="small muted" style="padding:8px 12px">Keyboard: <span class="kbd">↑</span> <span class="kbd">↓</span> pick a student, then <span class="kbd">P</span> ' + (d.zoom ? '' : '<span class="kbd">T</span> ') + '<span class="kbd">A</span> <span class="kbd">E</span></div>';
   function stat(k, n, l) { return '<div class="card stat ' + k + '"><div class="n">' + n + '</div><div class="small muted">' + l + '</div></div>'; }
 }
 function shotsCard(d) {
-  var info = { present: ['15 min', 'Present (minutes 0–15)'], tardy: ['31 min', 'Tardy (minutes 16–30)'], end: ['Last screenshot', 'Before you leave (who is still there)'] };
+  var info = { present: ['15 min', 'Present (minutes 0–15)'], tardy: ['31 min', 'Still Present (minutes 16–30). Online: no Tardy'], end: ['Last screenshot', 'Before you leave (who is still there)'] };
   var sh = d.shots || {};
   return '<h2>Zoom screenshots <span class="muted small">— drag them here, click to choose, or paste (Cmd+V) into the last zone you clicked</span></h2>' +
     '<div class="dzs">' + ['present', 'tardy', 'end'].map(function (p) {
@@ -1340,8 +1340,9 @@ function readAi() {
   }).catch(function () { status('Stopped. Try again: the screenshots already read are kept.'); });
 }
 function letterOf(s) { return /^accepted$/i.test(s.excuse || '') ? 'E' : String(s.status || '').charAt(0); }
-function picker(k, sid, date) {
-  return '<span class="pick">' + ['P', 'T', 'A', 'E'].map(function (x) {
+/** Online (Zoom) classes have no Tardy: only P, A, E. */
+function picker(k, sid, date, online) {
+  return '<span class="pick">' + (online ? ['P', 'A', 'E'] : ['P', 'T', 'A', 'E']).map(function (x) {
     return '<button class="' + x + (k === x ? ' on' : '') + '" title="' + LETTER_NAME[x] + '" data-act="rec" data-sid="' + esc(sid) + '" data-date="' + esc(date) +
       '" data-change=\'' + JSON.stringify({ status: LETTER_NAME[x] }) + '\'>' + x + '</button>';
   }).join('') + '</span>';
@@ -1394,14 +1395,14 @@ function viewStudent() {
       '<button class="btn ghost sm" style="margin-left:8px" data-act="removeStudent" data-sid="' + esc(d.student.id) + '" data-name="' + esc(d.student.name) + '">Remove from roster</button></div>';
     h += '<div class="stats"><div class="card stat A"><div class="n">' + t.effective + '</div><div class="small muted">Counted absences (of 2)</div></div>' +
       '<div class="card stat"><div class="n">' + t.remaining + '</div><div class="small muted">Absences left</div></div>' +
-      '<div class="card stat T"><div class="n">' + t.tardies + '</div><div class="small muted">Tardies (3 = 1 absence)</div></div>' +
+      (isZoom(d.cls) && !t.tardies ? '' : '<div class="card stat T"><div class="n">' + t.tardies + '</div><div class="small muted">Tardies (3 = 1 absence)</div></div>') +
       '<div class="card stat P"><div class="n">' + t.pct + '%</div><div class="small muted">Attendance</div></div>' +
       (t.excused ? '<div class="card stat"><div class="n" style="color:var(--e)">' + t.excused + '</div><div class="small muted">Excused</div></div>' : '') + '</div>';
     h += '<h2>Week by week</h2><div class="card"><table><thead><tr><th>Week</th><th>Date</th><th>Status</th><th>Flags</th><th>Notes</th><th>Follow-up</th><th></th></tr></thead><tbody>';
     d.weeks.forEach(function (w) {
       var r = w.rec || {}, k = w.rec ? letterOf(r) : '';
       h += '<tr' + (w.future && !w.rec ? ' style="opacity:.5"' : '') + '><td>Week ' + w.week + '</td><td><span class="wk" data-go="session" data-date="' + esc(w.date) + '">' + esc(shortDate(w.date)) + '</span></td>' +
-        '<td>' + (w.future && !w.rec ? '<span class="muted small">Upcoming</span>' : picker(k, d.student.id, w.date)) + '</td><td>' + flags(r) + '</td><td class="note">' + esc(r.notes || '') + '</td>' +
+        '<td>' + (w.future && !w.rec ? '<span class="muted small">Upcoming</span>' : picker(k, d.student.id, w.date, isZoom(d.cls))) + '</td><td>' + flags(r) + '</td><td class="note">' + esc(r.notes || '') + '</td>' +
         '<td class="note">' + esc(r.notified ? r.notified.split(' · ').slice(0, 2).join(' · ') : '') + '</td>' +
         '<td>' + (w.future && !w.rec ? '' : '<button class="more" data-act="menu" data-sid="' + esc(d.student.id) + '" data-date="' + esc(w.date) + '">⋯</button>') + '</td></tr>';
     });
@@ -1770,7 +1771,7 @@ document.addEventListener('keydown', function (e) {
       return;
     }
     var letter = k.toUpperCase();
-    if (S.focusRow != null && LETTER_NAME[letter] && k.length === 1) {
+    if (S.focusRow != null && LETTER_NAME[letter] && k.length === 1 && !(letter === 'T' && S.sess.zoom)) {
       var st = S.sess.students[S.focusRow];
       if (st) { setRec(st.id, S.sess.date, { status: LETTER_NAME[letter] }); if (S.focusRow < n - 1) S.focusRow++; }
       return;

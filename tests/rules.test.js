@@ -325,3 +325,28 @@ test('dashboard script has no syntax errors and only calls server functions that
   called.forEach(fn => assert.equal(typeof g[fn], 'function', fn + ' is not defined in Code.js'));
   called.forEach(fn => assert.ok(!fn.endsWith('_'), fn + ': private functions cannot be called from the page'));
 });
+
+test('online classes: no Tardy, Present until minute 30, Absent from minute 31', () => {
+  const online = g.cfgForClass({}, cls), room = g.cfgForClass({}, { mode: 'Room 300' });
+  assert.equal(online.noTardy, true);
+  assert.equal(room.noTardy, false);
+  assert.equal(g.classify(10, online), 'Present');
+  assert.equal(g.classify(22, online), 'Present');
+  assert.equal(g.classify(30.9, online), 'Present');
+  assert.equal(g.classify(31, online), 'Absent');
+  assert.equal(g.classify(22, room), 'Tardy');
+  // Screenshots: first seen at 31 min → Present; only in the last shot → Absent
+  const r = g.screenshotStatuses({ present: ['Ana Maria Lopez'], tardy: ['Ana Maria Lopez\nBrian Smith'], end: ['Ana Maria Lopez\nBrian Smith\nCarla Pérez'] },
+    roster, [], { start: 18 * 60, cfg: online });
+  const st = n => r.results.find(x => x.student.name === n).status;
+  assert.equal(st('Ana Maria Lopez'), 'Present');
+  assert.equal(st('Brian Smith'), 'Present');
+  assert.equal(st('Carla Pérez'), 'Absent');
+  // The notice never talks about tardies in an online class
+  const t = g.tally([{ classId: 'C3', studentId: '1001', status: 'Absent' }, { classId: 'C3', studentId: '1001', status: 'Absent' }])['C3|1001'];
+  const m = g.buildStudentNotice({ kind: 'Absent', student: roster[0], cls, date: '2026-10-05', tally: t, cfg: {}, minutesLate: 40 });
+  assert.ok(!/tard(y|ies)/i.test(m.text.replace(/there is no tardy/, '')), m.text);
+  assert.ok(m.text.includes('joined 40 minutes after'));
+  assert.ok(m.text.includes('from minute 31 on they are absent'));
+  assert.ok(m.text.includes('One more absence will put you below 80%'));
+});

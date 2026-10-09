@@ -49,11 +49,11 @@ function summaryLines_(t, cfg) {
     '• Current absences: ' + t.effective + ' of ' + c.maxAbsences + ' allowed' +
       (t.tardyAbsences ? ' (' + t.absences + ' absence' + (t.absences === 1 ? '' : 's') + ' + ' + t.tardyAbsences + ' from tardies)' : ''),
     '• Absences remaining: ' + Math.max(0, t.remaining),
-    '• Tardies: ' + t.tardies + ' (every ' + c.tardiesPerAbsence + ' tardies count as 1 absence)',
+    c.noTardy === true && !t.tardies ? '' : '• Tardies: ' + t.tardies + ' (every ' + c.tardiesPerAbsence + ' tardies count as 1 absence)',
     '• Current attendance: ' + t.pct + '% (minimum required: ' + c.minAttendancePct + '%)'
   ];
   if (t.excused) lines.push('• Excused: ' + t.excused);
-  return lines.join('\n');
+  return lines.filter(String).join('\n');
 }
 
 function standingSentence_(t, cfg) {
@@ -62,6 +62,7 @@ function standingSentence_(t, cfg) {
     return 'You now have more than ' + c.maxAbsences + ' absences, so your attendance is below the ' + c.minAttendancePct +
       '% required to pass this course. Please contact me or the office as soon as possible.';
   }
+  if (t.state === 'at-limit' && c.noTardy === true) return 'You have no absences left. One more absence will put you below ' + c.minAttendancePct + '%.';
   if (t.state === 'at-limit') return 'You have no absences left. One more absence (or ' + (c.tardiesPerAbsence - t.tardies % c.tardiesPerAbsence) + ' more tard' + ((c.tardiesPerAbsence - t.tardies % c.tardiesPerAbsence) === 1 ? 'y' : 'ies') + ') will put you below ' + c.minAttendancePct + '%.';
   return 'You need at least ' + c.minAttendancePct + '% attendance to pass. Over the ' + c.totalSessions + '-week course, that means no more than ' + c.maxAbsences + ' absences.';
 }
@@ -72,7 +73,7 @@ function standingSentence_(t, cfg) {
  * p: {kind, student:{name,email}, cls:{course,section,start,end,mode}, date, tally, cfg, minutesLate}
  */
 function buildStudentNotice(p) {
-  var cfg = p.cfg || {}, c = rulesConfig_(cfg), s = p.student, cls = p.cls, t = p.tally;
+  var cfg = cfgForClass(p.cfg, p.cls), c = rulesConfig_(cfg), s = p.student, cls = p.cls, t = p.tally;
   var when = longDate(p.date) + ', ' + classTime(cls);
   var first = String(s.name || '').split(/\s+/)[0] || 'student';
   var what, subjectWord;
@@ -89,7 +90,10 @@ function buildStudentNotice(p) {
       'Leaving before the time set by the professor changes your attendance from Present to Absent.';
   } else {
     subjectWord = 'Absence';
-    what = 'You were marked ABSENT for ' + classLabel(cls) + ' on ' + when + '.';
+    what = 'You were marked ABSENT for ' + classLabel(cls) + ' on ' + when + '.' +
+      (c.noTardy === true && p.minutesLate > c.tardyUntilMin ? ' You joined ' + p.minutesLate + ' minutes after the start of class.' : '') +
+      (c.noTardy === true ? '\n\nIn online classes there is no tardy: students who join in the first ' + c.tardyUntilMin +
+        ' minutes are present, and from minute ' + (c.tardyUntilMin + 1) + ' on they are absent.' : '');
   }
   var text = 'Dear ' + first + ',\n\n' + what + '\n\n' +
     'Your attendance in this course:\n' + summaryLines_(t, cfg) + '\n\n' +
@@ -110,7 +114,7 @@ function buildStudentNotice(p) {
  * p: {level, student:{name} (empty name → "Dear student,"), cls, tally, cfg, dates: ['yyyy-mm-dd' of absences/tardies]}
  */
 function buildStandingNotice(p) {
-  var cfg = p.cfg || {}, c = rulesConfig_(cfg), t = p.tally, cls = p.cls;
+  var cfg = cfgForClass(p.cfg, p.cls), c = rulesConfig_(cfg), t = p.tally, cls = p.cls;
   var first = String((p.student || {}).name || '').split(/\s+/)[0];
   var course = String(cls.course || '').split(':')[0].trim() || classLabel(cls);
   var section = cls.section || ((DAY_NAMES[dayIndex(cls.day)] || cls.day || '') + ' ' + classTime(cls)).trim();
@@ -404,7 +408,7 @@ function weeklyOverview_(p, totals, c, th, td) {
     }
     text.push('');
   }
-  html.push('<p style="margin:14px 0 0;color:#777;font-size:12px">Rules: ' + c.tardiesPerAbsence + ' tardies = 1 absence · each absence = ' + Math.round(100 / c.totalSessions) +
+  html.push('<p style="margin:14px 0 0;color:#777;font-size:12px">Rules: ' + c.tardiesPerAbsence + ' tardies = 1 absence (in person) · online classes: no tardy, absent from minute ' + (c.tardyUntilMin + 1) + ' · each absence = ' + Math.round(100 / c.totalSessions) +
     '% · minimum ' + c.minAttendancePct + '% (more than ' + c.maxAbsences + ' absences loses the course).</p>');
   return { html: html.join(''), text: text };
 }
@@ -478,6 +482,7 @@ function mailSystemPrompt(cfg) {
     'Students need at least ' + c.minAttendancePct + '%, so at most ' + c.maxAbsences + ' absences.\n' +
     '- Minutes 0-' + c.presentUntilMin + ' after the start: Present. Minutes ' + (c.presentUntilMin + 1) + '-' + c.tardyUntilMin +
     ': Tardy. Later: Absent. Every ' + c.tardiesPerAbsence + ' tardies count as 1 absence. Checking in and leaving before the end counts as Absent.\n' +
+    '- Online (Zoom) classes have no Tardy: minutes 0-' + c.tardyUntilMin + ' Present, minute ' + (c.tardyUntilMin + 1) + ' or later Absent.\n' +
     '- ' + medicalExcuseText_(cfg).replace(/\n+/g, ' ') + '\n\n' +
     'How to reply:\n' +
     '- Warm, brief and professional. Use the student\'s first name. Reply in the language the student wrote in.\n' +

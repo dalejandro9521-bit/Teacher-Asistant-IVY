@@ -401,7 +401,7 @@ function processScreenshotSession_(ctx, cls, date, phases, folderId, images, ai)
   var start = sessionStart_(ctx, cls, date);
   var roster = roster_(ctx, cls.id);
   var res = screenshotStatuses(phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
-    { start: start, cfg: ctx.cfg, ai: ai });
+    { start: start, cfg: cfgForClass(ctx.cfg, cls), ai: ai });
   var entries = res.results.map(function (x) {
     return { student: x.student, status: x.status, leftEarly: x.leftEarly, source: 'Zoom screenshots', notes: x.note };
   });
@@ -416,7 +416,7 @@ function processScreenshotSession_(ctx, cls, date, phases, folderId, images, ai)
   var p = res.results.filter(function (x) { return x.status === STATUS.P; }).length;
   var t = res.results.filter(function (x) { return x.status === STATUS.T; }).length;
   var gone = res.results.filter(function (x) { return x.leftEarly; }).length;
-  var msg = images + ' screenshot(s), start ' + minToLabel(start) + ': ' + p + ' present, ' + t + ' tardy, ' + (roster.length - p - t) +
+  var msg = images + ' screenshot(s), start ' + minToLabel(start) + ': ' + p + ' present, ' + (isOnlineClass(cls) ? '' : t + ' tardy, ') + (roster.length - p - t) +
     ' absent of ' + roster.length + ' (' + gone + ' disconnected before the last screenshot). ' + c.kept + ' kept (manual/excused).';
   if (asked) msg += ' ' + asked + ' name(s) to confirm in Review; notices for this class wait until you answer.';
   return msg;
@@ -465,7 +465,7 @@ function handleFile_(ctx, fileName, rows, created, fileId) {
     var date = z.date || dateFromName_(fileName) || fmtDate_(created);
     var roster = roster_(ctx, pick.cls.id);
     var zstart = sessionStart_(ctx, pick.cls, date);
-    var res = zoomStatuses(z, roster, { start: zstart, end: pick.cls.end }, cfg);
+    var res = zoomStatuses(z, roster, { start: zstart, end: pick.cls.end }, cfgForClass(cfg, pick.cls));
     var entries = res.results.map(function (x) {
       return { student: x.student, status: x.status, minutesLate: x.minutesLate, leftEarly: x.leftEarly, source: 'Zoom',
         notes: 'Zoom ' + minToLabel(x.join) + '–' + minToLabel(x.leave) + (x.names.length ? ' as "' + x.names.join('", "') + '"' : '') };
@@ -505,7 +505,7 @@ function handleFile_(ctx, fileName, rows, created, fileId) {
     var st0 = sessionStart_(ctx, cls, r.date);
     var st = r.status, late = r.time != null ? Math.max(0, Math.floor(r.time - st0)) : '';
     // Populi gives the scan time: our 15 / 30 minute rule (from the real start) decides Present vs Tardy vs Absent.
-    if (r.time != null && st !== STATUS.A && st !== STATUS.E) st = classify(r.time - st0, cfg);
+    if (r.time != null && st !== STATUS.A && st !== STATUS.E) st = classify(r.time - st0, cfgForClass(cfg, cls));
     (byDate[r.date] || (byDate[r.date] = [])).push({ student: s, status: st, minutesLate: late, source: source });
   });
   var tot = { added: 0, updated: 0, kept: 0 }, dates = Object.keys(byDate).sort();
@@ -598,7 +598,10 @@ function applyEntries_(ctx, cls, date, entries) {
   t.rows.forEach(function (r, i) {
     idx[parseDateCell(t.get(r, 'Date'), yearOf_(ctx)) + '|' + t.get(r, 'Class ID') + '|' + t.get(r, 'Student ID')] = i;
   });
+  var online = isOnlineClass(cls);
   entries.forEach(function (e) {
+    // Online classes have no Tardy (Populi online: P and T are both "ticked" = Present).
+    if (online && e.status === STATUS.T) e.status = STATUS.P;
     // Not enrolled yet on that date: an absence is not counted (nothing to record).
     if (e.student.since && date < e.student.since && e.status === STATUS.A) return;
     var key = date + '|' + cls.id + '|' + e.student.id, row;
@@ -630,10 +633,16 @@ function applyEntries_(ctx, cls, date, entries) {
   return out;
 }
 
-/** "Left early = Yes" always means Absent. */
+/** "Left early = Yes" always means Absent. Online classes have no Tardy: an old Tardy there becomes Present. */
 function applyManualFlags_(ctx) {
-  var t = ctx.att;
+  var t = ctx.att, online = {};
+  (ctx.classes || []).forEach(function (c) { if (isOnlineClass(c)) online[c.id] = true; });
   t.rows.forEach(function (r) {
+    if (online[t.get(r, 'Class ID')] && normalizeStatus(t.get(r, 'Status')) === STATUS.T) {
+      t.set(r, 'Status', STATUS.P);
+      t.set(r, 'Notes', (t.get(r, 'Notes') ? t.get(r, 'Notes') + ' · ' : '') + 'Online class: no Tardy (arrived by minute 30 = Present)');
+      t.set(r, 'Updated', nowStr_());
+    }
     if (yes_(t.get(r, 'Left early')) && normalizeStatus(t.get(r, 'Status')) !== STATUS.A &&
         normalizeStatus(t.get(r, 'Status')) !== STATUS.E) {
       t.set(r, 'Status', STATUS.A);
@@ -1627,6 +1636,7 @@ function apiSetRecord(classId, date, studentId, change) {
     }
     t.set(r, 'Name', s.name);
     var note = function (txt) { var n = t.get(r, 'Notes'); t.set(r, 'Notes', (n ? n + ' · ' : '') + txt); };
+    if (change.status === STATUS.T && isOnlineClass(cls)) throw new Error('Online classes have no Tardy: mark Present (by minute 30) or Absent (minute 31 or later).');
     if (change.status !== undefined) {
       t.set(r, 'Status', change.status);
       if (change.status !== STATUS.A) t.set(r, 'Left early', '');

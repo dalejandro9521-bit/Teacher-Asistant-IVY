@@ -344,7 +344,7 @@ function readScreenshotText(text) {
  * Text read (OCR) from the screenshots of each moment → status per roster student. Diego's rules for Zoom:
  * - "present" shots (minutes 0–15), "tardy" shots (16–30), "end" shot (before he leaves, about 1 hour in).
  * - In present → Present, even if missing from the tardy shot, as long as the end shot confirms them.
- * - First seen in tardy → Tardy (if still there at the end).
+ * - First seen in tardy → Tardy (if still there at the end). Online classes (cfg.noTardy) have no Tardy: → Present.
  * - Seen earlier but not in the end shot → Absent (disconnected), with a note.
  * - Only in the end shot (joined after minute 30) or never seen → Absent.
  * - Chat: what the student typed (their name) and the message time say when they joined, measured from the
@@ -427,10 +427,11 @@ function screenshotStatuses(phases, roster, ignore, opts) {
     var r = { student: s, status: '', leftEarly: false, note: '' };
     var chat = s.id in chatAt ? ' (chat ' + minToLabel(chatAt[s.id]) + ')' : '';
     if (p || t) {
-      r.status = p ? STATUS.P : STATUS.T;
+      // Online classes have no Tardy: seen by the 31 minute screenshot = arrived in time = Present.
+      r.status = p || c.noTardy === true ? STATUS.P : STATUS.T;
       if (hasEnd && !e) {
         r.status = STATUS.A; r.leftEarly = true;
-        r.note = (p && t ? 'In the 15 and 31 minute screenshots' : p ? 'Only in the 15 minute screenshot' : 'Tardy (31 minute screenshot)') +
+        r.note = (p && t ? 'In the 15 and 31 minute screenshots' : p ? 'Only in the 15 minute screenshot' : c.noTardy === true ? 'First seen in the 31 minute screenshot' : 'Tardy (31 minute screenshot)') +
           chat + ', not in the last screenshot: disconnected before the 1-hour check';
       } else if (p && !t && e && hasTardy) r.note = 'Not in the 31 minute screenshot; confirmed in the last one' + chat;
       else if (chat) r.note = 'Name in chat' + chat;

@@ -6,16 +6,18 @@ Attendance automation for Diego, a Teacher Assistant (dgomez230@ivy.edu). Talk t
 ## The rules (do not change without Diego)
 - 10-week course, one session per class per week; each absence = 10%; minimum 80% → max 2 absences.
 - Minutes 0–15 Present, 16–30 Tardy, 31+ Absent. 3 tardies = 1 absence.
+- Online (Zoom) classes, HA 105 and SB 100, have NO Tardy (Diego, 2026-10-09): minutes 0–30 Present, 31+ Absent
+  (`cfgForClass` → `noTardy`; `applyEntries_` and `applyManualFlags_` turn any Tardy in a Zoom class into Present).
 - Checking in and leaving before the end → Absent.
 - More than 2 check-ins without ID → notify the office.
 - One email per absence/tardy: class, date and time, current and remaining absences, 80% minimum, medical excuse
   rules (to the TA or office, never the professor; student name + doctor/hospital phone; guardian/companion note;
   verified within a week). Reply-To is the TA's academic email.
 - Friday report per class: who missed this week and who is losing the course.
-- Zoom (Diego stays 1 hour): screenshots at 15 min (present), 31 min (tardy) and before leaving (the "Absent" folder).
+- Zoom (Diego stays 1 hour): screenshots at 15 min, 31 min (both → Present online) and before leaving (the "Absent" folder).
   Seen at 15 → Present even if missing at 31, if the last shot confirms. Seen earlier but not in the last shot →
   Absent with a note. Only in the last shot, or never → Absent. Populi online only has present/absent (P and T = ticked).
-- Chat: students type their name when they join; the message time (from the real start) says Present/Tardy/after 30.
+- Chat: students type their name when they join; the message time (from the real start) says Present (by minute 30) or after 30 (Absent).
   Chat never proves someone is still connected at the end (it stays on screen).
 - Real start per class and date: "Sessions → Actual start" or "start 7pm" in the folder name. All cut-offs move.
 - Names: exact or clearly similar (second name, Z/S, typos) → automatic; two possible students or weak → "Review"
@@ -40,7 +42,7 @@ Prefer telling Diego to drop the week folder ("HA 105 - Week 01 - 10.05.26" / "1
 in TA Inbox. If he still sends screenshots here, ask for the participant list cropped to the names (fewer tokens). Then:
 1. Read every name; drop Diego (TA) and the professor. Compare the count with Zoom's total minus 2.
 2. Match names to that class's roster (Students sheet / Grid, Populi order). List names you can't match; don't guess.
-3. In the 6:15 shot → Present; only from 6:31 → Tardy; in neither → leave out (the import marks them Absent);
+3. In the 6:15 or 6:31 shot → Present (online classes have no Tardy); in neither → leave out (the import marks them Absent);
    in an earlier shot but not the last one → Absent with note "left before the end".
 4. Write `Zoom screenshots YYYY-MM-DD [C#].csv` with header `Student,Date,Status,Notes` (names exactly as on the
    roster) and put it in the Drive "TA Inbox" folder (Google Drive connector) or hand it to Diego. Never commit it.

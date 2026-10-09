@@ -19,7 +19,8 @@ var DEFAULTS = {
   minAttendancePct: 80,
   noIdLimit: 2,            // more than this many check-ins without ID → notify the office
   earlyLeaveGraceMin: 5,   // Zoom: leaving within this many minutes of the end is not "left early"
-  excuseReviewDays: 7      // the office verifies medical excuses within one week
+  excuseReviewDays: 7,     // the office verifies medical excuses within one week
+  noTardy: false           // online (Zoom) classes: only Present (minutes 0-30) or Absent (31 or later)
 };
 
 var STATUS = { P: 'Present', T: 'Tardy', A: 'Absent', E: 'Excused' };
@@ -49,9 +50,24 @@ function minToLabel(min) {
   return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
 }
 
-/** Status from how many minutes after the start the student arrived. 9:15:40 counts as minute 15 → Present. */
+/** Online (Zoom) classes have no Tardy: Present until minute 30, Absent from minute 31. */
+function isOnlineClass(cls) { return !!cls && /zoom/i.test(String(cls.mode || '')); }
+
+/** The rules for one class: the Config values, plus noTardy for an online class. */
+function cfgForClass(cfg, cls) {
+  var out = {};
+  for (var k in (cfg || {})) out[k] = cfg[k];
+  out.noTardy = isOnlineClass(cls);
+  return out;
+}
+
+/**
+ * Status from how many minutes after the start the student arrived. 9:15:40 counts as minute 15 → Present.
+ * Online classes (cfg.noTardy): minutes 0-30 → Present, 31 or later → Absent.
+ */
 function classify(minutesAfterStart, cfg) {
   var c = rulesConfig_(cfg), m = Math.floor(minutesAfterStart);
+  if (c.noTardy === true || c.noTardy === 'true') return m <= c.tardyUntilMin ? STATUS.P : STATUS.A;
   if (m <= c.presentUntilMin) return STATUS.P;
   if (m <= c.tardyUntilMin) return STATUS.T;
   return STATUS.A;
@@ -694,7 +710,7 @@ function readScreenshotText(text) {
  * Text read (OCR) from the screenshots of each moment → status per roster student. Diego's rules for Zoom:
  * - "present" shots (minutes 0–15), "tardy" shots (16–30), "end" shot (before he leaves, about 1 hour in).
  * - In present → Present, even if missing from the tardy shot, as long as the end shot confirms them.
- * - First seen in tardy → Tardy (if still there at the end).
+ * - First seen in tardy → Tardy (if still there at the end). Online classes (cfg.noTardy) have no Tardy: → Present.
  * - Seen earlier but not in the end shot → Absent (disconnected), with a note.
  * - Only in the end shot (joined after minute 30) or never seen → Absent.
  * - Chat: what the student typed (their name) and the message time say when they joined, measured from the
@@ -777,10 +793,11 @@ function screenshotStatuses(phases, roster, ignore, opts) {
     var r = { student: s, status: '', leftEarly: false, note: '' };
     var chat = s.id in chatAt ? ' (chat ' + minToLabel(chatAt[s.id]) + ')' : '';
     if (p || t) {
-      r.status = p ? STATUS.P : STATUS.T;
+      // Online classes have no Tardy: seen by the 31 minute screenshot = arrived in time = Present.
+      r.status = p || c.noTardy === true ? STATUS.P : STATUS.T;
       if (hasEnd && !e) {
         r.status = STATUS.A; r.leftEarly = true;
-        r.note = (p && t ? 'In the 15 and 31 minute screenshots' : p ? 'Only in the 15 minute screenshot' : 'Tardy (31 minute screenshot)') +
+        r.note = (p && t ? 'In the 15 and 31 minute screenshots' : p ? 'Only in the 15 minute screenshot' : c.noTardy === true ? 'First seen in the 31 minute screenshot' : 'Tardy (31 minute screenshot)') +
           chat + ', not in the last screenshot: disconnected before the 1-hour check';
       } else if (p && !t && e && hasTardy) r.note = 'Not in the 31 minute screenshot; confirmed in the last one' + chat;
       else if (chat) r.note = 'Name in chat' + chat;
@@ -987,11 +1004,11 @@ function summaryLines_(t, cfg) {
     '• Current absences: ' + t.effective + ' of ' + c.maxAbsences + ' allowed' +
       (t.tardyAbsences ? ' (' + t.absences + ' absence' + (t.absences === 1 ? '' : 's') + ' + ' + t.tardyAbsences + ' from tardies)' : ''),
     '• Absences remaining: ' + Math.max(0, t.remaining),
-    '• Tardies: ' + t.tardies + ' (every ' + c.tardiesPerAbsence + ' tardies count as 1 absence)',
+    c.noTardy === true && !t.tardies ? '' : '• Tardies: ' + t.tardies + ' (every ' + c.tardiesPerAbsence + ' tardies count as 1 absence)',
     '• Current attendance: ' + t.pct + '% (minimum required: ' + c.minAttendancePct + '%)'
   ];
   if (t.excused) lines.push('• Excused: ' + t.excused);
-  return lines.join('\n');
+  return lines.filter(String).join('\n');
 }
 
 function standingSentence_(t, cfg) {
@@ -1000,6 +1017,7 @@ function standingSentence_(t, cfg) {
     return 'You now have more than ' + c.maxAbsences + ' absences, so your attendance is below the ' + c.minAttendancePct +
       '% required to pass this course. Please contact me or the office as soon as possible.';
   }
+  if (t.state === 'at-limit' && c.noTardy === true) return 'You have no absences left. One more absence will put you below ' + c.minAttendancePct + '%.';
   if (t.state === 'at-limit') return 'You have no absences left. One more absence (or ' + (c.tardiesPerAbsence - t.tardies % c.tardiesPerAbsence) + ' more tard' + ((c.tardiesPerAbsence - t.tardies % c.tardiesPerAbsence) === 1 ? 'y' : 'ies') + ') will put you below ' + c.minAttendancePct + '%.';
   return 'You need at least ' + c.minAttendancePct + '% attendance to pass. Over the ' + c.totalSessions + '-week course, that means no more than ' + c.maxAbsences + ' absences.';
 }
@@ -1010,7 +1028,7 @@ function standingSentence_(t, cfg) {
  * p: {kind, student:{name,email}, cls:{course,section,start,end,mode}, date, tally, cfg, minutesLate}
  */
 function buildStudentNotice(p) {
-  var cfg = p.cfg || {}, c = rulesConfig_(cfg), s = p.student, cls = p.cls, t = p.tally;
+  var cfg = cfgForClass(p.cfg, p.cls), c = rulesConfig_(cfg), s = p.student, cls = p.cls, t = p.tally;
   var when = longDate(p.date) + ', ' + classTime(cls);
   var first = String(s.name || '').split(/\s+/)[0] || 'student';
   var what, subjectWord;
@@ -1027,7 +1045,10 @@ function buildStudentNotice(p) {
       'Leaving before the time set by the professor changes your attendance from Present to Absent.';
   } else {
     subjectWord = 'Absence';
-    what = 'You were marked ABSENT for ' + classLabel(cls) + ' on ' + when + '.';
+    what = 'You were marked ABSENT for ' + classLabel(cls) + ' on ' + when + '.' +
+      (c.noTardy === true && p.minutesLate > c.tardyUntilMin ? ' You joined ' + p.minutesLate + ' minutes after the start of class.' : '') +
+      (c.noTardy === true ? '\n\nIn online classes there is no tardy: students who join in the first ' + c.tardyUntilMin +
+        ' minutes are present, and from minute ' + (c.tardyUntilMin + 1) + ' on they are absent.' : '');
   }
   var text = 'Dear ' + first + ',\n\n' + what + '\n\n' +
     'Your attendance in this course:\n' + summaryLines_(t, cfg) + '\n\n' +
@@ -1048,7 +1069,7 @@ function buildStudentNotice(p) {
  * p: {level, student:{name} (empty name → "Dear student,"), cls, tally, cfg, dates: ['yyyy-mm-dd' of absences/tardies]}
  */
 function buildStandingNotice(p) {
-  var cfg = p.cfg || {}, c = rulesConfig_(cfg), t = p.tally, cls = p.cls;
+  var cfg = cfgForClass(p.cfg, p.cls), c = rulesConfig_(cfg), t = p.tally, cls = p.cls;
   var first = String((p.student || {}).name || '').split(/\s+/)[0];
   var course = String(cls.course || '').split(':')[0].trim() || classLabel(cls);
   var section = cls.section || ((DAY_NAMES[dayIndex(cls.day)] || cls.day || '') + ' ' + classTime(cls)).trim();
@@ -1342,7 +1363,7 @@ function weeklyOverview_(p, totals, c, th, td) {
     }
     text.push('');
   }
-  html.push('<p style="margin:14px 0 0;color:#777;font-size:12px">Rules: ' + c.tardiesPerAbsence + ' tardies = 1 absence · each absence = ' + Math.round(100 / c.totalSessions) +
+  html.push('<p style="margin:14px 0 0;color:#777;font-size:12px">Rules: ' + c.tardiesPerAbsence + ' tardies = 1 absence (in person) · online classes: no tardy, absent from minute ' + (c.tardyUntilMin + 1) + ' · each absence = ' + Math.round(100 / c.totalSessions) +
     '% · minimum ' + c.minAttendancePct + '% (more than ' + c.maxAbsences + ' absences loses the course).</p>');
   return { html: html.join(''), text: text };
 }
@@ -1416,6 +1437,7 @@ function mailSystemPrompt(cfg) {
     'Students need at least ' + c.minAttendancePct + '%, so at most ' + c.maxAbsences + ' absences.\n' +
     '- Minutes 0-' + c.presentUntilMin + ' after the start: Present. Minutes ' + (c.presentUntilMin + 1) + '-' + c.tardyUntilMin +
     ': Tardy. Later: Absent. Every ' + c.tardiesPerAbsence + ' tardies count as 1 absence. Checking in and leaving before the end counts as Absent.\n' +
+    '- Online (Zoom) classes have no Tardy: minutes 0-' + c.tardyUntilMin + ' Present, minute ' + (c.tardyUntilMin + 1) + ' or later Absent.\n' +
     '- ' + medicalExcuseText_(cfg).replace(/\n+/g, ' ') + '\n\n' +
     'How to reply:\n' +
     '- Warm, brief and professional. Use the student\'s first name. Reply in the language the student wrote in.\n' +
@@ -1878,7 +1900,7 @@ function processScreenshotSession_(ctx, cls, date, phases, folderId, images, ai)
   var start = sessionStart_(ctx, cls, date);
   var roster = roster_(ctx, cls.id);
   var res = screenshotStatuses(phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
-    { start: start, cfg: ctx.cfg, ai: ai });
+    { start: start, cfg: cfgForClass(ctx.cfg, cls), ai: ai });
   var entries = res.results.map(function (x) {
     return { student: x.student, status: x.status, leftEarly: x.leftEarly, source: 'Zoom screenshots', notes: x.note };
   });
@@ -1893,7 +1915,7 @@ function processScreenshotSession_(ctx, cls, date, phases, folderId, images, ai)
   var p = res.results.filter(function (x) { return x.status === STATUS.P; }).length;
   var t = res.results.filter(function (x) { return x.status === STATUS.T; }).length;
   var gone = res.results.filter(function (x) { return x.leftEarly; }).length;
-  var msg = images + ' screenshot(s), start ' + minToLabel(start) + ': ' + p + ' present, ' + t + ' tardy, ' + (roster.length - p - t) +
+  var msg = images + ' screenshot(s), start ' + minToLabel(start) + ': ' + p + ' present, ' + (isOnlineClass(cls) ? '' : t + ' tardy, ') + (roster.length - p - t) +
     ' absent of ' + roster.length + ' (' + gone + ' disconnected before the last screenshot). ' + c.kept + ' kept (manual/excused).';
   if (asked) msg += ' ' + asked + ' name(s) to confirm in Review; notices for this class wait until you answer.';
   return msg;
@@ -1942,7 +1964,7 @@ function handleFile_(ctx, fileName, rows, created, fileId) {
     var date = z.date || dateFromName_(fileName) || fmtDate_(created);
     var roster = roster_(ctx, pick.cls.id);
     var zstart = sessionStart_(ctx, pick.cls, date);
-    var res = zoomStatuses(z, roster, { start: zstart, end: pick.cls.end }, cfg);
+    var res = zoomStatuses(z, roster, { start: zstart, end: pick.cls.end }, cfgForClass(cfg, pick.cls));
     var entries = res.results.map(function (x) {
       return { student: x.student, status: x.status, minutesLate: x.minutesLate, leftEarly: x.leftEarly, source: 'Zoom',
         notes: 'Zoom ' + minToLabel(x.join) + '–' + minToLabel(x.leave) + (x.names.length ? ' as "' + x.names.join('", "') + '"' : '') };
@@ -1982,7 +2004,7 @@ function handleFile_(ctx, fileName, rows, created, fileId) {
     var st0 = sessionStart_(ctx, cls, r.date);
     var st = r.status, late = r.time != null ? Math.max(0, Math.floor(r.time - st0)) : '';
     // Populi gives the scan time: our 15 / 30 minute rule (from the real start) decides Present vs Tardy vs Absent.
-    if (r.time != null && st !== STATUS.A && st !== STATUS.E) st = classify(r.time - st0, cfg);
+    if (r.time != null && st !== STATUS.A && st !== STATUS.E) st = classify(r.time - st0, cfgForClass(cfg, cls));
     (byDate[r.date] || (byDate[r.date] = [])).push({ student: s, status: st, minutesLate: late, source: source });
   });
   var tot = { added: 0, updated: 0, kept: 0 }, dates = Object.keys(byDate).sort();
@@ -2075,7 +2097,10 @@ function applyEntries_(ctx, cls, date, entries) {
   t.rows.forEach(function (r, i) {
     idx[parseDateCell(t.get(r, 'Date'), yearOf_(ctx)) + '|' + t.get(r, 'Class ID') + '|' + t.get(r, 'Student ID')] = i;
   });
+  var online = isOnlineClass(cls);
   entries.forEach(function (e) {
+    // Online classes have no Tardy (Populi online: P and T are both "ticked" = Present).
+    if (online && e.status === STATUS.T) e.status = STATUS.P;
     // Not enrolled yet on that date: an absence is not counted (nothing to record).
     if (e.student.since && date < e.student.since && e.status === STATUS.A) return;
     var key = date + '|' + cls.id + '|' + e.student.id, row;
@@ -2107,10 +2132,16 @@ function applyEntries_(ctx, cls, date, entries) {
   return out;
 }
 
-/** "Left early = Yes" always means Absent. */
+/** "Left early = Yes" always means Absent. Online classes have no Tardy: an old Tardy there becomes Present. */
 function applyManualFlags_(ctx) {
-  var t = ctx.att;
+  var t = ctx.att, online = {};
+  (ctx.classes || []).forEach(function (c) { if (isOnlineClass(c)) online[c.id] = true; });
   t.rows.forEach(function (r) {
+    if (online[t.get(r, 'Class ID')] && normalizeStatus(t.get(r, 'Status')) === STATUS.T) {
+      t.set(r, 'Status', STATUS.P);
+      t.set(r, 'Notes', (t.get(r, 'Notes') ? t.get(r, 'Notes') + ' · ' : '') + 'Online class: no Tardy (arrived by minute 30 = Present)');
+      t.set(r, 'Updated', nowStr_());
+    }
     if (yes_(t.get(r, 'Left early')) && normalizeStatus(t.get(r, 'Status')) !== STATUS.A &&
         normalizeStatus(t.get(r, 'Status')) !== STATUS.E) {
       t.set(r, 'Status', STATUS.A);
@@ -3104,6 +3135,7 @@ function apiSetRecord(classId, date, studentId, change) {
     }
     t.set(r, 'Name', s.name);
     var note = function (txt) { var n = t.get(r, 'Notes'); t.set(r, 'Notes', (n ? n + ' · ' : '') + txt); };
+    if (change.status === STATUS.T && isOnlineClass(cls)) throw new Error('Online classes have no Tardy: mark Present (by minute 30) or Absent (minute 31 or later).');
     if (change.status !== undefined) {
       t.set(r, 'Status', change.status);
       if (change.status !== STATUS.A) t.set(r, 'Left early', '');

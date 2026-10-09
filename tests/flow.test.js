@@ -114,7 +114,7 @@ test('Zoom report: class by meeting ID, left early, not seen, unmatched names', 
   env.setNow('2026-10-05T23:30:00Z');
   env.gas.tick();
   assert.equal(env.row('2026-10-05', 'C3', '1001').Status, 'Present');
-  assert.equal(env.row('2026-10-05', 'C3', '1002').Status, 'Tardy');
+  assert.equal(env.row('2026-10-05', 'C3', '1002').Status, 'Present');   // minute 25: online classes have no Tardy
   const carla = env.row('2026-10-05', 'C3', '1003');
   assert.equal(carla.Status, 'Absent');
   assert.equal(carla['Left early'], 'Yes');
@@ -124,7 +124,7 @@ test('Zoom report: class by meeting ID, left early, not seen, unmatched names', 
   const carlaMail = env.mail.drafts.find(d => d.to === 'carla@ivy.edu');
   assert.match(carlaMail.subject, /left early/);
   assert.match(carlaMail.body, /left before the end of class/);
-  assert.equal(env.mail.drafts.length, 3);
+  assert.equal(env.mail.drafts.length, 2);           // Brian (minute 25) is Present online: no tardy notice
 });
 
 test('manual edits win over re-imports; accepted excuses stop counting', () => {
@@ -290,11 +290,11 @@ test('screenshots list → attendance; POPULI follow-ups group students with the
   env.gas.tick();
   assert.equal(env.row('2026-10-05', 'C3', 'Quinn Alder').Status, 'Absent');       // not in any screenshot
   assert.equal(env.row('2026-10-05', 'C3', 'Quinn Alder').Source, 'Zoom screenshots (not in file)');
-  assert.equal(env.row('2026-10-05', 'C3', 'Teo Arce').Status, 'Tardy');
+  assert.equal(env.row('2026-10-05', 'C3', 'Teo Arce').Status, 'Present');  // online class: a Tardy in the list counts as Present
   // no Gmail at all in POPULI mode
   assert.equal(env.mail.drafts.length + env.mail.sent.length, 0);
   const fu = env.sheet('Follow-ups').objects();
-  assert.equal(fu.length, 2);                       // 2 absents with the same numbers share one email + 1 tardy
+  assert.equal(fu.length, 1);                       // 2 absents with the same numbers share one email; no tardy online
   const abs = fu.find(f => f.Type === 'Student Absent');
   assert.equal(abs['Roster #'], '3, 4');
   assert.equal(abs.Students, 'Quinn Alder, Moe Allen');
@@ -303,10 +303,10 @@ test('screenshots list → attendance; POPULI follow-ups group students with the
   assert.match(abs.Message, /HA 103: History of World Religions.*6:00 PM – 7:00 PM/);
   assert.match(abs.Message, /Absences remaining: 1/);
   assert.match(abs['Visibility (check in Populi)'], /Academic Auditor/);
-  assert.equal(fu.find(f => f.Type === 'Student Tardy').Students, 'Teo Arce');
+  assert.ok(!fu.some(f => f.Type === 'Student Tardy'));
   assert.match(env.row('2026-10-05', 'C3', 'Quinn Alder').Notified, /POPULI$/);
   env.gas.tick();
-  assert.equal(env.sheet('Follow-ups').objects().length, 2); // not repeated
+  assert.equal(env.sheet('Follow-ups').objects().length, 1); // not repeated
 });
 
 test('weekly grid per class: Populi order, one column per week, totals', () => {
@@ -321,7 +321,7 @@ test('weekly grid per class: Populi order, one column per week, totals', () => {
   assert.deepEqual(g.slice(1).map(r => r.slice(0, 4)), [
     ['1', 'Mara Alba', 'P', 'P'],
     ['2', 'Teo Arce', 'P', 'A'],
-    ['3', 'Quinn Alder', 'T', 'T'],
+    ['3', 'Quinn Alder', 'P', 'P'],   // online class: no Tardy
     ['4', 'Moe Allen', 'P', 'P']
   ]);
   assert.deepEqual(g[2].slice(4), ['1', '0', '1', '1', '90%', '1 absence left']);
@@ -369,20 +369,20 @@ test('screenshot folder in TA Inbox → OCR → attendance, aliases remembered, 
   assert.ok(env.inbox().folders.find(f => f.name === 'Processed').folders.some(f => f.name.startsWith('1. HA 105')));
   const status = n => env.row('2026-10-05', 'C3', n).Status + (env.row('2026-10-05', 'C3', n)['Left early'] ? ' (left)' : '');
   assert.equal(status('Mara Alba'), 'Present');
-  assert.equal(status('Teo Arce'), 'Tardy');
+  assert.equal(status('Teo Arce'), 'Present');   // first seen at 31 min: online classes have no Tardy
   assert.equal(status('Quinn Alder'), 'Absent (left)');
   assert.equal(status('Moe Allen'), 'Absent');
   assert.equal(status('Zed Withdrawn'), 'Absent');
   const log = env.sheet('Inbox log').objects().at(-1);
   assert.equal(log.Kind, 'screenshots');
   assert.equal(log.Dates, '2026-10-05');
-  assert.match(log.Result, /3 screenshot\(s\), start 6:00 PM: 1 present, 1 tardy, 3 absent of 5/);
+  assert.match(log.Result, /3 screenshot\(s\), start 6:00 PM: 2 present, 3 absent of 5/);
   assert.match(log.Result, /1 name\(s\) to confirm in Review/);
   assert.equal(env.sheet('Review').objects()[0]['Name seen'], 'Unknown Person');
   assert.doesNotMatch(log.Result, /Sam Prof/);
   // Grid ready to tick Populi's participation boxes in the same order
   assert.deepEqual(env.sheet('Grid C3').data.slice(1).map(r => r.slice(0, 3)), [
-    ['1', 'Mara Alba', 'P'], ['2', 'Teo Arce', 'T'], ['3', 'Quinn Alder', 'A (left)'],
+    ['1', 'Mara Alba', 'P'], ['2', 'Teo Arce', 'P'], ['3', 'Quinn Alder', 'A (left)'],
     ['4', 'Moe Allen', 'A'], ['5', 'Zed Withdrawn', 'A']
   ]);
 });
@@ -410,7 +410,7 @@ test('late start, a question in Review, notices on hold until answered, start ed
   const sess = () => env.sheet('Sessions').objects().find(r => r['Class ID'] === 'C3' && r.Date === '2026-10-12');
   assert.equal(sess()['Actual start'], '7:00 PM');                 // from "start 7pm" in the folder name
   assert.equal(row('13').Status, 'Present');                       // chat 7:04 → minute 4 from 7:00
-  assert.equal(row('14').Status, 'Tardy');                         // chat 7:22 → minute 22
+  assert.equal(row('14').Status, 'Present');                       // chat 7:22 → minute 22 (online: no Tardy)
   assert.equal(row('11').Status, 'Present');
   // "Malek" in chat and "malek b iphone" could be Malek Bay → asked, not guessed
   const q = env.sheet('Review').objects();
@@ -733,9 +733,10 @@ test('screenshots dropped in the dashboard: upload → OCR → analysis, clear o
   env.gas.apiUploadShot('C3', '2026-10-05', 'end', 'shot3.jpg', 'image/jpeg', b64('Beto Dos'));
   assert.equal(env.ocr.calls, 3);
   const an = env.gas.apiAnalyzeSession('C3', '2026-10-05');
-  assert.match(an.msg, /3 screenshot\(s\).*1 tardy/);
+  assert.match(an.msg, /3 screenshot\(s\).*1 present, 2 absent/);
+  assert.doesNotMatch(an.msg, /tardy/);
   assert.equal(env.row('2026-10-05', 'C3', '11').Status, 'Absent');        // not in the last screenshot
-  assert.equal(env.row('2026-10-05', 'C3', '12').Status, 'Tardy');
+  assert.equal(env.row('2026-10-05', 'C3', '12').Status, 'Present');      // first seen at 31 min (online: no Tardy)
   assert.equal(env.row('2026-10-05', 'C3', '13').Status, 'Absent');
   const se = j(env.gas.apiSession('C3', '2026-10-05'));
   assert.deepEqual(se.shots, { present: 1, tardy: 1, end: 1 });
@@ -898,7 +899,7 @@ test('with a Claude API key, screenshots are read by AI: sure matches count, dou
   env.gas.apiUploadShot('C3', '2026-10-05', 'end', 's3.jpg', 'image/jpeg', b64('###'));
   env.gas.apiAnalyzeSession('C3', '2026-10-05');
   assert.equal(env.row('2026-10-05', 'C3', '11').Status, 'Present');
-  assert.equal(env.row('2026-10-05', 'C3', '12').Status, 'Tardy');
+  assert.equal(env.row('2026-10-05', 'C3', '12').Status, 'Present');
   const qs = j(env.gas.apiQuestions());
   assert.ok(JSON.stringify(qs).includes('Caro T'), 'the unsure name is asked about');
 
@@ -1157,10 +1158,10 @@ test('Speed: batch upload without the lock, one job for all, results applied by 
   // Snapshot: reused while nothing changed, rebuilt after an edit
   const s1 = j(env.gas.apiAll()), s2 = j(env.gas.apiAll());
   assert.equal(s1.builtAt, s2.builtAt);
-  env.gas.apiSetRecord('C3', '2026-10-05', '1002', { status: 'Tardy' });
+  env.gas.apiSetRecord('C3', '2026-10-05', '1002', { status: 'Absent' });
   const s3 = j(env.gas.apiAll());
   assert.notEqual(s3.gen, s1.gen);
-  assert.equal(s3.classes.C3.students.find(s => s.id === '1002').weeks[0].s, 'T');
+  assert.equal(s3.classes.C3.students.find(s => s.id === '1002').weeks[0].s, 'A');
   env.gas.tick(); // the 15-minute job leaves a ready snapshot in Drive too
   const proc = env.inbox().folders.find(x => x.name === 'Processed');
   assert.ok(proc.files.some(x => x.name === 'dashboard-snapshot.json'));
@@ -1216,4 +1217,30 @@ test('Roster from the dashboard: Populi CSV or pasted names, wrong-class guard, 
   const log = env.sheet('Roster changes').objects().map(x => x.Name + ': ' + x.Change);
   assert.deepEqual(log, ['Gina Hall: Added to the roster', 'Frank Ocean: No longer on the roster (inactive)',
     'Hugo Ruiz: Added to the roster (#7, from 2026-10-12)', 'Hugo Ruiz: Removed from the roster (inactive)']);
+});
+
+test('online classes: an old Tardy becomes Present, Tardy cannot be set by hand, minute 31 in the Zoom report is Absent', () => {
+  const env = setupTerm();
+  env.inbox().addFile('participants_81234567890.csv', [
+    'Meeting ID,Topic,Start Time',
+    '81234567890,BIO 101,10/05/2026 05:55:00 PM',
+    '',
+    'Name (Original Name),User Email,Join Time,Leave Time,Duration (Minutes),Guest',
+    'Ana Maria Lopez,,10/05/2026 06:30:00 PM,10/05/2026 07:00:00 PM,30,Yes',
+    'Brian Smith,,10/05/2026 06:31:00 PM,10/05/2026 07:00:00 PM,29,Yes'
+  ].join('\n'));
+  env.setNow('2026-10-05T23:30:00Z');
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C3', '1001').Status, 'Present');   // minute 30
+  assert.equal(env.row('2026-10-05', 'C3', '1002').Status, 'Absent');    // minute 31
+  // A Tardy saved before the rule changed turns into Present on the next run
+  const sh = env.sheet('Attendance'), h = sh.data[0];
+  const i = sh.data.findIndex(r => r[h.indexOf('Class ID')] === 'C3' && r[h.indexOf('Student ID')] === '1001');
+  sh.data[i][h.indexOf('Status')] = 'Tardy';
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C3', '1001').Status, 'Present');
+  assert.match(env.row('2026-10-05', 'C3', '1001').Notes, /Online class: no Tardy/);
+  assert.throws(() => env.gas.apiSetRecord('C3', '2026-10-05', '1001', { status: 'Tardy' }), /Online classes have no Tardy/);
+  env.gas.apiSetRecord('C3', '2026-10-05', '1001', { status: 'Absent' });
+  assert.equal(env.row('2026-10-05', 'C3', '1001').Status, 'Absent');
 });

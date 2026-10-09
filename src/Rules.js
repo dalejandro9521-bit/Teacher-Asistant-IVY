@@ -12,7 +12,8 @@ var DEFAULTS = {
   minAttendancePct: 80,
   noIdLimit: 2,            // more than this many check-ins without ID → notify the office
   earlyLeaveGraceMin: 5,   // Zoom: leaving within this many minutes of the end is not "left early"
-  excuseReviewDays: 7      // the office verifies medical excuses within one week
+  excuseReviewDays: 7,     // the office verifies medical excuses within one week
+  noTardy: false           // online (Zoom) classes: only Present (minutes 0-30) or Absent (31 or later)
 };
 
 var STATUS = { P: 'Present', T: 'Tardy', A: 'Absent', E: 'Excused' };
@@ -42,9 +43,24 @@ function minToLabel(min) {
   return h12 + ':' + (m < 10 ? '0' : '') + m + ' ' + ap;
 }
 
-/** Status from how many minutes after the start the student arrived. 9:15:40 counts as minute 15 → Present. */
+/** Online (Zoom) classes have no Tardy: Present until minute 30, Absent from minute 31. */
+function isOnlineClass(cls) { return !!cls && /zoom/i.test(String(cls.mode || '')); }
+
+/** The rules for one class: the Config values, plus noTardy for an online class. */
+function cfgForClass(cfg, cls) {
+  var out = {};
+  for (var k in (cfg || {})) out[k] = cfg[k];
+  out.noTardy = isOnlineClass(cls);
+  return out;
+}
+
+/**
+ * Status from how many minutes after the start the student arrived. 9:15:40 counts as minute 15 → Present.
+ * Online classes (cfg.noTardy): minutes 0-30 → Present, 31 or later → Absent.
+ */
 function classify(minutesAfterStart, cfg) {
   var c = rulesConfig_(cfg), m = Math.floor(minutesAfterStart);
+  if (c.noTardy === true || c.noTardy === 'true') return m <= c.tardyUntilMin ? STATUS.P : STATUS.A;
   if (m <= c.presentUntilMin) return STATUS.P;
   if (m <= c.tardyUntilMin) return STATUS.T;
   return STATUS.A;
