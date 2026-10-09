@@ -1695,8 +1695,10 @@ function tick() {
  * What a click in the dashboard needs: answers, re-runs, notices. Fast: no Drive inbox listing and no rewriting of the
  * Grid/Summary sheets (the 15-minute job refreshes those).
  */
-function runLight_(ctx) {
-  var reruns = rerunSessions_(ctx, answerQuestions_(ctx));
+function runLight_(ctx, extraReruns) {
+  var rerun = answerQuestions_(ctx);
+  for (var k in (extraReruns || {})) rerun[k] = true;
+  var reruns = rerunSessions_(ctx, rerun);
   applyManualFlags_(ctx);
   save_(ctx.att); save_(ctx.studentsT); save_(ctx.sessT); save_(ctx.revT);
   var sent = sendPendingNotices_(ctx);
@@ -2523,6 +2525,59 @@ function apiRemoveStudent(classId, studentId) {
     rosterChange_(cls, s.id, s.name, 'Removed from the roster (inactive)', 'By hand in the dashboard');
   });
   return true;
+}
+
+/**
+ * Edit a student's name and the other names they use (Zoom names). A new name keeps the old one as a Zoom name, so
+ * old screenshots and Populi files still match. The same Populi ID in other classes gets the same change, and every
+ * class with screenshots is read again from its saved text, so the new names count at once (manual rows are kept).
+ * change: {name?, aliases?: [names]}. Returns {name, aliases, classes, reruns}.
+ */
+function apiSetStudentNames(classId, studentId, change) {
+  change = change || {};
+  var out;
+  withLock_(function () {
+    var ctx = load_(), t = ctx.studentsT, cls = classById_(ctx, classId);
+    var s = ctx.students.filter(function (x) { return x.classId === classId && x.id === studentId; })[0];
+    if (!cls || !s) throw new Error('Student not found');
+    var newName = String(change.name == null ? s.name : change.name).replace(/\s+/g, ' ').trim();
+    if (!newName) throw new Error('The name cannot be empty');
+    var renamed = newName !== s.name;
+    var list = (change.aliases == null ? s.aliases : change.aliases).map(function (a) { return String(a || '').replace(/\s+/g, ' ').trim(); });
+    if (renamed) list.push(s.name);
+    var seen = {}, aliases = [];
+    list.forEach(function (a) {
+      var k = normalizeName(a);
+      if (!a || !k || k === normalizeName(newName) || seen[k]) return;
+      seen[k] = true; aliases.push(a);
+    });
+    // The same person in other classes (same Populi ID; hand-added students only in this class).
+    var same = ctx.students.filter(function (x) { return x.id === s.id && (x.classId === classId || !/^new-/.test(s.id)); });
+    var classes = {}, rerun = {};
+    same.forEach(function (x) {
+      var row = t.rows[x.row], c = classById_(ctx, x.classId);
+      t.set(row, 'Name', newName);
+      t.set(row, 'Zoom names', aliases.join('; '));
+      classes[x.classId] = true;
+      if (c && (renamed || x.aliases.join('; ') !== aliases.join('; '))) {
+        rosterChange_(c, x.id, newName, renamed ? 'Name changed from "' + s.name + '"' : 'Zoom names: ' + (aliases.join('; ') || '(none)'), 'By hand in the dashboard');
+      }
+    });
+    if (renamed) {
+      ctx.att.rows.forEach(function (r) { if (ctx.att.get(r, 'Student ID') === s.id && classes[ctx.att.get(r, 'Class ID')]) ctx.att.set(r, 'Name', newName); });
+    }
+    ctx.students = studentsFrom_(t);
+    var y = yearOf_(ctx);
+    ctx.sessT.rows.forEach(function (r) {
+      if (classes[ctx.sessT.get(r, 'Class ID')] && ctx.sessT.get(r, 'Source') === 'Zoom screenshots') {
+        rerun[sessionKey_(ctx.sessT.get(r, 'Class ID'), parseDateCell(ctx.sessT.get(r, 'Date'), y))] = true;
+      }
+    });
+    save_(t); save_(ctx.att);
+    var res = runLight_(ctx, rerun);
+    out = { name: newName, aliases: aliases, classes: Object.keys(classes), reruns: res.reruns };
+  });
+  return out;
 }
 
 function addLateStudent_(ctx, cls, name, since, how) {

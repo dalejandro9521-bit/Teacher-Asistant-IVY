@@ -62,6 +62,8 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
   prefetches classes, and edits are optimistic.
 - Screenshots can be dropped in the dashboard (`apiUploadShot` → OCR → `ocr.json` in the class folder under
   TA Inbox/Processed, then `apiAnalyzeSession`); `apiClearShots` removes one moment.
+- Student names: `apiSetStudentNames` (student page → Edit name / Zoom names) renames (old name kept as a Zoom name),
+  sets Zoom names for the same Populi ID in every class, logs to Roster changes and re-reads those classes' screenshots.
 - `table_()` adds missing columns from `SHEETS` on its own (and creates a missing sheet), so updates don't need "Set up" again.
 - AI: `aiJson_` calls the Claude Messages API with UrlFetchApp (no SDK in Apps Script): structured output (`output_config.format`),
   model from Config (`claude-opus-5-5`), key in script properties `ANTHROPIC_API_KEY` (menu "Set Claude API key"), never in the sheet.

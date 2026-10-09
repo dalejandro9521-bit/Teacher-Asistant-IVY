@@ -1244,3 +1244,27 @@ test('online classes: an old Tardy becomes Present, Tardy cannot be set by hand,
   env.gas.apiSetRecord('C3', '2026-10-05', '1001', { status: 'Absent' });
   assert.equal(env.row('2026-10-05', 'C3', '1001').Status, 'Absent');
 });
+
+test('student names from the dashboard: new last name keeps the old one, Zoom names match, screenshots re-read', () => {
+  const env = setupTerm();
+  const j = x => JSON.parse(JSON.stringify(x));
+  const b64 = s => Buffer.from(s).toString('base64');
+  env.setNow('2026-10-06T03:00:00Z');
+  // 15 min: Ana and "Brian New"; 31 min: same; last: both. Brian Smith is not recognized yet.
+  env.gas.apiUploadShot('C3', '2026-10-05', 'present', 'a.jpg', 'image/jpeg', b64('Ana Maria Lopez\nBrian Newname'));
+  env.gas.apiUploadShot('C3', '2026-10-05', 'tardy', 'b.jpg', 'image/jpeg', b64('Ana Maria Lopez\nBrian Newname'));
+  env.gas.apiUploadShot('C3', '2026-10-05', 'end', 'c.jpg', 'image/jpeg', b64('Ana Maria Lopez\nBrian Newname'));
+  env.gas.apiAnalyzeSession('C3', '2026-10-05');
+  assert.notEqual(env.row('2026-10-05', 'C3', '1002') && env.row('2026-10-05', 'C3', '1002').Status, 'Present');
+  // Diego changes Brian's last name: the old name becomes a Zoom name, the class is read again
+  const r = j(env.gas.apiSetStudentNames('C3', '1002', { name: 'Brian Newname', aliases: ['Bri (iPad)'] }));
+  assert.equal(r.name, 'Brian Newname');
+  assert.deepEqual(r.aliases, ['Bri (iPad)', 'Brian Smith']);
+  assert.ok(r.reruns >= 1);
+  assert.equal(env.row('2026-10-05', 'C3', '1002').Status, 'Present');
+  assert.equal(env.row('2026-10-05', 'C3', '1002').Name, 'Brian Newname');
+  const st = env.sheet('Students').objects().find(x => x['Student ID'] === '1002' && x['Class ID'] === 'C3');
+  assert.equal(st['Zoom names'], 'Bri (iPad); Brian Smith');
+  assert.match(env.sheet('Roster changes').objects().at(-1).Change, /Name changed from "Brian Smith"/);
+  assert.throws(() => env.gas.apiSetStudentNames('C3', '1002', { name: ' ' }), /cannot be empty/);
+});

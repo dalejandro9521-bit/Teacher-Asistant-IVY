@@ -417,6 +417,7 @@ function copy(text, what) {
 function go(view, params) {
   S.view = view; Object.assign(S, params || {}); S.nav = (S.nav || 0) + 1;
   if (view !== 'session') S.ocrTab = 'present';
+  if (view !== 'student') { S.namesOpen = false; S.namesMsg = ''; }
   render();
 }
 function renderNav() {
@@ -1397,6 +1398,19 @@ function findStudentRec(sid, date) {
 }
 
 /* ---------- Student ---------- */
+/** Edit the name (new last name, typo) and the other names this student uses in Zoom. */
+function namesPanelHTML(d) {
+  if (!S.namesOpen) return '';
+  var al = d.student.aliases || [];
+  return '<div class="card roster-panel names-panel"><div class="row"><b>Names of ' + esc(d.student.name) + '</b>' +
+    '<span class="muted small">Used to recognize this student in screenshots, chat and Populi files</span></div>' +
+    '<div class="rp-grid"><div><label for="nmName">Name (as it should appear)</label><input id="nmName" value="' + esc(d.student.name) + '">' +
+    '<div class="small muted" style="margin-top:4px">Changing it (e.g. a new last name) keeps the old name as a Zoom name, so old screenshots still match.</div></div>' +
+    '<div><label for="nmAliases">Other names they use in Zoom (one per line)</label><textarea id="nmAliases" rows="4" placeholder="e.g. Elcin M.&#10;iPhone de Elcin">' + esc(al.join('\n')) + '</textarea>' +
+    '<div class="small muted" style="margin-top:4px">Every time one of these names appears, it counts as this student.</div></div></div>' +
+    '<button class="btn primary sm" data-act="namesSave" style="margin-top:10px">Save names and re-read the screenshots</button>' +
+    (S.namesMsg ? '<div class="rp-msg">' + S.namesMsg + '</div>' : '') + '</div>';
+}
 function viewStudent() {
   call('apiStudent', S.classId, S.studentId).then(function (d) {
     S.stu = d;
@@ -1405,7 +1419,9 @@ function viewStudent() {
       '<div class="row"><div><h1>' + esc(d.student.name) + ' <span class="muted" style="font-weight:500">#' + (d.student.order || '?') + '</span></h1>' +
       '<p class="sub">' + esc(d.cls.course) + ' · ' + esc(d.student.email || 'no email') + (d.student.aliases && d.student.aliases.length ? ' · Zoom: ' + esc(d.student.aliases.join(', ')) : '') + '</p></div>' +
       '<div class="spacer"></div>' + stateChip(t.state, t.stateLabel) +
-      '<button class="btn ghost sm" style="margin-left:8px" data-act="removeStudent" data-sid="' + esc(d.student.id) + '" data-name="' + esc(d.student.name) + '">Remove from roster</button></div>';
+      '<button class="btn sm" style="margin-left:8px" data-act="namesToggle">' + (S.namesOpen ? 'Close' : 'Edit name / Zoom names') + '</button>' +
+      '<button class="btn ghost sm" style="margin-left:8px" data-act="removeStudent" data-sid="' + esc(d.student.id) + '" data-name="' + esc(d.student.name) + '">Remove from roster</button></div>' +
+      namesPanelHTML(d);
     h += '<div class="stats"><div class="card stat A"><div class="n">' + t.effective + '</div><div class="small muted">Counted absences (of 2)</div></div>' +
       '<div class="card stat"><div class="n">' + t.remaining + '</div><div class="small muted">Absences left</div></div>' +
       (isZoom(d.cls) && !t.tardies ? '' : '<div class="card stat T"><div class="n">' + t.tardies + '</div><div class="small muted">Tardies (3 = 1 absence)</div></div>') +
@@ -1604,6 +1620,18 @@ var ACTIONS = {
       rosterSay(classId, '<b>Added:</b> #' + r.order + ' ' + esc(r.name) + ' (from ' + esc(shortDate(since)) + ').');
       MEM = {}; storeClear(); loadAll(false).then(function () { viewClass(); });
     });
+  },
+  namesToggle: function () { S.namesOpen = !S.namesOpen; S.namesMsg = ''; viewStudent(); },
+  namesSave: function (b) {
+    var name = (($('nmName') || {}).value || '').trim(), aliases = (($('nmAliases') || {}).value || '').split(/\r?\n|;/).map(function (x) { return x.trim(); }).filter(String);
+    if (!name) { toast('Write the name', true); return; }
+    var classId = S.classId, sid = S.studentId;
+    S.namesMsg = 'Saving and re-reading this class\'s screenshots…'; viewStudent();
+    call('apiSetStudentNames', classId, sid, { name: name, aliases: aliases }).then(function (r) {
+      S.namesMsg = '<b>Saved:</b> ' + esc(r.name) + (r.aliases.length ? ' · Zoom names: ' + esc(r.aliases.join(', ')) : '') +
+        (r.reruns ? '<br>' + r.reruns + ' class' + (r.reruns === 1 ? '' : 'es') + ' read again with the new names. Check the week by week table below.' : '');
+      MEM = {}; storeClear(); loadAll(false).then(function () { if (S.classId === classId && S.studentId === sid) viewStudent(); });
+    }).catch(function () { S.namesMsg = ''; viewStudent(); });
   },
   removeStudent: function (b) {
     var name = b.getAttribute('data-name');
