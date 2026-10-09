@@ -3613,7 +3613,7 @@ function apiAnalyzeSession(classId, date, shots, registerOnly) {
     }
     if (registerOnly) { msg = 'Saved ' + (shots || []).length + ' screenshot(s).'; return; }
     var unread = claudeUnread_(saved.data);
-    if (unread) {
+    if (claudeBlocks_(saved.data)) {
       // Nothing is marked from screenshots nobody has read yet (it would make everyone absent).
       msg = 'Saved. Waiting for Claude to read ' + unread + ' screenshot(s): it checks weekdays at 1:15, 3:15 and 7:15 PM (after your TA hours), or ask Claude in the chat to read them now. The attendance is taken a few minutes after Claude reads them.';
       waiting = true;
@@ -3653,6 +3653,16 @@ function apiClearShots(classId, date, phase) {
 function claudeReads_(cfg) { return /^claude$/i.test(String(cfg.screenshotReader || '').trim()); }
 
 /** Screenshots saved without any reading (no OCR text, no AI result). */
+/**
+ * Must the attendance wait for Claude? Zoom: yes while any screenshot is unread (a missing one would make people absent).
+ * Populi (in person): only while none is read: each Populi screenshot stands on its own, so a re-upload never blocks.
+ */
+function claudeBlocks_(data) {
+  var zoom = ['present', 'tardy', 'end'].some(function (k) { return data.phases[k].length; });
+  if (zoom || !data.phases.populi.length) return claudeUnread_(data) > 0;
+  return !data.ai.populi.some(Boolean);
+}
+
 function claudeUnread_(data) {
   return SHOT_KINDS.reduce(function (n, k) {
     return n + data.phases[k].filter(function (t, i) { return !t && !data.ai[k][i]; }).length;
@@ -3731,7 +3741,7 @@ function claudeApply_(ctx) {
     writeOcrJson_(folder, saved);
     rf.setName('claude-results applied.json');
     claudeJob_(ctx, cls, date, folder, saved.data);
-    if (claudeUnread_(saved.data)) { out.push(classLabel(cls) + ' ' + date + ': some screenshots are still waiting for Claude'); return; }
+    if (claudeBlocks_(saved.data)) { out.push(classLabel(cls) + ' ' + date + ': some screenshots are still waiting for Claude'); return; }
     var msg = takeFromShots_(ctx, cls, date, folder, saved.data);
     appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (read by Claude)', 'screenshots', cls.id, date, msg]);
     out.push(classLabel(cls) + ' ' + date + ': ' + msg);
@@ -3754,7 +3764,8 @@ var POPULI_STATUS = { present: STATUS.P, tardy: STATUS.T, absent: STATUS.A, excu
 function populiShots_(ctx, cls, date, folder, data) {
   var roster = roster_(ctx, cls.id), byOrder = {}, got = {}, entries = [], unsure = [], review = [];
   roster.forEach(function (s) { if (s.order) byOrder[s.order] = s; });
-  data.ai.populi.forEach(function (r) {
+  // The latest screenshot wins (re-taken after a fix in Populi): read them newest first.
+  data.ai.populi.slice().reverse().forEach(function (r) {
     ((r || {}).rows || []).forEach(function (x) {
       var s = byOrder[x.roster_number], st = POPULI_STATUS[String(x.status || '').toLowerCase()];
       if (!s || !st || (x.confidence != null && x.confidence < AI_SURE)) {

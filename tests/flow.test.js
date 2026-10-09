@@ -1165,3 +1165,25 @@ test('Speed: batch upload without the lock, one job for all, results applied by 
   const proc = env.inbox().folders.find(x => x.name === 'Processed');
   assert.ok(proc.files.some(x => x.name === 'dashboard-snapshot.json'));
 });
+
+test('Populi screenshots: a re-upload while Claude reads never blocks the class; the newest screenshot wins', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.setConfig('Screenshots read by', 'CLAUDE');
+  const S = env.sheet('Students');
+  [['2001', 'Elena Ramos', 1], ['2002', 'Tom Nguyen', 2]].forEach(x => S.appendRow([x[0], x[1], '', 'C1', 'Yes', String(x[2])]));
+  const b64 = t => Buffer.from(t).toString('base64');
+  env.gas.apiUploadShot('C1', '2026-10-05', 'populi', 'a.png', 'image/png', b64('a'));
+  const sess = env.sheet('Sessions').objects().find(x => x['Class ID'] === 'C1');
+  const f = env.gas.DriveApp.getFolderById(sess['Source ID']);
+  const row = (n, st) => ({ shown_name: 'x', roster_number: n, status: st, confidence: 0.98 });
+  f.createFile('claude-results.json', JSON.stringify({ populi: [{ rows: [row(1, 'Present'), row(2, 'Absent')] }] }), 'application/json');
+  // Diego uploads the screenshot again before the results are applied
+  env.gas.apiUploadShot('C1', '2026-10-05', 'populi', 'b.png', 'image/png', b64('b'));
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C1', '2001').Status, 'Present');
+  assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Absent');
+  // Claude reads the new one: Tom was fixed to Tardy in Populi → the newest wins
+  f.createFile('claude-results.json', JSON.stringify({ populi: [null, { rows: [row(1, 'Present'), row(2, 'Tardy')] }] }), 'application/json');
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Tardy');
+});
