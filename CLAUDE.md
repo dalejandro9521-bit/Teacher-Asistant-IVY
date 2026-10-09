@@ -67,6 +67,11 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
 - Student emails: `scanMail_` (in `runAll_`) reads Gmail `in:inbox newer_than:Nd`, keeps one row per thread in "Mail", sorts and drafts with
   `MAIL_SCHEMA`/`mailSystemPrompt`/`mailUserPrompt` (Messages.js), marks excuses `Received` (`markExcuseFromMail_`), labels TA/Needs reply
   and TA/Medical excuse. Never sends to students: replies are Gmail drafts or copy/paste.
+- Speed (2026-10-09): `apiAll` serves a ready snapshot (script cache + `TA Inbox/Processed/dashboard-snapshot.json`), valid while the
+  generation (`gen` script property, bumped by every write) is unchanged and for 20 min; `tick` and `claudeCheck` rebuild it.
+  Screenshot uploads: `apiPrepareShots` once, then `apiUploadShot(..., subId)` without the lock, and `apiAnalyzeSession(..., shots)`
+  registers the batch (one ocr.json write, one claude-job.json). `claudeCheck` (every 5 min) applies Claude's results; the waiting
+  folders are listed in the `claudeWaiting` script property.
 - Speed: `apiAll` returns every screen's data from one `load_()`; the dashboard seeds its caches from it, skips re-asking for 60 s,
   and after any write (non-READS call) marks everything stale and reloads `apiAll` in the background.
 - `tests/gas-mock.js` runs the real `src/` files in a VM with fake SpreadsheetApp/DriveApp/GmailApp/ScriptApp.

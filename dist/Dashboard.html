@@ -460,7 +460,8 @@ function cacheRead(k) {
 function cacheWrite(k, v) { MEM[k] = v; STAMP[k] = Date.now(); try { if (STORE) STORE.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
 /* Calls that only read. Any other call is a write: copies older than it are re-checked, and everything reloads in the background. */
 var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1,
-  apiStudent: 1, apiMail: 1, apiShotFiles: 1, apiStanding: 1 };
+  apiStudent: 1, apiMail: 1, apiShotFiles: 1, apiStanding: 1,
+  apiPrepareShots: 1, apiUploadShot: 1 }; // saving screenshots changes nothing on screen until the analysis (no reload in between)
 var STAMP = {}, FRESH_MS = 60000;
 function afterWrite() {
   STAMP = {};
@@ -486,9 +487,21 @@ function loadAll(redraw) {
       var typing = document.activeElement && /TEXTAREA|INPUT/.test(document.activeElement.tagName);
       var changed = before !== JSON.stringify(a.overview) + JSON.stringify(a.mail) + JSON.stringify(a.standing);
       if (redraw !== false && changed && !typing && /^(home|class|review|followups|mail|standing)$/.test(S.view)) { S.nav = (S.nav || 0) + 1; renderView(); }
+      if (a && a.claudeWaiting) checkClaude();
       ok(a);
     }).withFailureHandler(function () { ok(null); }).apiAll();
   });
+}
+/** Screenshots wait for Claude: take the attendance as soon as its results are in Drive (at most every 2 minutes). */
+var CLAUDE_AT = 0;
+function checkClaude() {
+  if (Date.now() - CLAUDE_AT < 120000) return;
+  CLAUDE_AT = Date.now();
+  google.script.run.withSuccessHandler(function (r) {
+    if (!r || !r.lines || !r.lines.length) return;
+    toast('Claude read the screenshots: ' + r.lines.map(function (x) { return String(x).split('. ')[0]; }).join(' · '));
+    MEM = {}; storeClear(); loadAll(true);
+  }).withFailureHandler(function () {}).apiClaudeResults();
 }
 function fresh(fn, args, draw) {
   var k = ckey(fn, args), nav = S.nav, old = cacheRead(k), oldJson = old ? JSON.stringify(old) : '';
@@ -751,24 +764,27 @@ function moveShot(id, lane) { T.files.forEach(function (x) { if (x.id === id) { 
 function takeSubmit() {
   var c = takeClass(), items = T.files.filter(function (x) { return x.lane !== 'unsorted'; });
   if (!c || !T.date || !items.length) return;
-  var date = T.date, classId = c.id, start = T.start, i = 0, failed = false, aiErr = '';
+  var date = T.date, classId = c.id, start = T.start, i = 0, failed = false, aiErr = '', subs = null, got = [];
   T.busy = true; T.done = 0; T.total = items.length; T.msg = 'Saving and reading each screenshot…'; drawTake();
-  var pre = start && parseTime(start, c) !== c.startMin ? call('apiSetStart', classId, date, start) : Promise.resolve();
+  var pre = (start && parseTime(start, c) !== c.startMin ? call('apiSetStart', classId, date, start) : Promise.resolve())
+    .then(function () { return call('apiPrepareShots', classId, date); })
+    .then(function (p) { subs = p && p.subs; });
   var worker = function () {
     if (i >= items.length || failed) return Promise.resolve();
-    var x = items[i++];
+    var k = i++, x = items[k];
     return shrink(x.file).then(function (b64) {
       var name = minLabel(minOfDay(x.t)).replace(/\W+/g, '') + '-' + x.id.slice(0, 4) + '.jpg';
-      return call('apiUploadShot', classId, date, x.lane, name, 'image/jpeg', b64);
+      return call('apiUploadShot', classId, date, x.lane, name, 'image/jpeg', b64, subs ? subs[x.lane] || '' : '');
     }).then(function (r) {
       if (r && r.aiError) aiErr = r.aiError;
+      if (r && r.fileId) got[k] = { phase: r.phase, fileId: r.fileId, text: r.text, ai: r.ai };
       x.sent = true; T.done++; drawTake();
       return worker();
     }, function (e) { failed = true; throw e; });
   };
-  pre.then(function () { return Promise.all([worker(), worker(), worker()]); }).then(function () {
+  pre.then(function () { return Promise.all([worker(), worker(), worker(), worker()]); }).then(function () {
     T.msg = 'Taking attendance with all the screenshots…'; drawTake();
-    return call('apiAnalyzeSession', classId, date);
+    return call('apiAnalyzeSession', classId, date, got.filter(Boolean));
   }).then(function (r) {
     toast(r.waiting ? r.msg : 'Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some; the OCR was used' : ''), !!aiErr);
     T.files.forEach(function (x) { URL.revokeObjectURL(x.url); });
@@ -779,6 +795,7 @@ function takeSubmit() {
     loadAll(false);
     go('session', { classId: classId, date: date });
   }).catch(function () {
+    if (got.some(Boolean)) call('apiAnalyzeSession', classId, date, got.filter(Boolean), true).catch(function () {});
     T.busy = false;
     T.files = T.files.filter(function (x) { if (x.sent) URL.revokeObjectURL(x.url); return !x.sent; }); // those already read are saved
     T.msg = 'Stopped. The screenshots read so far are saved; press the button again for the rest.';
@@ -1176,30 +1193,38 @@ function uploadShots(phase, files) {
   var label = { present: '15 min', tardy: '31 min', end: 'last screenshot' }[phase], i = 0, names = 0, aiErr = '';
   var how = S.sess && S.sess.aiOn ? ' with AI' : '';
   var status = function (t) { var el = $('upStatus'); if (el) el.textContent = t; };
-  var done = 0, failed = false;
-  // Three at a time: each one is saved, read (OCR, and Claude when on) and added on its own.
+  var done = 0, failed = false, subs = null, got = [];
+  // Four at a time, without the script lock: each one is saved and read; the analysis then registers them all at once.
   var worker = function () {
     if (i >= files.length || failed) return Promise.resolve();
-    var f = files[i++];
+    var k = i++, f = files[k];
     return shrink(f).then(function (b64) {
-      return call('apiUploadShot', S.classId, S.date, phase, f.name.replace(/\.\w+$/, '') + '.jpg', 'image/jpeg', b64);
+      return call('apiUploadShot', S.classId, S.date, phase, f.name.replace(/\.\w+$/, '') + '.jpg', 'image/jpeg', b64, subs ? subs[phase] || '' : '');
     }).then(function (r) {
       names += r.names; if (r.aiError) aiErr = r.aiError;
+      if (r.fileId) got[k] = { phase: r.phase, fileId: r.fileId, text: r.text, ai: r.ai };
       status('Read ' + (++done) + ' of ' + files.length + ' ' + label + ' screenshot' + (files.length === 1 ? '' : 's') + how + '…');
       return worker();
     }, function (e) { failed = true; throw e; });
   };
   status('Reading ' + files.length + ' ' + label + ' screenshot' + (files.length === 1 ? '' : 's') + how + '…');
-  var pool = [];
-  for (var w = 0; w < Math.min(3, files.length); w++) pool.push(worker());
-  Promise.all(pool).then(function () {
+  call('apiPrepareShots', S.classId, S.date).then(function (p) {
+    subs = p && p.subs;
+    var pool = [];
+    for (var w = 0; w < Math.min(4, files.length); w++) pool.push(worker());
+    return Promise.all(pool);
+  }).then(function () {
     status('Analyzing the class with all the screenshots…');
-    return call('apiAnalyzeSession', S.classId, S.date).then(function (r) {
+    return call('apiAnalyzeSession', S.classId, S.date, got.filter(Boolean)).then(function (r) {
       status(''); toast(r.waiting ? r.msg : 'Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some (' + aiErr + '); the OCR was used' : ''), !!aiErr);
       MEM = {}; storeClear();
       viewSession();
     });
-  }).catch(function () { status('Stopped. The screenshots read so far are saved; drop the rest again.'); });
+  }).catch(function () {
+    // keep the ones already saved (registered without taking the attendance yet)
+    if (got.some(Boolean)) call('apiAnalyzeSession', S.classId, S.date, got.filter(Boolean), true).catch(function () {});
+    status('Stopped. The screenshots read so far are saved; drop the rest again.');
+  });
 }
 /** Read with AI the screenshots that were only read with OCR, then analyze the class again. */
 function readAi() {

@@ -1548,7 +1548,7 @@ var DEFAULT_CLASSES = [
   ['C4', 'SB 100: Introduction to Business', '', '', '', 'Thursday', '9:00 AM', '1:00 PM', 'Zoom', '', 'Yes']
 ];
 
-var TRIGGER_HANDLERS = ['tick', 'weeklyReport', 'assignmentReminders'];
+var TRIGGER_HANDLERS = ['tick', 'weeklyReport', 'assignmentReminders', 'claudeCheck'];
 
 /* ---------- menu ---------- */
 
@@ -1643,6 +1643,7 @@ function installTriggers() {
   ScriptApp.newTrigger('tick').timeBased().everyMinutes(15).create();
   ScriptApp.newTrigger('weeklyReport').timeBased().onWeekDay(ScriptApp.WeekDay.FRIDAY).atHour(cfg.reportHour).create();
   ScriptApp.newTrigger('assignmentReminders').timeBased().everyDays(1).atHour(cfg.reminderHour).create();
+  ScriptApp.newTrigger('claudeCheck').timeBased().everyMinutes(5).create();
   toast_('Automations on: inbox + notices every 15 min, report Fridays at ' + cfg.reportHour + ':00, reminders daily at ' + cfg.reminderHour + ':00.');
 }
 
@@ -1662,6 +1663,7 @@ function tick() {
   var r = null;
   var ran = withJob_(function () { r = runAll_(load_()); });
   if (!ran) return; // the previous run is still going
+  try { snapshotBuild_(); } catch (e) { /* the dashboard builds it itself */ }
   if (r.files || r.sent || r.office) {
     toast_((r.files ? r.files + ' file(s) processed. ' : '') + r.sent + ' student notice(s), ' + r.office + ' office notice(s).');
   }
@@ -2580,12 +2582,60 @@ function overview_(ctx) {
  * screen from it; writes go in the background.
  */
 function apiAll() {
-  var hit = cacheGet_('all');
-  if (hit) return hit;
-  var ctx = load_(), out = { overview: overview_(ctx), classes: {}, questions: questions_(ctx), followups: followups_(ctx),
+  var gen = cacheGen_(), snap = snapshotGet_(gen);
+  if (!snap) snap = snapshotPut_(allFrom_(load_()), gen, false);
+  snap.claudeWaiting = (claudeWaitingList_() || []).length;
+  return snap;
+}
+
+/**
+ * Speed: the dashboard's data is kept ready ("snapshot"): in the script cache and, as a backup that survives the cache,
+ * in dashboard-snapshot.json in TA Inbox/Processed (this account's Drive). The 15-minute job and Claude's results rebuild
+ * it in the background, so opening the dashboard rarely reads the sheets. It is used only while no edit happened since it
+ * was built (same generation) and for 20 minutes at most (the to-do list depends on the clock).
+ */
+var SNAP_MAX_MS_ = 20 * 60000;
+function snapshotGet_(gen) {
+  var ok = function (x) { return x && x.gen === gen && Date.now() - (x.builtAt || 0) < SNAP_MAX_MS_; };
+  var hit = cacheGetKey_('snap');
+  if (ok(hit)) return hit;
+  var f = snapshotFile_(false);
+  if (!f) return null;
+  try { hit = JSON.parse(f.getBlob().getDataAsString()); } catch (e) { return null; }
+  if (!ok(hit)) return null;
+  cachePutKey_('snap', hit, 21600);
+  return hit;
+}
+function snapshotPut_(all, gen, toDrive) {
+  all.gen = gen; all.builtAt = Date.now();
+  cachePutKey_('snap', all, 21600);
+  if (toDrive) {
+    try {
+      var f = snapshotFile_(true);
+      if (f) f.setContent(JSON.stringify(all));
+    } catch (e) { /* only a shortcut */ }
+  }
+  return all;
+}
+function snapshotFile_(create) {
+  var id = config_().inboxFolderId;
+  if (!id) return null;
+  try {
+    var folder = subfolder_(DriveApp.getFolderById(id), 'Processed'), it = folder.getFilesByName('dashboard-snapshot.json');
+    if (it.hasNext()) return it.next();
+    return create ? folder.createFile('dashboard-snapshot.json', '{}', 'application/json') : null;
+  } catch (e) { return null; }
+}
+/** Background (after the 15-minute job or Claude's results): rebuild the snapshot so the next open is instant. */
+function snapshotBuild_() {
+  var gen = cacheGen_();
+  snapshotPut_(allFrom_(load_()), gen, true);
+}
+
+function allFrom_(ctx) {
+  var out = { overview: overview_(ctx), classes: {}, questions: questions_(ctx), followups: followups_(ctx),
     reportWeeks: reportWeeks_(ctx), mail: mail_(ctx), standing: standing_(ctx), at: nowStr_() };
   ctx.classes.filter(function (c) { return c.active; }).forEach(function (c) { out.classes[c.id] = class_(c.id, ctx); });
-  cachePut_('all', out, 120);
   return out;
 }
 
@@ -3439,8 +3489,27 @@ function loadLite_() {
   return ctx;
 }
 
-function apiUploadShot(classId, date, phase, name, mime, base64) {
+/**
+ * Speed: before a batch of uploads, make the class folder once (locked) and hand its moment folders to the page, so each
+ * screenshot is then saved without the lock and without reading the sheets (really in parallel).
+ */
+function apiPrepareShots(classId, date) {
+  var out;
+  withLock_(function () {
+    var ctx = loadLite_(), cls = classById_(ctx, classId);
+    if (!cls) throw new Error('No class ' + classId);
+    var folder = sessionFolder_(ctx, cls, date);
+    save_(ctx.sessT);
+    var subs = { populi: claudeReads_(ctx.cfg) ? subfolder_(folder, 'Populi').getId() : '' };
+    Object.keys(PHASE_FOLDERS).forEach(function (k) { subs[k] = subfolder_(folder, PHASE_FOLDERS[k]).getId(); });
+    out = { folderId: folder.getId(), subs: subs, claude: claudeReads_(ctx.cfg) };
+  });
+  return out;
+}
+
+function apiUploadShot(classId, date, phase, name, mime, base64, subId) {
   if (!PHASE_FOLDERS[phase] && phase !== 'populi') throw new Error('Unknown moment: ' + phase);
+  if (subId) return uploadFast_(classId, phase, name, mime, base64, subId);
   var ctx, cls, folder, file;
   // 1. Save the image (locked: the class folder must be created once).
   withLock_(function () {
@@ -3480,6 +3549,20 @@ function apiUploadShot(classId, date, phase, name, mime, base64) {
   return out;
 }
 
+/** One screenshot into a folder from apiPrepareShots: no lock, no ocr.json; apiAnalyzeSession registers the batch. */
+function uploadFast_(classId, phase, name, mime, base64, subId) {
+  if (phase === 'populi' && !subId) throw new Error('Populi screenshots are read by Claude: set "Screenshots read by" to CLAUDE in Config.');
+  var blob = Utilities.newBlob(Utilities.base64Decode(base64), mime || 'image/jpeg', name || 'screenshot.jpg');
+  var file = DriveApp.getFolderById(subId).createFile(blob), cfg = config_(), claude = claudeReads_(cfg);
+  var text = claude ? '' : ocrText_(file), ai = null, aiError = '';
+  if (!claude && aiOn_(cfg, 'aiScreenshots')) {
+    var ctx = loadLite_(), cls = classById_(ctx, classId);
+    try { ai = aiReadShot_(ctx, cls, phase, file.getBlob()); } catch (e) { aiError = String(e && e.message || e); }
+  }
+  var n = claude ? 0 : ai ? (ai.participants || []).length + (ai.chat || []).length : (function (x) { return x.tiles.length + x.chat.length; })(readScreenshotText(text));
+  return { phase: phase, fileId: file.getId(), text: text, ai: ai, aiError: aiError, names: n, claude: claude };
+}
+
 /** Screenshots of a class saved before AI was on (or where AI failed): their Drive ids, to read them again with AI. */
 function apiShotFiles(classId, date) {
   var ctx = loadLite_(), cls = classById_(ctx, classId), folder = sessionFolder_(ctx, cls, date), saved = readOcrJson_(folder);
@@ -3511,15 +3594,28 @@ function apiAiReadFile(classId, date, phase, index, fileId) {
 }
 
 /** After the uploads: analyze the class with every screenshot read so far. */
-function apiAnalyzeSession(classId, date) {
+function apiAnalyzeSession(classId, date, shots, registerOnly) {
   var msg, waiting = false;
   withLock_(function () {
     var ctx = load_(), cls = classById_(ctx, classId);
     var folder = sessionFolder_(ctx, cls, date), saved = readOcrJson_(folder);
+    // The batch saved by uploadFast_ (in the order it was dropped): one ocr.json write and one Claude job for all.
+    if (shots && shots.length) {
+      shots.forEach(function (x) {
+        if (!x || !saved.data.phases[x.phase] || saved.data.files[x.phase].indexOf(x.fileId) >= 0) return;
+        saved.data.phases[x.phase].push(x.text || '');
+        saved.data.ai[x.phase].push(x.ai || null);
+        saved.data.files[x.phase].push(x.fileId);
+        saved.data.images = (saved.data.images || 0) + 1;
+      });
+      writeOcrJson_(folder, saved);
+      if (claudeReads_(ctx.cfg)) claudeJob_(ctx, cls, date, folder, saved.data);
+    }
+    if (registerOnly) { msg = 'Saved ' + (shots || []).length + ' screenshot(s).'; return; }
     var unread = claudeUnread_(saved.data);
     if (unread) {
       // Nothing is marked from screenshots nobody has read yet (it would make everyone absent).
-      msg = 'Saved. Waiting for Claude to read ' + unread + ' screenshot(s): it checks Monday and Thursday after class (10:47 AM, 7:47 PM, 9:47 PM), or ask Claude in the chat to read them now. The attendance is taken right after.';
+      msg = 'Saved. Waiting for Claude to read ' + unread + ' screenshot(s): it checks 15 minutes after each class, or ask Claude in the chat to read them now. The attendance is taken a few minutes after Claude reads them.';
       waiting = true;
       return;
     }
@@ -3579,17 +3675,47 @@ function claudeJob_(ctx, cls, date, folder, data) {
       .map(function (s) { return { order: s.order, name: s.name, aliases: s.aliases || [] }; }),
     shots: shots
   };
+  claudeWaiting_(folder.getId(), job.status === 'waiting');
   var it = folder.getFilesByName('claude-job.json'), json = JSON.stringify(job, null, 1);
   if (it.hasNext()) it.next().setContent(json); else folder.createFile('claude-job.json', json, 'application/json');
 }
 
 /** Results Claude left in the class folders → attendance. Returns one line per class taken. */
+/**
+ * Class folders whose screenshots wait for Claude (script property), so checking for results only opens those folders.
+ * null = not known yet (made before this list existed): every screenshot folder is checked once.
+ */
+function claudeWaitingList_() {
+  var v = PropertiesService.getScriptProperties().getProperty('claudeWaiting');
+  try { return v == null ? null : JSON.parse(v); } catch (e) { return null; }
+}
+function claudeWaiting_(folderId, on) {
+  var list = claudeWaitingList_() || [], i = list.indexOf(folderId);
+  if (on && i < 0) list.push(folderId);
+  if (!on && i >= 0) list.splice(i, 1);
+  PropertiesService.getScriptProperties().setProperty('claudeWaiting', JSON.stringify(list));
+}
+
+/** Every 5 minutes (cheap when nothing waits): take the attendance as soon as Claude's results are in the folder. */
+function claudeCheck() {
+  var list = claudeWaitingList_();
+  if (list && !list.length) return;
+  var lines = [];
+  withLock_(function () {
+    var ctx = load_();
+    lines = claudeApply_(ctx);
+    if (lines.length) { save_(ctx.sessT); runLight_(ctx); }
+  });
+  if (lines.length) snapshotBuild_();
+}
+
 function claudeApply_(ctx) {
   if (!claudeReads_(ctx.cfg)) return [];
-  var out = [], y = yearOf_(ctx), t = ctx.sessT;
+  var out = [], y = yearOf_(ctx), t = ctx.sessT, waiting = claudeWaitingList_();
   t.rows.forEach(function (row) {
     var id = t.get(row, 'Source ID');
     if (!/screenshot/i.test(t.get(row, 'Source')) || !id) return;
+    if (waiting && waiting.indexOf(id) < 0) return;
     var folder;
     try { folder = DriveApp.getFolderById(id); } catch (e) { return; }
     var it = folder.getFilesByName('claude-results.json');
@@ -3852,13 +3978,15 @@ function blankRow_(t) { return t.header.map(function () { return ''; }); }
 
 /* Short-lived cache of what the dashboard reads; any write starts a new generation, so it is never stale. */
 function cache_() { try { return CacheService.getScriptCache(); } catch (e) { return null; } }
-function cacheGen_() { var c = cache_(); return (c && c.get('gen')) || '0'; }
-function bumpCache_() { var c = cache_(); if (c) c.put('gen', String(Date.now()) + Math.random(), 21600); }
+function cacheGen_() { return PropertiesService.getScriptProperties().getProperty('gen') || '0'; }
+function bumpCache_() { PropertiesService.getScriptProperties().setProperty('gen', String(Date.now()) + String(Math.random()).slice(2, 6)); }
 // CacheService keeps at most 100 KB per key: big answers (apiAll) are split in pieces.
 var CACHE_PIECE_ = 40000;
-function cacheGet_(key) {
+function cacheGet_(key) { return cacheGetKey_(cacheGen_() + ':' + key); }
+function cachePut_(key, obj, seconds) { cachePutKey_(cacheGen_() + ':' + key, obj, seconds); }
+function cacheGetKey_(k) {
   var c = cache_(); if (!c) return null;
-  var k = cacheGen_() + ':' + key, head = c.get(k);
+  var head = c.get(k);
   if (!head) return null;
   try {
     var m = head.match(/^pieces:(\d+)$/);
@@ -3870,9 +3998,9 @@ function cacheGet_(key) {
     return JSON.parse(text.join(''));
   } catch (e) { return null; }
 }
-function cachePut_(key, obj, seconds) {
+function cachePutKey_(k, obj, seconds) {
   var c = cache_(); if (!c) return;
-  var k = cacheGen_() + ':' + key, text = JSON.stringify(obj);
+  var text = JSON.stringify(obj);
   try {
     if (text.length <= CACHE_PIECE_) { c.put(k, text, seconds || 300); return; }
     var pieces = {}, n = Math.ceil(text.length / CACHE_PIECE_);

@@ -72,7 +72,7 @@ test('Populi export → roster, 15/30 rule, missing = absent, draft notices with
   env.gas.tick();
   // file moved to Processed and logged
   assert.equal(env.inbox().files.length, 0);
-  assert.equal(env.inbox().folders.find(f => f.name === 'Processed').files.length, 1);
+  assert.equal(env.inbox().folders.find(f => f.name === 'Processed').files.filter(f => f.name !== 'dashboard-snapshot.json').length, 1);
   assert.match(env.sheet('Inbox log').objects()[0].Result, /5 added.*file name tag.*5 new student/);
   // statuses by check-in time
   const st = id => env.row('2026-10-05', 'C1', id).Status;
@@ -236,11 +236,11 @@ test('Friday report is emailed; assignment reminders go to the class in BCC', ()
   assert.equal(env.mail.drafts.filter(d => /Lab report 2/.test(d.subject)).length, 1);
 });
 
-test('automations: 3 triggers, reinstalling does not duplicate them', () => {
+test('automations: 4 triggers, reinstalling does not duplicate them', () => {
   const env = setupTerm();
   env.gas.installTriggers();
   env.gas.installTriggers();
-  assert.deepEqual(env.triggers.map(t => t.handler).sort(), ['assignmentReminders', 'tick', 'weeklyReport']);
+  assert.deepEqual(env.triggers.map(t => t.handler).sort(), ['assignmentReminders', 'claudeCheck', 'tick', 'weeklyReport']);
   assert.deepEqual(env.triggers.find(t => t.handler === 'weeklyReport').spec, [['timeBased'], ['onWeekDay', 'FRIDAY'], ['atHour', 8]]);
 });
 
@@ -1122,4 +1122,46 @@ test('standing follow-ups: below 100% and below 80%, grouped by numbers, done wh
   assert.ok(st.students.find(s => s.id === '203').upToDate);
   // apiAll carries it for the dashboard
   assert.ok(j(env.gas.apiAll()).standing.classes.length);
+});
+
+test('Speed: batch upload without the lock, one job for all, results applied by the 5-minute check; dashboard snapshot', () => {
+  const j = x => JSON.parse(JSON.stringify(x));
+  const env = setupTerm({ mode: 'POPULI' });
+  env.setConfig('Screenshots read by', 'CLAUDE');
+  [2, 3, 4, 5].forEach((row, i) => env.sheet('Students').put(row, 6, String(i + 1)));
+  const b64 = t => Buffer.from(t).toString('base64');
+  const prep = env.gas.apiPrepareShots('C3', '2026-10-05');
+  assert.ok(prep.subs.present && prep.subs.end && prep.subs.populi);
+  const up = ['present', 'end'].map((ph, i) => env.gas.apiUploadShot('C3', '2026-10-05', ph, 's' + i + '.png', 'image/png', b64('px'), prep.subs[ph]));
+  assert.ok(up.every(u => u.fileId && u.claude));
+  const sess = env.sheet('Sessions').objects().find(x => x['Class ID'] === 'C3');
+  const f = env.gas.DriveApp.getFolderById(sess['Source ID']);
+  assert.equal(f.getFilesByName('claude-job.json').hasNext(), false, 'no job per screenshot');
+  const a = env.gas.apiAnalyzeSession('C3', '2026-10-05', up);
+  assert.equal(a.waiting, true);
+  const job = JSON.parse(f.getFilesByName('claude-job.json').next().content);
+  assert.deepEqual([job.shots.present.length, job.shots.end.length], [1, 1]);
+  assert.equal(j(env.gas.apiAll()).claudeWaiting, 1);
+  // registering the same batch twice adds nothing
+  env.gas.apiAnalyzeSession('C3', '2026-10-05', up);
+  assert.equal(JSON.parse(f.getFilesByName('claude-job.json').next().content).shots.present.length, 1);
+
+  const p = n => ({ shown_name: 'x', roster_number: n, confidence: 0.95, alternatives: [] });
+  f.createFile('claude-results.json', JSON.stringify({ present: [{ participants: [p(1)], chat: [], unreadable: 0 }], end: [{ participants: [p(1)], chat: [], unreadable: 0 }] }), 'application/json');
+  env.gas.claudeCheck();
+  assert.equal(env.row('2026-10-05', 'C3', '1001').Status, 'Present');
+  assert.equal(j(env.gas.apiAll()).claudeWaiting, 0);
+  env.gas.claudeCheck(); // nothing waiting: returns at once
+  assert.equal(env.sheet('Inbox log').objects().filter(x => /read by Claude/.test(x.File)).length, 1);
+
+  // Snapshot: reused while nothing changed, rebuilt after an edit
+  const s1 = j(env.gas.apiAll()), s2 = j(env.gas.apiAll());
+  assert.equal(s1.builtAt, s2.builtAt);
+  env.gas.apiSetRecord('C3', '2026-10-05', '1002', { status: 'Tardy' });
+  const s3 = j(env.gas.apiAll());
+  assert.notEqual(s3.gen, s1.gen);
+  assert.equal(s3.classes.C3.students.find(s => s.id === '1002').weeks[0].s, 'T');
+  env.gas.tick(); // the 15-minute job leaves a ready snapshot in Drive too
+  const proc = env.inbox().folders.find(x => x.name === 'Processed');
+  assert.ok(proc.files.some(x => x.name === 'dashboard-snapshot.json'));
 });

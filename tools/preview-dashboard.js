@@ -71,13 +71,15 @@ api.apiStandingSent = api.apiStanding;
 const stub = `window.__API = ${JSON.stringify(api)};
 window.google = { script: { run: (function make(ok, fail) {
   const r = { withSuccessHandler: f => make(f, fail), withFailureHandler: f => make(ok, f) };
-  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots','apiAll','apiMail','apiMailStatus','apiMailToGmail','apiMailForwardExcuse','apiCheckMail','apiMailRedraft','apiStanding','apiStandingSent','apiShotFiles','apiAiReadFile'].forEach(n => {
+  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots','apiAll','apiMail','apiMailStatus','apiMailToGmail','apiMailForwardExcuse','apiCheckMail','apiMailRedraft','apiStanding','apiStandingSent','apiShotFiles','apiAiReadFile','apiPrepareShots','apiClaudeResults'].forEach(n => {
     r[n] = (...a) => setTimeout(() => { let v = window.__API[n]; if (n === 'apiClass') v = v[a[0]] || v.C3; if (n === 'apiProcessNow') v = { files: 0, sent: 0 };
       if (n === 'apiAnswer') v = { note: 'Linked to #12 Malek Bay' };
       if (n === 'apiMailRedraft') v = { draft: 'Hi Ana,\\n\\nGot it, thanks! I sent it to the office.\\n\\nDiego' };
       if (n === 'apiMailForwardExcuse') v = { to: 'office@ivy.edu' };
       if (n === 'apiCheckMail') v = { changed: 0 };
-      if (n === 'apiUploadShot') v = { names: 9 };
+      if (n === 'apiUploadShot') v = { names: 9, phase: a[2], fileId: 'f' + Math.random() };
+      if (n === 'apiPrepareShots') v = { subs: { present: 'p', tardy: 't', end: 'e', populi: 'q' } };
+      if (n === 'apiClaudeResults') v = { lines: [] };
       if (n === 'apiAnalyzeSession') v = { msg: '10 present, 2 tardy, 6 absent. 1 name to confirm' }; ok(v === undefined ? true : v); }, 50);
   });
   return r; })() } };`;
@@ -98,14 +100,14 @@ window.google = { script: { run: (function make(ok, fail) {
   await page.click('.cls[data-class="C3"]'); await shot('2-class');
   await page.click('.wt.ok'); await shot('3-session');
   await page.click('[data-act="ocrTab"][data-p="end"]'); await shot('4-session-last-screenshot');
-  // drop 4 screenshots in "15 min": uploaded 3 at a time, then one analysis
+  // drop 4 screenshots in "15 min": folder prepared once, uploaded 4 at a time, then one analysis
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
   await page.evaluate(() => { const orig = window.google.script.run; window.__calls = [];
     window.google.script.run = new Proxy(orig, { get: (t, k) => k === 'withSuccessHandler' ? (f) => { const r = orig.withSuccessHandler(f);
       return new Proxy(r, { get: (t2, k2) => k2 === 'withFailureHandler' ? (g) => { const r2 = r.withFailureHandler(g);
         return new Proxy(r2, { get: (t3, k3) => (...a) => { window.__calls.push(k3); return r2[k3](...a); } }); } : t2[k2] }); } : t[k] }); });
   await page.setInputFiles('#shotInput', [1, 2, 3, 4].map(n => ({ name: 's' + n + '.png', mimeType: 'image/png', buffer: png })));
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(4000);
   const calls = await page.evaluate(() => window.__calls);
   if (calls.filter(c => c === 'apiUploadShot').length !== 4 || !calls.includes('apiAnalyzeSession')) { console.error('upload calls', calls); process.exit(1); }
   await page.click('[data-go="class"][data-class="C3"]'); await page.waitForTimeout(300); await page.click('.wt.ok'); await page.waitForTimeout(400);
