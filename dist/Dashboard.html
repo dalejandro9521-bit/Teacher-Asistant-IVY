@@ -1195,6 +1195,7 @@ function viewSession() {
       '<span class="small muted">(scheduled ' + esc(d.scheduled) + ')</span></div></div>';
     h += '<div class="stats" id="sessStats"></div>';
     if (d.zoom) h += shotsCard(d);
+    h += correctionCard(d);
     if (open.length) {
       h += '<h2>Confirm these names <span class="muted small">— follow-ups for this class wait until you answer</span></h2>' + open.map(questionCard).join('');
     }
@@ -1209,7 +1210,7 @@ function viewSession() {
     if (d.ocr) h += '<h2>What the screenshots said <span class="muted small">— use this to check that the screenshots are read well</span></h2><div class="card" id="ocrCard">' + ocrPanel(d) + '</div>';
     $('main').innerHTML = h;
     drawSession();
-    if (d.zoom) setupDrops();
+    setupDrops();
   });
 }
 function drawSession() {
@@ -1229,6 +1230,16 @@ function drawSession() {
   $('sessTable').innerHTML = h + '</tbody></table>' +
     '<div class="small muted" style="padding:8px 12px">Keyboard: <span class="kbd">↑</span> <span class="kbd">↓</span> pick a student, then <span class="kbd">P</span> ' + (d.zoom ? '' : '<span class="kbd">T</span> ') + '<span class="kbd">A</span> <span class="kbd">E</span></div>';
   function stat(k, n, l) { return '<div class="card stat ' + k + '"><div class="n">' + n + '</div><div class="small muted">' + l + '</div></div>'; }
+}
+/** Any class, any week already taken: a screenshot of Populi after a change (medical excuse, the office) → Populi wins. */
+function correctionCard(d) {
+  var n = (d.shots || {}).correction || 0;
+  return '<h2>Populi correction <span class="muted small">— a medical excuse or the office changed this week in Populi?</span></h2>' +
+    '<div class="dzs"><div class="card dz corr" data-phase="correction"><b>Drop a screenshot of Populi\'s attendance for this week</b>' +
+    '<div class="small muted">Each student in it gets exactly the status Populi shows (even over your manual edits). Students not in it stay as they are.</div>' +
+    '<div class="dz-n">' + (n ? '<span class="chip good">' + n + ' correction screenshot' + (n === 1 ? '' : 's') + '</span> <a class="small" data-act="clearShots" data-phase="correction">clear</a>' : '<span class="muted small">Drop or click to choose</span>') + '</div></div></div>' +
+    (d.zoom ? '' : '<div id="upStatus" class="small muted" style="margin:6px 2px 0"></div>') +
+    '<input type="file" id="corrInput" accept="image/*" multiple style="display:none">';
 }
 function shotsCard(d) {
   var info = { present: ['15 min', 'Present (minutes 0–15)'], tardy: ['31 min', 'Still Present (minutes 16–30). Online: no Tardy'], end: ['Last screenshot', 'Before you leave (who is still there)'] };
@@ -1262,9 +1273,12 @@ function setupDrops() {
       if (e.target.closest('[data-act]')) return;
       S.activePhase = z.getAttribute('data-phase');
       document.querySelectorAll('.dz').forEach(function (x) { x.classList.toggle('active', x === z); });
-      $('shotInput').click();
+      var inp = S.activePhase === 'correction' ? $('corrInput') : $('shotInput');
+      if (inp) inp.click();
     });
   });
+  var corr = $('corrInput');
+  if (corr) corr.onchange = function () { uploadShots('correction', Array.prototype.slice.call(corr.files)); corr.value = ''; };
   var input = $('shotInput');
   if (input) input.onchange = function () { uploadShots(S.activePhase || 'present', Array.prototype.slice.call(input.files)); input.value = ''; };
 }
@@ -1290,7 +1304,7 @@ function shrink(file) {
 function uploadShots(phase, files) {
   files = files.filter(function (f) { return /^image\//.test(f.type); });
   if (!files.length) { toast('Drop image files (PNG or JPG)', true); return; }
-  var label = { present: '15 min', tardy: '31 min', end: 'last screenshot' }[phase], i = 0, names = 0, aiErr = '';
+  var label = { present: '15 min', tardy: '31 min', end: 'last screenshot', correction: 'Populi correction' }[phase], i = 0, names = 0, aiErr = '';
   var how = S.sess && S.sess.aiOn ? ' with AI' : '';
   var status = function (t) { var el = $('upStatus'); if (el) el.textContent = t; };
   var done = 0, failed = false, subs = null, got = [];

@@ -62,6 +62,9 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
   prefetches classes, and edits are optimistic.
 - Screenshots can be dropped in the dashboard (`apiUploadShot` → OCR → `ocr.json` in the class folder under
   TA Inbox/Processed, then `apiAnalyzeSession`); `apiClearShots` removes one moment.
+- Populi corrections (any class, a week already taken): session page → "Populi correction" drop zone, kind `correction`
+  (folder "Populi corrections"), read by Claude like Populi (`correction:[{rows}]` in claude-results.json); `correctionShots_`
+  gives each listed student Populi's status with `override` (wins over Manual), source "Populi correction" is kept by re-runs.
 - Student names: `apiSetStudentNames` (student page → Edit name / Zoom names) renames (old name kept as a Zoom name),
   sets Zoom names for the same Populi ID in every class, logs to Roster changes and re-reads those classes' screenshots.
 - `table_()` adds missing columns from `SHEETS` on its own (and creates a missing sheet), so updates don't need "Set up" again.

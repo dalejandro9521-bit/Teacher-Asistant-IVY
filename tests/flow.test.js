@@ -739,7 +739,7 @@ test('screenshots dropped in the dashboard: upload → OCR → analysis, clear o
   assert.equal(env.row('2026-10-05', 'C3', '12').Status, 'Present');      // first seen at 31 min (online: no Tardy)
   assert.equal(env.row('2026-10-05', 'C3', '13').Status, 'Absent');
   const se = j(env.gas.apiSession('C3', '2026-10-05'));
-  assert.deepEqual(se.shots, { present: 1, tardy: 1, end: 1 });
+  assert.deepEqual(se.shots, { present: 1, tardy: 1, end: 1, correction: 0 });
   // the files live in Drive under TA Inbox / Processed / HA 105 - Week 01 - 10.05.26
   const done = env.inbox().folders.find(f => f.name === 'Processed');
   const sf = done.folders.find(f => f.name === 'HA 105 - Week 01 - 10.05.26');
@@ -755,7 +755,7 @@ test('screenshots dropped in the dashboard: upload → OCR → analysis, clear o
   env.gas.apiUploadShot('C3', '2026-10-05', 'end', 'shot4.jpg', 'image/jpeg', b64('Ana Uno\nBeto Dos'));
   env.gas.apiAnalyzeSession('C3', '2026-10-05');
   assert.equal(env.row('2026-10-05', 'C3', '11').Status, 'Present');
-  assert.deepEqual(j(env.gas.apiSession('C3', '2026-10-05')).shots, { present: 1, tardy: 1, end: 1 });
+  assert.deepEqual(j(env.gas.apiSession('C3', '2026-10-05')).shots, { present: 1, tardy: 1, end: 1, correction: 0 });
 });
 
 test('A student added after the class started: asked about, "new" adds them from that date, logged, earlier classes not counted', () => {
@@ -1267,4 +1267,43 @@ test('student names from the dashboard: new last name keeps the old one, Zoom na
   assert.equal(st['Zoom names'], 'Bri (iPad); Brian Smith');
   assert.match(env.sheet('Roster changes').objects().at(-1).Change, /Name changed from "Brian Smith"/);
   assert.throws(() => env.gas.apiSetStudentNames('C3', '1002', { name: ' ' }), /cannot be empty/);
+});
+
+test('Populi correction after the class (any class): Populi wins over the screenshots and manual edits, re-runs keep it', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.setConfig('Screenshots read by', 'CLAUDE');
+  const S = env.sheet('Students');
+  [['2001', 'Elena Ramos', 1], ['2002', 'Tom Nguyen', 2], ['2003', 'Grace Okafor', 3]]
+    .forEach(x => S.appendRow([x[0], x[1], '', 'C1', 'Yes', String(x[2])]));
+  const b64 = t => Buffer.from(t).toString('base64');
+  const row = (n, st) => ({ shown_name: 'x', roster_number: n, status: st, confidence: 0.98 });
+  const folder = () => env.gas.DriveApp.getFolderById(env.sheet('Sessions').objects().find(x => x['Class ID'] === 'C1')['Source ID']);
+  // Week taken from Populi in class: 2 absent
+  env.gas.apiUploadShot('C1', '2026-10-05', 'populi', 'p.png', 'image/png', b64('pixels'));
+  env.gas.apiAnalyzeSession('C1', '2026-10-05');
+  folder().createFile('claude-results.json', JSON.stringify({ populi: [{ rows: [row(1, 'Present'), row(2, 'Absent'), row(3, 'Absent')] }] }), 'application/json');
+  env.gas.claudeCheck();
+  assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Absent');
+  env.gas.apiSetRecord('C1', '2026-10-05', '2003', { status: 'Present' });   // Diego's manual edit
+  // Later the office accepts a medical excuse (Tom) and marks Grace absent: Diego drops a Populi screenshot
+  const p = env.gas.apiPrepareShots('C1', '2026-10-05');
+  const up = env.gas.apiUploadShot('C1', '2026-10-05', 'correction', 'fix.png', 'image/png', b64('pixels'), p.subs.correction);
+  const r = env.gas.apiAnalyzeSession('C1', '2026-10-05', [up]);
+  assert.equal(r.waiting, true);
+  const job = JSON.parse(folder().getFilesByName('claude-job.json').next().content);
+  assert.equal(job.status, 'waiting');
+  assert.equal(job.shots.correction.length, 1);
+  assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Absent');        // nothing changes until it is read
+  folder().createFile('claude-results.json', JSON.stringify({ correction: [{ rows: [row(2, 'Excused'), row(3, 'Absent')] }] }), 'application/json');
+  env.gas.claudeCheck();
+  assert.equal(env.row('2026-10-05', 'C1', '2001').Status, 'Present');       // not in the correction: unchanged
+  assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Excused');
+  assert.equal(env.row('2026-10-05', 'C1', '2002').Source, 'Populi correction');
+  assert.equal(env.row('2026-10-05', 'C1', '2003').Status, 'Absent');        // Populi wins over the manual edit
+  const log = env.sheet('Inbox log').objects().filter(x => /read by Claude/.test(x.File)).at(-1);
+  assert.match(log.Result, /Populi correction: 2 changed \(#2 Tom Nguyen Absent → Excused; #3 Grace Okafor Present → Absent\)/);
+  // A re-run of the class (start time changed) keeps the correction
+  env.gas.apiSetStart('C1', '2026-10-05', '9:05');
+  assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Excused');
+  assert.equal(JSON.parse(JSON.stringify(env.gas.apiSession("C1", "2026-10-05"))).shots.correction, 1);
 });

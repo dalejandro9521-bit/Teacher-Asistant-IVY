@@ -2108,8 +2108,8 @@ function applyEntries_(ctx, cls, date, entries) {
     var key = date + '|' + cls.id + '|' + e.student.id, row;
     if (key in idx) {
       row = t.rows[idx[key]];
-      if (t.get(row, 'Source') === 'Manual' || normalizeStatus(t.get(row, 'Status')) === STATUS.E ||
-          /^accepted$/i.test(t.get(row, 'Excuse'))) { out.kept++; return; }
+      if (!e.override && (t.get(row, 'Source') === 'Manual' || t.get(row, 'Source') === 'Populi correction' ||
+          normalizeStatus(t.get(row, 'Status')) === STATUS.E || /^accepted$/i.test(t.get(row, 'Excuse')))) { out.kept++; return; }
       if (t.get(row, 'Status') === e.status && String(t.get(row, 'Left early') === 'Yes') === String(!!e.leftEarly) &&
           (!e.noId || yes_(t.get(row, 'No ID')))) return;
       out.updated++;
@@ -2624,11 +2624,12 @@ function rerunSessions_(ctx, rerun) {
     if (done[id]) return;
     done[id] = true;
     try {
-      if (t.get(r, 'Source') === 'Zoom screenshots') {
-        var folder = DriveApp.getFolderById(id), it = folder.getFilesByName('ocr.json');
-        if (!it.hasNext()) return;
-        var saved = JSON.parse(it.next().getBlob().getDataAsString());
-        var msg = processScreenshotSession_(ctx, cls, date, saved.phases, id, saved.images, saved.ai);
+      if (/screenshot/i.test(t.get(r, 'Source'))) {
+        var folder = DriveApp.getFolderById(id);
+        if (!folder.getFilesByName('ocr.json').hasNext()) return;
+        var saved = readOcrJson_(folder);
+        if (claudeBlocks_(saved.data)) return;
+        var msg = takeFromShots_(ctx, cls, date, folder, saved.data);
         appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (re-run)', 'screenshots', cls.id, date, msg]);
       } else {
         var file = DriveApp.getFileById(id);
@@ -2861,13 +2862,13 @@ function apiSession(classId, date) {
     questions: rowsOf_(ctx.revT).filter(function (q) { return q['Class ID'] === cls.id && parseDateCell(q.Date, y) === date; }),
     ocr: null, aiOn: aiOn_(ctx.cfg, 'aiScreenshots'), aiShots: 0
   };
-  out.shots = { present: 0, tardy: 0, end: 0 };
-  if (srow && st.get(srow, 'Source') === 'Zoom screenshots' && st.get(srow, 'Source ID')) {
+  out.shots = { present: 0, tardy: 0, end: 0, correction: 0 };
+  if (srow && /screenshot/i.test(st.get(srow, 'Source')) && st.get(srow, 'Source ID')) {
     try {
       var folder = DriveApp.getFolderById(st.get(srow, 'Source ID')), it = folder.getFilesByName('ocr.json');
       if (it.hasNext()) {
         var saved = JSON.parse(it.next().getBlob().getDataAsString());
-        ['present', 'tardy', 'end'].forEach(function (k) { out.shots[k] = ((saved.phases || {})[k] || []).length; });
+        ['present', 'tardy', 'end', 'correction'].forEach(function (k) { out.shots[k] = ((saved.phases || {})[k] || []).length; });
         out.ocr = screenshotDiagnostics(saved.phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
           { start: sessionStart_(ctx, cls, date), cfg: ctx.cfg, ai: saved.ai });
         out.aiShots = ['present', 'tardy', 'end'].reduce(function (n, k) { return n + ((saved.ai || {})[k] || []).filter(Boolean).length; }, 0);
@@ -3593,7 +3594,10 @@ function apiMailForwardExcuse(threadId) {
 
 var PHASE_FOLDERS = { present: '1. Present', tardy: '2. Tardy', end: '3. Absent' };
 /** Zoom moments + "populi": a screenshot of Populi's attendance for an in-person class, recorded exactly as marked. */
-var SHOT_KINDS = ['present', 'tardy', 'end', 'populi'];
+var SHOT_KINDS = ['present', 'tardy', 'end', 'populi', 'correction'];
+/** "correction": a screenshot of Populi after the class (medical excuse, change by the office), any class: Populi wins. */
+var EXTRA_FOLDERS = { populi: 'Populi', correction: 'Populi corrections' };
+function shotFolderName_(phase) { return PHASE_FOLDERS[phase] || EXTRA_FOLDERS[phase] || 'Populi'; }
 
 /** The Drive folder that holds this class's screenshots for that date (created under TA Inbox / Processed). */
 function sessionFolder_(ctx, cls, date) {
@@ -3650,7 +3654,8 @@ function apiPrepareShots(classId, date) {
     if (!cls) throw new Error('No class ' + classId);
     var folder = sessionFolder_(ctx, cls, date);
     save_(ctx.sessT);
-    var subs = { populi: claudeReads_(ctx.cfg) ? subfolder_(folder, 'Populi').getId() : '' };
+    var subs = { populi: claudeReads_(ctx.cfg) ? subfolder_(folder, 'Populi').getId() : '',
+      correction: claudeReads_(ctx.cfg) ? subfolder_(folder, 'Populi corrections').getId() : '' };
     Object.keys(PHASE_FOLDERS).forEach(function (k) { subs[k] = subfolder_(folder, PHASE_FOLDERS[k]).getId(); });
     out = { folderId: folder.getId(), subs: subs, claude: claudeReads_(ctx.cfg) };
   });
@@ -3658,7 +3663,7 @@ function apiPrepareShots(classId, date) {
 }
 
 function apiUploadShot(classId, date, phase, name, mime, base64, subId) {
-  if (!PHASE_FOLDERS[phase] && phase !== 'populi') throw new Error('Unknown moment: ' + phase);
+  if (SHOT_KINDS.indexOf(phase) < 0) throw new Error('Unknown moment: ' + phase);
   if (subId) return uploadFast_(classId, phase, name, mime, base64, subId);
   var ctx, cls, folder, file;
   // 1. Save the image (locked: the class folder must be created once).
@@ -3668,8 +3673,8 @@ function apiUploadShot(classId, date, phase, name, mime, base64, subId) {
     folder = sessionFolder_(ctx, cls, date);
     save_(ctx.sessT);
     var blob = Utilities.newBlob(Utilities.base64Decode(base64), mime || 'image/jpeg', name || 'screenshot.jpg');
-    if (phase === 'populi' && !claudeReads_(ctx.cfg)) throw new Error('Populi screenshots are read by Claude: set "Screenshots read by" to CLAUDE in Config.');
-    file = subfolder_(folder, PHASE_FOLDERS[phase] || 'Populi').createFile(blob);
+    if (EXTRA_FOLDERS[phase] && !claudeReads_(ctx.cfg)) throw new Error('Populi screenshots are read by Claude: set "Screenshots read by" to CLAUDE in Config.');
+    file = subfolder_(folder, shotFolderName_(phase)).createFile(blob);
   });
   if (!file) throw new Error('Busy — try again in a few seconds.');
   // 2. Read it (slow, so not locked): free OCR always, and Claude when it is on. With CLAUDE, Claude reads it from Drive later.
@@ -3701,7 +3706,7 @@ function apiUploadShot(classId, date, phase, name, mime, base64, subId) {
 
 /** One screenshot into a folder from apiPrepareShots: no lock, no ocr.json; apiAnalyzeSession registers the batch. */
 function uploadFast_(classId, phase, name, mime, base64, subId) {
-  if (phase === 'populi' && !subId) throw new Error('Populi screenshots are read by Claude: set "Screenshots read by" to CLAUDE in Config.');
+  if (EXTRA_FOLDERS[phase] && !subId) throw new Error('Populi screenshots are read by Claude: set "Screenshots read by" to CLAUDE in Config.');
   var blob = Utilities.newBlob(Utilities.base64Decode(base64), mime || 'image/jpeg', name || 'screenshot.jpg');
   var file = DriveApp.getFolderById(subId).createFile(blob), cfg = config_(), claude = claudeReads_(cfg);
   var text = claude ? '' : ocrText_(file), ai = null, aiError = '';
@@ -3781,7 +3786,7 @@ function apiClearShots(classId, date, phase) {
   withLock_(function () {
     var ctx = load_(), cls = classById_(ctx, classId), folder = sessionFolder_(ctx, cls, date);
     save_(ctx.sessT);
-    var sub = subfolder_(folder, PHASE_FOLDERS[phase] || 'Populi'), files = sub.getFiles();
+    var sub = subfolder_(folder, shotFolderName_(phase)), files = sub.getFiles();
     while (files.hasNext()) files.next().setTrashed(true);
     var saved = readOcrJson_(folder);
     saved.data.images = Math.max(0, (saved.data.images || 0) - saved.data.phases[phase].length);
@@ -3808,6 +3813,8 @@ function claudeReads_(cfg) { return /^claude$/i.test(String(cfg.screenshotReader
  * Populi (in person): only while none is read: each Populi screenshot stands on its own, so a re-upload never blocks.
  */
 function claudeBlocks_(data) {
+  // A Populi correction waits for its own reading (the class itself was already taken).
+  if (data.phases.correction.some(function (t, i) { return !t && !data.ai.correction[i]; })) return true;
   var zoom = ['present', 'tardy', 'end'].some(function (k) { return data.phases[k].length; });
   if (zoom || !data.phases.populi.length) return claudeUnread_(data) > 0;
   return !data.ai.populi.some(Boolean);
@@ -3826,7 +3833,8 @@ function claudeJob_(ctx, cls, date, folder, data) {
   });
   var job = {
     status: claudeUnread_(data) ? 'waiting' : 'done', classId: cls.id, course: classLabel(cls), date: date,
-    kind: data.phases.populi.length ? 'populi' : 'zoom',
+    // shots.correction (any class): Populi screenshots taken later; read them like Populi, results under "correction".
+    kind: data.phases.populi.length ? 'populi' : ['present', 'tardy', 'end'].some(function (k) { return data.phases[k].length; }) ? 'zoom' : 'correction',
     start: minToLabel(sessionStart_(ctx, cls, date)),
     ignore: String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
     roster: st.rows.map(function (r) { return studentFrom_(st, r); })
@@ -3899,10 +3907,44 @@ function claudeApply_(ctx) {
   return out;
 }
 
-/** Attendance from the screenshots of a class: Populi screenshots as marked, else the Zoom moments rule. */
+/**
+ * Attendance from the screenshots of a class: Populi screenshots as marked, else the Zoom moments rule; then any Populi
+ * corrections (taken later) on top, so they always win.
+ */
 function takeFromShots_(ctx, cls, date, folder, data) {
-  if (data.phases.populi.length) return populiShots_(ctx, cls, date, folder, data);
-  return processScreenshotSession_(ctx, cls, date, data.phases, folder.getId(), data.images || 0, data.ai);
+  var msg = '';
+  if (data.phases.populi.length) msg = populiShots_(ctx, cls, date, folder, data);
+  else if (['present', 'tardy', 'end'].some(function (k) { return data.phases[k].length; })) {
+    msg = processScreenshotSession_(ctx, cls, date, data.phases, folder.getId(), (data.images || 0) - data.phases.correction.length, data.ai);
+  }
+  if (data.ai.correction.some(Boolean)) msg = (msg ? msg + ' ' : '') + correctionShots_(ctx, cls, date, data);
+  return msg;
+}
+
+/**
+ * Populi after the class (a medical excuse accepted, a change by the office): every student Claude read gets exactly
+ * Populi's status, even over a manual edit, and later re-runs keep it (source "Populi correction"). Students not in the
+ * screenshot are not touched. The newest screenshot wins.
+ */
+function correctionShots_(ctx, cls, date, data) {
+  var roster = roster_(ctx, cls.id), byOrder = {}, got = {}, entries = [], unsure = [], changed = [];
+  roster.forEach(function (s) { if (s.order) byOrder[s.order] = s; });
+  data.ai.correction.slice().reverse().forEach(function (r) {
+    ((r || {}).rows || []).forEach(function (x) {
+      var s = byOrder[x.roster_number], st = POPULI_STATUS[String(x.status || '').toLowerCase()];
+      if (!s || !st || (x.confidence != null && x.confidence < AI_SURE)) { unsure.push((x.shown_name || '?') + (x.status ? ' (' + x.status + ')' : '')); return; }
+      if (got[s.id]) return;
+      got[s.id] = true;
+      if (isOnlineClass(cls) && st === STATUS.T) st = STATUS.P;
+      var row = attRow_(ctx, cls.id, date, s.id), before = row ? normalizeStatus(ctx.att.get(row, 'Status')) : '';
+      if (before !== st) changed.push('#' + (s.order || '?') + ' ' + s.name + ' ' + (before || 'no status') + ' → ' + st);
+      var note = String(x.note || '').trim();
+      entries.push({ student: s, status: st, source: 'Populi correction', override: true, notes: 'Corrected from Populi on ' + today_() + (note ? ': ' + note : '') });
+    });
+  });
+  applyEntries_(ctx, cls, date, entries);
+  return 'Populi correction: ' + (changed.length ? changed.length + ' changed (' + changed.join('; ') + ')' : 'no changes') +
+    (unsure.length ? '. Could not match: ' + unsure.join('; ') : '') + '.';
 }
 
 var POPULI_STATUS = { present: STATUS.P, tardy: STATUS.T, absent: STATUS.A, excused: STATUS.E };
