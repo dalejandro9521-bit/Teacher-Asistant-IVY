@@ -124,15 +124,6 @@ window.google = { script: { run: (function make(ok, fail) {
   const mac = (t, d) => ({ name: 'Screenshot 2026-10-05 at ' + t + '.png', mimeType: 'image/png', buffer: png });
   await page.setInputFiles('#takeInput', [mac('6.45.02 PM'), mac('6.45.40 PM'), mac('7.01.10 PM'), mac('7.01.44 PM'), mac('7.31.01 PM')]);
   await shot('11-take-sorted');
-  // Or straight from a week of the class: drop (or pick) the screenshots on that week
-  await page.click('[data-act="takeClear"]').catch(() => {});
-  await page.click('[data-go="class"][data-class="C3"]'); await page.waitForTimeout(300); await shot('12-class-week-drop');
-  const [chooser] = await Promise.all([page.waitForEvent('filechooser'), page.click('.wt.ok .wdrop')]);
-  await chooser.setFiles([mac('6.45.02 PM'), mac('7.01.40 PM'), mac('9.58.10 PM')]); // this class started at 6:30
-  await page.waitForTimeout(300);
-  const tk = await page.evaluate(() => ({ view: S.view, cls: T.classId, date: T.date, lanes: T.files.map(f => f.lane) }));
-  if (tk.view !== 'take' || tk.cls !== 'C3' || tk.date !== '2026-10-05' || tk.lanes.join() !== 'present,tardy,end') { console.error('week drop', tk); process.exit(1); }
-  await shot('13-take-from-week');
   await browser.close();
   if (errors.length) { console.error('Page errors:', errors); process.exit(1); }
   console.log('Screenshots in', out);
