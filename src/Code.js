@@ -176,14 +176,14 @@ function showInbox() {
 
 /* ---------- main jobs ---------- */
 
-/** Every 15 minutes: read new files, apply manual flags, email notices, refresh the summary. */
+/** Every 15 minutes: read new files and emails, apply manual flags, write notices, refresh the summary. */
 function tick() {
-  withLock_(function () {
-    var r = runAll_(load_());
-    if (r.files || r.sent || r.office) {
-      toast_((r.files ? r.files + ' file(s) processed. ' : '') + r.sent + ' student notice(s), ' + r.office + ' office notice(s).');
-    }
-  });
+  var r = null;
+  var ran = withJob_(function () { r = runAll_(load_()); });
+  if (!ran) return; // the previous run is still going
+  if (r.files || r.sent || r.office) {
+    toast_((r.files ? r.files + ' file(s) processed. ' : '') + r.sent + ' student notice(s), ' + r.office + ' office notice(s).');
+  }
 }
 
 /**
@@ -200,34 +200,29 @@ function runLight_(ctx) {
   return { files: 0, reruns: reruns, sent: sent, office: office, log: [] };
 }
 
-/** Everything the 15-minute job does, on an already loaded context. */
+/**
+ * Everything the 15-minute job does. The slow part (Drive inbox, OCR, Gmail) runs without the lock, so the dashboard
+ * never waits for it; then the decisions (answers, notices) run on a fresh copy of the sheets, under the lock.
+ */
 function runAll_(ctx) {
   var log = processInbox_(ctx);
-  var reruns = rerunSessions_(ctx, answerQuestions_(ctx));
-  applyManualFlags_(ctx);
-  save_(ctx.att);
-  save_(ctx.studentsT);
-  save_(ctx.sessT);
-  save_(ctx.revT);
-  var sent = sendPendingNotices_(ctx);
-  var office = checkNoId_(ctx);
-  save_(ctx.att);
+  save_(ctx.att); save_(ctx.studentsT); save_(ctx.sessT); save_(ctx.revT);
   var mail = 0;
   try { mail = scanMail_(ctx); } catch (e) { appendRow_('Inbox log', [nowStr_(), 'Gmail', 'error', '', '', String(e && e.message || e)]); }
   save_(ctx.att);
+  var r = null;
+  withLock_(function () { ctx = load_(); r = runLight_(ctx); });
   refreshSummary_(ctx);
   refreshGrids_(ctx);
-  return { files: log.length, reruns: reruns, sent: sent, office: office, mail: mail, log: log };
+  return { files: log.length, reruns: r.reruns, sent: r.sent, office: r.office, mail: mail, log: log };
 }
 
 function weeklyReport() {
-  withLock_(function () {
-    var ctx = load_();
-    var r = reportForWeek_(ctx, termWeek(today_(), ctx.cfg.termStart) || 1, weekBounds(today_()).start);
-    deliver_(ctx, 'Weekly report', ctx.cfg.reportTo || ctx.cfg.replyTo, r, { send: true });
-    refreshSummary_(ctx);
-    refreshGrids_(ctx);
-  });
+  var ctx = load_();
+  var r = reportForWeek_(ctx, termWeek(today_(), ctx.cfg.termStart) || 1, weekBounds(today_()).start);
+  deliver_(ctx, 'Weekly report', ctx.cfg.reportTo || ctx.cfg.replyTo, r, { send: true });
+  refreshSummary_(ctx);
+  refreshGrids_(ctx);
 }
 
 /** Monday of week N of the term ("Term start" in Config is week 1). */
@@ -583,7 +578,7 @@ function applyManualFlags_(ctx) {
 /* ---------- emails ---------- */
 
 function sendPendingNotices_(ctx) {
-  var t = ctx.att, cfg = ctx.cfg, totals = tally(records_(ctx), cfg), y = yearOf_(ctx);
+  var t = ctx.att, cfg = ctx.cfg, totals = totals_(ctx), y = yearOf_(ctx);
   var since = parseDateCell(cfg.noticesFrom, y), populi = mode_(cfg) === 'POPULI', pending = [];
   t.rows.forEach(function (r) {
     var st = normalizeStatus(t.get(r, 'Status'));
@@ -687,7 +682,7 @@ function deliver_(ctx, type, to, msg, opts) {
 }
 
 function refreshSummary_(ctx) {
-  var totals = tally(records_(ctx), ctx.cfg), out = [];
+  var totals = totals_(ctx), out = [];
   ctx.students.filter(function (s) { return s.active; }).forEach(function (s) {
     var cls = classById_(ctx, s.classId), t = totals[s.classId + '|' + s.id] || emptyTally(ctx.cfg);
     out.push([s.classId, cls ? classLabel(cls) : '', s.id, s.name, s.email, t.absences, t.tardies, t.excused, t.effective,
@@ -697,9 +692,20 @@ function refreshSummary_(ctx) {
   out.sort(function (a, b) { return a[0].localeCompare(b[0]) || order[a[11]] - order[b[11]] || a[12] - b[12]; });
   out = out.map(function (r) { return r.slice(0, 12); });
   var sh = ss_().getSheetByName('Summary');
+  if (unchanged_('Summary', out, sh)) return; // nothing new: leave the sheet alone
   sh.clearContents();
   sh.getRange(1, 1, 1, SHEETS.Summary.length).setValues([SHEETS.Summary]);
   if (out.length) sh.getRange(2, 1, out.length, SHEETS.Summary.length).setValues(out);
+}
+
+/** True when a derived sheet already shows exactly this content (remembered as a short fingerprint). */
+function unchanged_(name, rows, sh) {
+  var json = JSON.stringify(rows), h = 5381;
+  for (var i = 0; i < json.length; i++) h = ((h * 33) ^ json.charCodeAt(i)) | 0;
+  var sig = json.length + ':' + h, props = PropertiesService.getScriptProperties(), key = 'sig:' + name;
+  if (sh && sh.getLastRow() > 0 && props.getProperty(key) === sig) return true;
+  props.setProperty(key, sig);
+  return false;
 }
 
 var GRID_COLORS = { P: '#d9ead3', T: '#fff2cc', A: '#f4cccc', E: '#cfe2f3' };
@@ -709,7 +715,7 @@ var GRID_COLORS = { P: '#d9ead3', T: '#fff2cc', A: '#f4cccc', E: '#cfe2f3' };
  * per week with P / T / A / E, then the totals. Rebuilt on every run, so never type in it — edit Attendance instead.
  */
 function refreshGrids_(ctx) {
-  var recs = records_(ctx), totals = tally(recs, ctx.cfg), ss = ss_();
+  var recs = records_(ctx), totals = totals_(ctx), ss = ss_();
   ctx.classes.filter(function (c) { return c.active; }).forEach(function (cls) {
     var roster = roster_(ctx, cls.id), mine = recs.filter(function (r) { return r.classId === cls.id; });
     var dates = mine.map(function (r) { return r.date; }).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
@@ -729,7 +735,9 @@ function refreshGrids_(ctx) {
       return [String(s.order || i + 1), s.name].concat(dates.map(function (d) { return cell[s.id + '|' + d] || ''; }),
         [t.absences, t.tardies, t.effective, Math.max(0, t.remaining), t.pct + '%', STATE_LABEL[t.state]].map(String));
     });
-    var name = 'Grid ' + cls.id, sh = ss.getSheetByName(name) || ss.insertSheet(name);
+    var name = 'Grid ' + cls.id, sh = ss.getSheetByName(name);
+    if (unchanged_(name, [header].concat(rows), sh)) return;
+    sh = sh || ss.insertSheet(name);
     sh.clear();
     sh.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold');
     sh.setFrozenRows(1);
@@ -958,7 +966,7 @@ function apiOverview() {
 
 function overview_(ctx) {
   ctx = ctx || load_();
-  var recs = records_(ctx), totals = tally(recs, ctx.cfg), y = yearOf_(ctx);
+  var recs = records_(ctx), totals = totals_(ctx), y = yearOf_(ctx);
   var classes = ctx.classes.filter(function (c) { return c.active; }).map(function (cls) {
     var roster = roster_(ctx, cls.id), mine = recs.filter(function (r) { return r.classId === cls.id; });
     var dates = mine.map(function (r) { return r.date; }).filter(function (d, i, a) { return a.indexOf(d) === i; }).sort();
@@ -1478,7 +1486,7 @@ function gmailLabel_(name) {
 function mailStudent_(ctx, email) {
   var mine = ctx.students.filter(function (s) { return s.active && String(s.email).toLowerCase() === email; });
   if (!mine.length) return null;
-  var recs = records_(ctx), totals = tally(recs, ctx.cfg);
+  var recs = records_(ctx), totals = totals_(ctx);
   return {
     id: mine[0].id, name: mine[0].name, email: email,
     classes: mine.map(function (s) {
@@ -1550,12 +1558,22 @@ function markExcuseFromMail_(ctx, who, classDate) {
  * Student emails of the last days: one row per thread in "Mail". New student messages are sorted and get a reply draft
  * (Claude when on, otherwise a template). Answered threads (your reply is the last message) close on their own.
  */
-function scanMail_(ctx, budgetMs) {
+function scanMail_(ctx, budgetMs, full) {
   var cfg = ctx.cfg, me = myEmails_(cfg), mt = table_('Mail'), byId = {}, n = 0, t0 = Date.now();
   budgetMs = budgetMs || 150000; // Apps Script stops a run at 6 minutes: what is left waits for the next run
   mt.rows.forEach(function (r) { byId[mt.get(r, 'Thread ID')] = r; });
-  var useAi = aiOn_(cfg, 'aiMail'), labels = null;
-  var threads = GmailApp.search('in:inbox newer_than:' + (cfg.mailDays || 14) + 'd', 0, 100);
+  var useAi = aiOn_(cfg, 'aiMail'), labels = null, outOfTime = false;
+  // Speed: between full looks (every 6 hours, or "Check now"), only threads with something new since the last look.
+  var props = PropertiesService.getScriptProperties(), nowS = Math.floor(Date.now() / 1000);
+  var last = +props.getProperty('mailScanAt') || 0, lastFull = +props.getProperty('mailFullAt') || 0;
+  full = full || !last || nowS - lastFull > 6 * 3600;
+  var q = 'in:inbox newer_than:' + (cfg.mailDays || 14) + 'd', threads;
+  if (full) threads = GmailApp.search(q, 0, 100);
+  else {
+    var seen = {};
+    threads = GmailApp.search(q + ' after:' + (last - 300), 0, 100).concat(GmailApp.search('in:sent after:' + (last - 300), 0, 50))
+      .filter(function (th) { var id = th.getId(); if (seen[id]) return false; seen[id] = true; return true; });
+  }
   threads.forEach(function (th) {
     var msgs = threadMessages_(th, me), students = msgs.filter(function (m) { return !m.mine; });
     if (!students.length) return;
@@ -1578,7 +1596,7 @@ function scanMail_(ctx, budgetMs) {
     }
     if (mt.get(r, 'Last message ID') === last.id) return; // nothing new since the last look
     var res = null, by = 'rules';
-    if (useAi && Date.now() - t0 > budgetMs) { if (!mt.get(r, 'Status')) mt.set(r, 'Status', 'Needs reply'); return; }
+    if (useAi && Date.now() - t0 > budgetMs) { outOfTime = true; if (!mt.get(r, 'Status')) mt.set(r, 'Status', 'Needs reply'); return; }
     if (useAi) {
       try { res = aiMail_(ctx, who, msgs); by = 'AI'; } catch (e) { by = 'rules (AI error: ' + String(e && e.message || e).slice(0, 80) + ')'; }
     }
@@ -1601,6 +1619,10 @@ function scanMail_(ctx, budgetMs) {
     n++;
   });
   save_(mt);
+  if (!outOfTime) { // what was left for later is looked at again next time
+    props.setProperty('mailScanAt', String(nowS));
+    if (full) props.setProperty('mailFullAt', String(nowS));
+  }
   return n;
 }
 
@@ -1632,7 +1654,8 @@ function apiMail() { return mail_(load_()); }
 /** Look for new student emails now (instead of waiting for the 15-minute job). */
 function apiCheckMail() {
   var n = 0;
-  withLock_(function () { var ctx = load_(); n = scanMail_(ctx); save_(ctx.att); });
+  var ran = withJob_(function () { var ctx = load_(); n = scanMail_(ctx, 0, true); save_(ctx.att); });
+  if (!ran) return { changed: 0, busy: true };
   return { changed: n };
 }
 
@@ -1832,8 +1855,8 @@ function apiClearShots(classId, date, phase) {
 }
 
 function apiProcessNow() {
-  var res;
-  withLock_(function () { res = runAll_(load_()); });
+  var res = null;
+  withJob_(function () { res = runAll_(load_()); });
   return res || { busy: true };
 }
 
@@ -1851,10 +1874,35 @@ function toast_(msg) {
   try { ss_().toast(msg, 'TA Attendance', 8); } catch (e) { /* no UI in triggers */ }
 }
 
-function withLock_(fn) {
+/*
+ * Locks. Sheet writes take the script lock only for a moment (save_ → locked_). Dashboard edits hold it while they
+ * read, change and save (a second or two). The slow jobs (Drive inbox, OCR, Gmail) never hold it: withJob_ only keeps
+ * two jobs from running at once.
+ */
+var LOCK_DEPTH_ = 0;
+function locked_(fn) {
+  if (LOCK_DEPTH_) return fn();
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(30000)) return;
-  try { fn(); } finally { lock.releaseLock(); }
+  if (!lock.tryLock(30000)) throw new Error('The sheet is busy. Try again in a few seconds.');
+  LOCK_DEPTH_++;
+  try { return fn(); } finally { LOCK_DEPTH_--; lock.releaseLock(); }
+}
+
+/** A dashboard edit: read, change and save under the lock. Errors reach the page (never a silent skip). */
+function withLock_(fn) { return locked_(fn); }
+
+/** A background job (inbox, emails). Returns false without running when another job is still going. */
+function withJob_(fn) {
+  var props = PropertiesService.getScriptProperties(), now = Date.now();
+  var mine = locked_(function () {
+    var until = +props.getProperty('jobUntil') || 0;
+    if (until > now) return false;
+    props.setProperty('jobUntil', String(now + 6 * 60000)); // Apps Script stops any run at 6 minutes
+    return true;
+  });
+  if (!mine) return false;
+  try { fn(); } finally { props.setProperty('jobUntil', '0'); }
+  return true;
 }
 
 function subfolder_(folder, name) {
@@ -1871,7 +1919,7 @@ function dateFromName_(name) {
   return '';
 }
 
-/** A sheet as a header-addressable table of display strings. */
+/** A sheet as a header-addressable table of display strings. Remembers each row as read, so save_ writes only changes. */
 function table_(name) {
   var sh = ss_().getSheetByName(name);
   if (!sh && SHEETS[name] && name !== 'Config') {
@@ -1890,16 +1938,102 @@ function table_(name) {
     sh.getRange(1, header.length + 1, 1, missing.length).setValues([missing]);
     header = header.concat(missing);
   }
-  vals = vals.map(function (r) { while (r.length < header.length) r.push(''); return r; });
-  var col = {};
+  var col = {}, rows = [], at = [];
   header.forEach(function (h, i) { if (h && !(h in col)) col[h] = i; });
-  return {
-    sheet: sh, header: header, col: col,
-    rows: vals.slice(1).filter(function (r) { return r.some(String); }),
+  vals.slice(1).forEach(function (r, i) {
+    while (r.length < header.length) r.push('');
+    if (r.some(String)) { rows.push(r); at.push(i + 2); }
+  });
+  var t = {
+    name: name, sheet: sh, header: header, col: col, rows: rows, ver: 0,
+    at: at, orig: rows.map(function (r) { return r.slice(); }), // sheet row number and values of each row as read
     get: function (r, k) { return k in col ? String(r[col[k]] == null ? '' : r[col[k]]).trim() : ''; },
-    set: function (r, k, v) { if (k in col) r[col[k]] = v; }
+    set: function (r, k, v) { if (k in col && r[col[k]] !== v) { r[col[k]] = v; t.ver++; } }
   };
+  return t;
 }
+
+/* Columns that identify a row, so a save lands on the right row even if the sheet moved under us. */
+var TABLE_KEYS = {
+  Attendance: ['Date', 'Class ID', 'Student ID'], Students: ['Student ID', 'Class ID'], Sessions: ['Class ID', 'Date'],
+  Review: ['Created', 'Class ID', 'Date', 'Name seen'], Mail: ['Thread ID'], Assignments: ['Class ID', 'Title', 'Due date'],
+  'Follow-ups': ['Created', 'Type', 'Class', 'Class date', 'Roster #']
+};
+
+function rowKey_(t, r) {
+  var keys = TABLE_KEYS[t.name];
+  if (!keys) return null;
+  return keys.map(function (k) { return k in t.col ? String(r[t.col[k]] == null ? '' : r[t.col[k]]).trim() : ''; }).join('|');
+}
+
+function cellStr_(v) { return v == null ? '' : String(v); }
+
+/**
+ * Writes only what this run changed. Under the script lock, the rows are read again and only the cells this run
+ * changed are put on top, so a dashboard click and the 15-minute job never undo each other. Returns the rows written.
+ */
+function save_(t) {
+  var n = t.header.length, changed = [], added = [];
+  t.rows.forEach(function (r, i) {
+    if (i >= t.orig.length) { added.push(i); return; }
+    for (var j = 0; j < n; j++) if (cellStr_(r[j]) !== cellStr_(t.orig[i][j])) { changed.push(i); return; }
+  });
+  if (!changed.length && !added.length) return 0;
+  var written = 0;
+  locked_(function () {
+    var sh = t.sheet, last = sh.getLastRow();
+    var cur = last >= 2 ? sh.getRange(2, 1, last - 1, n).getDisplayValues() : [];
+    var byKey = null;
+    var findKey = function (k) {
+      if (!byKey) { byKey = {}; cur.forEach(function (r, i) { var kk = rowKey_(t, r); if (kk && !(kk in byKey)) byKey[kk] = i + 2; }); }
+      return byKey[k] || 0;
+    };
+    var out = {}; // sheet row → values
+    changed.forEach(function (i) {
+      var r = t.rows[i], o = t.orig[i], at = t.at[i], key = rowKey_(t, o);
+      if (key != null && (!cur[at - 2] || rowKey_(t, cur[at - 2]) !== key)) at = findKey(key); // rows moved: find it again
+      if (!at || !cur[at - 2]) { added.push(i); return; }
+      var merged = out[at] || cur[at - 2].slice();
+      for (var j = 0; j < n; j++) if (cellStr_(r[j]) !== cellStr_(o[j])) merged[j] = cellStr_(r[j]);
+      out[at] = merged; t.at[i] = at;
+    });
+    // A new row whose key is already in the sheet (added meanwhile by another run) updates that row instead.
+    var append = [];
+    added.forEach(function (i) {
+      var r = t.rows[i], key = rowKey_(t, r), at = key != null ? findKey(key) : 0;
+      if (at) {
+        var merged = out[at] || cur[at - 2].slice();
+        for (var j = 0; j < n; j++) if (cellStr_(r[j]) !== '') merged[j] = cellStr_(r[j]);
+        out[at] = merged; t.at[i] = at;
+      } else append.push(i);
+    });
+    var nums = Object.keys(out).map(Number).sort(function (a, b) { return a - b; });
+    if (nums.length) {
+      var runs = [], run = [nums[0]];
+      for (var k = 1; k < nums.length; k++) {
+        if (nums[k] === run[run.length - 1] + 1) run.push(nums[k]); else { runs.push(run); run = [nums[k]]; }
+      }
+      runs.push(run);
+      if (runs.length > 3) runs = [rangeOf_(nums[0], nums[nums.length - 1])]; // many scattered rows: one write is faster
+      runs.forEach(function (rs) {
+        sh.getRange(rs[0], 1, rs.length, n).setValues(rs.map(function (x) { return out[x] || cur[x - 2]; }));
+      });
+      written += nums.length;
+    }
+    if (append.length) {
+      var start = Math.max(last, 1) + 1;
+      sh.getRange(start, 1, append.length, n).setValues(append.map(function (i) { return t.rows[i].slice(0, n).map(cellStr_); }));
+      append.forEach(function (i, k) { t.at[i] = start + k; });
+      written += append.length;
+    }
+  });
+  t.orig = t.rows.map(function (r) { return r.slice(); });
+  while (t.at.length < t.rows.length) t.at.push(0);
+  bumpCache_();
+  return written;
+}
+
+function rangeOf_(a, b) { var out = []; for (var i = a; i <= b; i++) out.push(i); return out; }
 
 function blankRow_(t) { return t.header.map(function () { return ''; }); }
 
@@ -1907,20 +2041,32 @@ function blankRow_(t) { return t.header.map(function () { return ''; }); }
 function cache_() { try { return CacheService.getScriptCache(); } catch (e) { return null; } }
 function cacheGen_() { var c = cache_(); return (c && c.get('gen')) || '0'; }
 function bumpCache_() { var c = cache_(); if (c) c.put('gen', String(Date.now()) + Math.random(), 21600); }
+// CacheService keeps at most 100 KB per key: big answers (apiAll) are split in pieces.
+var CACHE_PIECE_ = 40000;
 function cacheGet_(key) {
   var c = cache_(); if (!c) return null;
-  var v = c.get(cacheGen_() + ':' + key);
-  try { return v ? JSON.parse(v) : null; } catch (e) { return null; }
+  var k = cacheGen_() + ':' + key, head = c.get(k);
+  if (!head) return null;
+  try {
+    var m = head.match(/^pieces:(\d+)$/);
+    if (!m) return JSON.parse(head);
+    var names = []; for (var i = 0; i < +m[1]; i++) names.push(k + '#' + i);
+    var got = c.getAll ? c.getAll(names) : names.reduce(function (o, n) { o[n] = c.get(n); return o; }, {});
+    var text = names.map(function (n) { return got[n]; });
+    if (text.some(function (x) { return x == null; })) return null;
+    return JSON.parse(text.join(''));
+  } catch (e) { return null; }
 }
 function cachePut_(key, obj, seconds) {
   var c = cache_(); if (!c) return;
-  try { c.put(cacheGen_() + ':' + key, JSON.stringify(obj), seconds || 300); } catch (e) { /* too big to cache: fine */ }
-}
-
-function save_(t) {
-  bumpCache_();
-  if (!t.rows.length) return;
-  t.sheet.getRange(2, 1, t.rows.length, t.header.length).setValues(t.rows);
+  var k = cacheGen_() + ':' + key, text = JSON.stringify(obj);
+  try {
+    if (text.length <= CACHE_PIECE_) { c.put(k, text, seconds || 300); return; }
+    var pieces = {}, n = Math.ceil(text.length / CACHE_PIECE_);
+    for (var i = 0; i < n; i++) pieces[k + '#' + i] = text.slice(i * CACHE_PIECE_, (i + 1) * CACHE_PIECE_);
+    if (c.putAll) c.putAll(pieces, seconds || 300); else Object.keys(pieces).forEach(function (p) { c.put(p, pieces[p], seconds || 300); });
+    c.put(k, 'pieces:' + n, seconds || 300);
+  } catch (e) { /* the cache is only a shortcut */ }
 }
 
 function appendRow_(name, row) {
@@ -1997,7 +2143,23 @@ function rosterByClass_(ctx) {
   return out;
 }
 
+/** Attendance rows as records (parsed once per request, again only after a change). */
 function records_(ctx) {
+  var t = ctx.att, stamp = t.ver + ':' + t.rows.length;
+  if (ctx._recs && ctx._recsAt === stamp) return ctx._recs;
+  ctx._recsAt = stamp;
+  return (ctx._recs = records0_(ctx));
+}
+
+/** Totals per class|student over all records (memoized like records_). */
+function totals_(ctx) {
+  var recs = records_(ctx);
+  if (ctx._totals && ctx._totalsOf === recs) return ctx._totals;
+  ctx._totalsOf = recs;
+  return (ctx._totals = tally(recs, ctx.cfg));
+}
+
+function records0_(ctx) {
   var t = ctx.att, y = yearOf_(ctx);
   return t.rows.map(function (r) {
     return {

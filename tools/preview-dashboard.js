@@ -75,6 +75,7 @@ window.google = { script: { run: (function make(ok, fail) {
   // The fake google.script.run goes in before the page's own script.
   const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'Dashboard.html'), 'utf8')
     .replace('<script>', '<script>' + stub + '</script>\n<script>');
+  fs.writeFileSync(path.join(out, 'dashboard.html'), html); // the page itself, with made-up data, to open in a browser
   const errors = [];
   page.on('pageerror', e => { errors.push(e.message); console.error('PAGE ERROR', e.message); });
   await page.route('**/fonts.googleapis.com/**', r => r.abort()); // no network here; the system font is the fallback

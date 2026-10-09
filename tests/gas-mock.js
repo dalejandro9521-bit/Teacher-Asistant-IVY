@@ -17,9 +17,12 @@ function makeEnv(opts) {
   }
 
   /* ---- Sheets ---- */
+  // Each call to the Sheets service is slow in Apps Script: tests count them (reads, writes, formatting).
+  const calls = { read: 0, write: 0, format: 0, reset() { this.read = 0; this.write = 0; this.format = 0; } };
   class Range {
     constructor(sheet, r, c, nr, nc) { Object.assign(this, { sheet, r, c, nr, nc }); }
     getDisplayValues() {
+      calls.read++;
       const out = [];
       for (let i = 0; i < this.nr; i++) {
         const row = [];
@@ -33,17 +36,18 @@ function makeEnv(opts) {
     }
     getValues() { return this.getDisplayValues(); }
     setValues(vals) {
+      calls.write++;
       if (vals.length !== this.nr || vals.some(r => r.length !== this.nc)) {
         throw new Error(`setValues: data ${vals.length}x${vals[0] && vals[0].length} != range ${this.nr}x${this.nc}`);
       }
       vals.forEach((row, i) => row.forEach((v, j) => this.sheet.put(this.r + i, this.c + j, v)));
       return this;
     }
-    setValue(v) { this.sheet.put(this.r, this.c, v); return this; }
+    setValue(v) { calls.write++; this.sheet.put(this.r, this.c, v); return this; }
     setFontWeight() { return this; }
     setNumberFormat() { return this; }
     setDataValidation() { return this; }
-    setBackgrounds(b) { this.sheet.backgrounds = b; return this; }
+    setBackgrounds(b) { calls.format++; this.sheet.backgrounds = b; return this; }
     getSheet() { return this.sheet; }
     getRow() { return this.r; }
     getColumn() { return this.c; }
@@ -65,9 +69,9 @@ function makeEnv(opts) {
     getMaxRows() { return Math.max(1000, this.data.length); }
     getRange(r, c, nr, nc) { return new Range(this, r, c, nr || 1, nc || 1); }
     getDataRange() { return new Range(this, 1, 1, Math.max(1, this.getLastRow()), Math.max(1, this.getLastColumn())); }
-    appendRow(row) { const r = this.getLastRow() + 1; row.forEach((v, j) => this.put(r, j + 1, v)); }
+    appendRow(row) { calls.write++; const r = this.getLastRow() + 1; row.forEach((v, j) => this.put(r, j + 1, v)); }
     clearContents() { this.data = []; }
-    clear() { this.data = []; this.backgrounds = null; }
+    clear() { calls.format++; this.data = []; this.backgrounds = null; }
     setFrozenRows() {}
     // test helper: rows as objects keyed by header
     objects() {
@@ -254,7 +258,7 @@ function makeEnv(opts) {
     vm.runInContext(fs.readFileSync(path.join(src, f), 'utf8'), ctx, { filename: f });
   });
   return {
-    gas: ctx, sheets, mail, props, ai, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot, service, dialogs, cacheStore,
+    gas: ctx, sheets, calls, mail, props, ai, triggers, toasts, rootFolders, ocr, docs: drive.docs, driveRoot, service, dialogs, cacheStore,
     setNow: iso => { NOW = new RealDate(iso).getTime(); },
     sheet: n => sheets[n]
   };

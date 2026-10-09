@@ -828,3 +828,71 @@ test('student emails with AI: Claude gets the record and the rules, writes the r
   assert.equal(all.mail[0].draft, 'Hi Brian, 1 left.');
   assert.ok(Array.isArray(all.questions) && Array.isArray(all.followups) && all.reportWeeks.weeks.length === 10);
 });
+
+test('speed: a 15-minute run with nothing new writes nothing; an edit writes one row', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.inbox().addFile('ENG attendance [C1].csv', populiC1);
+  env.gas.tick();
+  env.gas.tick(); // settles the derived sheets
+  env.calls.reset();
+  env.gas.tick();
+  assert.equal(env.calls.write, 0, 'no sheet writes');
+  assert.equal(env.calls.format, 0, 'no grid rebuilds');
+  const before = env.sheet('Attendance').data.map(r => r.slice());
+  env.calls.reset();
+  env.gas.apiSetRecord('C1', '2026-10-05', '2001', { status: 'Tardy' });
+  assert.equal(env.calls.write, 1);
+  const after = env.sheet('Attendance').data;
+  const diff = after.map((r, i) => r.join('|') !== (before[i] || []).join('|') ? i : -1).filter(i => i >= 0);
+  assert.deepEqual(diff, [before.findIndex(r => r[2] === '2001')], 'only that student\'s row changed');
+});
+
+test('a dashboard edit made while the 15-minute job is working is not undone by it', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.inbox().addFile('ENG attendance [C1].csv', populiC1);
+  env.gas.tick();
+  const g = env.gas, job = g.load_();               // the job read the sheets…
+  g.apiSetRecord('C1', '2026-10-05', '2001', { excuse: 'Received' }); // …Diego edits in the dashboard…
+  const t = job.att, r = t.rows.find(x => t.get(x, 'Student ID') === '2001');
+  t.set(r, 'Notes', 'from the job');                 // …the job changes another cell of the same row and saves
+  g.save_(t);
+  const row = env.row('2026-10-05', 'C1', '2001');
+  assert.equal(row.Excuse, 'Received');
+  assert.equal(row.Notes, 'from the job');
+  // A row the job adds that someone else added meanwhile is not duplicated
+  const job2 = g.load_(), a = job2.att, nr = a.header.map(() => '');
+  a.set(nr, 'Date', '2026-10-12'); a.set(nr, 'Class ID', 'C1'); a.set(nr, 'Student ID', '2002'); a.set(nr, 'Status', 'Absent');
+  a.rows.push(nr);
+  g.apiSetRecord('C1', '2026-10-12', '2002', { status: 'Tardy' });
+  g.save_(a);
+  assert.equal(env.att().filter(x => x.Date === '2026-10-12' && x['Student ID'] === '2002').length, 1);
+});
+
+test('a second job does not start while one is running; the dashboard still saves', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.inbox().addFile('ENG attendance [C1].csv', populiC1);
+  env.gas.tick();
+  env.props.jobUntil = String(Date.now() + 60000 + Date.parse('2026-10-05T14:00:00Z')); // a job is running
+  env.inbox().addFile('ENG attendance [C1] 2.csv', populiC1);
+  env.gas.tick();
+  assert.equal(env.inbox().files.length, 1, 'the second run waited');
+  assert.equal(env.gas.apiProcessNow().busy, true);
+  env.gas.apiSetRecord('C1', '2026-10-05', '2001', { status: 'Tardy' });
+  assert.equal(env.row('2026-10-05', 'C1', '2001').Status, 'Tardy');
+  env.props.jobUntil = '0';
+  env.gas.tick();
+  assert.equal(env.inbox().files.length, 0);
+});
+
+test('apiAll bigger than one cache entry is cached in pieces', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const rows = [];
+  for (let i = 0; i < 600; i++) rows.push(['9' + i, 'Student number ' + i + ' with a long name', 's' + i + '@ivy.edu', 'C3', 'Yes', String(i + 1)]);
+  env.sheet('Students').getRange(2, 1, rows.length, 6).setValues(rows);
+  const first = JSON.stringify(env.gas.apiAll());
+  assert.ok(first.length > 100000, 'big answer: ' + first.length);
+  env.calls.reset();
+  const again = env.gas.apiAll();
+  assert.equal(env.calls.read, 0, 'served from the cache');
+  assert.equal(JSON.stringify(again).replace(/"at":"[^"]*"/, ''), first.replace(/"at":"[^"]*"/, ''));
+});
