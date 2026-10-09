@@ -148,6 +148,7 @@ function makeEnv(opts) {
     getBlob() { const c = this.content, m = this.mime, n = this.name; return { getDataAsString: () => c, getBytes: () => Array.from(Buffer.from(String(c))), getContentType: () => m, getName: () => n }; }
     getUrl() { return 'https://drive.google.com/file/d/' + this.id; }
     setContent(c) { this.content = c; return this; }
+    setName(n) { this.name = n; return this; }
     setTrashed(v) { this.trashed = v; if (v) this.folder.files = this.folder.files.filter(f => f !== this); }
     moveTo(folder) { this.folder.files = this.folder.files.filter(f => f !== this); folder.files.push(this); this.folder = folder; }
   }

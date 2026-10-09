@@ -754,6 +754,47 @@ test('screenshots dropped in the dashboard: upload → OCR → analysis, clear o
   assert.deepEqual(j(env.gas.apiSession('C3', '2026-10-05')).shots, { present: 1, tardy: 1, end: 1 });
 });
 
+test('Screenshots read by CLAUDE: no OCR, nothing marked until Claude writes its results in the class folder', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.setConfig('Screenshots read by', 'CLAUDE');
+  [2, 3, 4, 5].forEach((row, i) => env.sheet('Students').put(row, 6, String(i + 1))); // Populi order
+  const b64 = t => Buffer.from(t).toString('base64');
+  env.ocr.calls = 0;
+  let r = env.gas.apiUploadShot('C3', '2026-10-05', 'present', 'Screenshot 1.png', 'image/png', b64('pixels'));
+  assert.equal(r.claude, true);
+  env.gas.apiUploadShot('C3', '2026-10-05', 'end', 'Screenshot 2.png', 'image/png', b64('pixels'));
+  assert.equal(env.ocr.calls, 0, 'no OCR');
+  const a = env.gas.apiAnalyzeSession('C3', '2026-10-05');
+  assert.equal(a.waiting, true);
+  assert.match(a.msg, /Waiting for Claude: 2 screenshot/);
+  assert.equal(env.att().filter(x => x['Class ID'] === 'C3').length, 0, 'nobody marked absent while unread');
+
+  // the job Claude reads: roster in Populi order + the screenshots' Drive ids
+  const sess = env.sheet('Sessions').objects().find(x => x['Class ID'] === 'C3');
+  const job = (() => { const f = env.gas.DriveApp.getFolderById(sess['Source ID']); const it = f.getFilesByName('claude-job.json'); return { f, j: JSON.parse(it.next().content) }; })();
+  assert.equal(job.j.status, 'waiting');
+  assert.equal(job.j.shots.present.length, 1);
+  assert.equal(job.j.shots.end.length, 1);
+  assert.deepEqual(job.j.roster.map(s => s.name), ['Ana Maria Lopez', 'Brian Smith', 'Carla Pérez', 'David Kim']);
+
+  // Claude writes its results; the next run takes the attendance
+  const order = n => job.j.roster.findIndex(s => s.name === n) + 1;
+  const p = (name, n) => ({ shown_name: name, roster_number: n, confidence: 0.95, alternatives: [] });
+  job.f.createFile('claude-results.json', JSON.stringify({
+    present: [{ participants: [p('Ana Lopez', order('Ana Maria Lopez')), p('Brian S', order('Brian Smith'))], chat: [], unreadable: 0 }],
+    end: [{ participants: [p('Ana Lopez', order('Ana Maria Lopez'))], chat: [], unreadable: 0 }]
+  }), 'application/json');
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C3', '1001').Status, 'Present');
+  assert.equal(env.row('2026-10-05', 'C3', '1002').Status, 'Absent');   // left before the last screenshot
+  assert.equal(env.row('2026-10-05', 'C3', '1002')['Left early'], 'Yes');
+  assert.equal(env.row('2026-10-05', 'C3', '1003').Status, 'Absent');
+  assert.ok(job.f.getFilesByName('claude-results applied.json').hasNext());
+  assert.equal(JSON.parse(job.f.getFilesByName('claude-job.json').next().content).status, 'done');
+  env.gas.tick(); // applied once only
+  assert.equal(env.sheet('Inbox log').objects().filter(x => /read by Claude/.test(x.File)).length, 1);
+});
+
 test('with a Claude API key, screenshots are read by AI: sure matches count, doubts go to Review', () => {
   const env = setupTerm({ mode: 'POPULI' });
   const j = x => JSON.parse(JSON.stringify(x));

@@ -418,8 +418,9 @@ function screenshotStatuses(phases, roster, ignore, opts) {
     });
   });
 
-  var hasEnd = (phases.end || []).some(function (t) { return String(t || '').trim(); });
-  var hasTardy = (phases.tardy || []).some(function (t) { return String(t || '').trim(); });
+  // A moment counts when one of its screenshots was read (OCR text or an AI/Claude reading).
+  var read = function (ph) { return (phases[ph] || []).some(function (t, i) { return String(t || '').trim() || (ai[ph] || [])[i]; }); };
+  var hasEnd = read('end'), hasTardy = read('tardy');
   var results = [], notSeen = [];
   roster.forEach(function (s) {
     var p = seen.present[s.id], t = seen.tardy[s.id], e = seen.end[s.id];

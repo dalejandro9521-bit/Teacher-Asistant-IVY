@@ -689,7 +689,7 @@ function takeSubmit() {
     T.msg = 'Taking attendance with all the screenshots…'; drawTake();
     return call('apiAnalyzeSession', classId, date);
   }).then(function (r) {
-    toast('Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some; the OCR was used' : ''), !!aiErr);
+    toast(r.waiting ? r.msg : 'Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some; the OCR was used' : ''), !!aiErr);
     T.files.forEach(function (x) { URL.revokeObjectURL(x.url); });
     T.files = []; T.busy = false; T.msg = ''; T.picked = false; T.detected = false;
     MEM = {}; storeClear();
@@ -1111,7 +1111,7 @@ function uploadShots(phase, files) {
   Promise.all(pool).then(function () {
     status('Analyzing the class with all the screenshots…');
     return call('apiAnalyzeSession', S.classId, S.date).then(function (r) {
-      status(''); toast('Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some (' + aiErr + '); the OCR was used' : ''), !!aiErr);
+      status(''); toast(r.waiting ? r.msg : 'Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some (' + aiErr + '); the OCR was used' : ''), !!aiErr);
       MEM = {}; storeClear();
       viewSession();
     });
@@ -1137,7 +1137,7 @@ function readAi() {
     return Promise.all([worker(), worker(), worker()]).then(function () {
       status('Analyzing the class…');
       return call('apiAnalyzeSession', S.classId, S.date).then(function (r) {
-        status(''); toast('Done: ' + String(r.msg).split('. ')[0]);
+        status(''); toast(r.waiting ? r.msg : 'Done: ' + String(r.msg).split('. ')[0]);
         MEM = {}; storeClear();
         viewSession();
       });

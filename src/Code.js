@@ -29,6 +29,7 @@ var CONFIG_FIELDS = [
   ['taTitle', 'TA title', 'Teacher Assistant', ''],
   ['replyTo', 'Reply-To email', 'dgomez230@ivy.edu', 'Every email goes out with this Reply-To.'],
   ['officeName', 'Office name', 'the main office', 'How emails refer to the office ("send your excuse to me or to ...").'],
+  ['screenshotReader', 'Screenshots read by', 'OCR', 'OCR = free automatic reading right away · CLAUDE = Claude reads them from this Drive (Google Drive connected in Claude with this Ivy account), right after class.'],
   ['officeHours', 'Office hours', '', 'Used in the below 100% / 80% follow-ups ("stop by during ..."), e.g. "Mondays 5:30–6 PM in Room 300". Empty → "reply to this email".'],
   ['replyDays', 'Reply within (days)', '7', 'Below 80% follow-ups ask the student to reply within this many days.'],
   ['officeEmail', 'Office email', '', 'Gets the "student without ID" notices. Empty → they go to the Reply-To email.'],
@@ -213,7 +214,7 @@ function runAll_(ctx) {
   try { mail = scanMail_(ctx); } catch (e) { appendRow_('Inbox log', [nowStr_(), 'Gmail', 'error', '', '', String(e && e.message || e)]); }
   save_(ctx.att);
   var r = null;
-  withLock_(function () { ctx = load_(); r = runLight_(ctx); });
+  withLock_(function () { ctx = load_(); claudeApply_(ctx).forEach(function (x) { log.push(x); }); r = runLight_(ctx); });
   refreshSummary_(ctx);
   refreshGrids_(ctx);
   return { files: log.length, reruns: r.reruns, sent: r.sent, office: r.office, mail: mail, log: log };
@@ -1924,9 +1925,10 @@ function apiUploadShot(classId, date, phase, name, mime, base64) {
     file = subfolder_(folder, PHASE_FOLDERS[phase]).createFile(blob);
   });
   if (!file) throw new Error('Busy — try again in a few seconds.');
-  // 2. Read it (slow, so not locked): free OCR always, and Claude when it is on.
-  var text = ocrText_(file), ai = null, aiError = '';
-  if (aiOn_(ctx.cfg, 'aiScreenshots')) {
+  // 2. Read it (slow, so not locked): free OCR always, and Claude when it is on. With CLAUDE, Claude reads it from Drive later.
+  var claude = claudeReads_(ctx.cfg);
+  var text = claude ? '' : ocrText_(file), ai = null, aiError = '';
+  if (!claude && aiOn_(ctx.cfg, 'aiScreenshots')) {
     try { ai = aiReadShot_(ctx, cls, phase, file.getBlob()); } catch (e) { aiError = String(e && e.message || e); }
   }
   // 3. Add it to the class's saved readings.
@@ -1938,6 +1940,11 @@ function apiUploadShot(classId, date, phase, name, mime, base64) {
     saved.data.files[phase].push(file.getId());
     saved.data.images = (saved.data.images || 0) + 1;
     writeOcrJson_(folder, saved);
+    if (claude) {
+      claudeJob_(ctx, cls, date, folder, saved.data);
+      out = { phase: phase, names: 0, count: saved.data.phases[phase].length, ai: false, claude: true };
+      return;
+    }
     var n = ai ? (ai.participants || []).length + (ai.chat || []).length : (function (x) { return x.tiles.length + x.chat.length; })(readScreenshotText(text));
     out = { phase: phase, names: n, count: saved.data.phases[phase].length, ai: !!ai, aiError: aiError };
   });
@@ -1977,15 +1984,22 @@ function apiAiReadFile(classId, date, phase, index, fileId) {
 
 /** After the uploads: analyze the class with every screenshot read so far. */
 function apiAnalyzeSession(classId, date) {
-  var msg;
+  var msg, waiting = false;
   withLock_(function () {
     var ctx = load_(), cls = classById_(ctx, classId);
     var folder = sessionFolder_(ctx, cls, date), saved = readOcrJson_(folder);
+    var unread = claudeUnread_(saved.data);
+    if (unread) {
+      // Nothing is marked from screenshots nobody has read yet (it would make everyone absent).
+      msg = 'Waiting for Claude: ' + unread + ' screenshot(s) to read. The attendance is taken as soon as Claude reads them.';
+      waiting = true;
+      return;
+    }
     msg = processScreenshotSession_(ctx, cls, date, saved.data.phases, folder.getId(), saved.data.images || 0, saved.data.ai);
     appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (dashboard)', 'screenshots', cls.id, date, msg]);
     runLight_(ctx);
   });
-  return { msg: msg };
+  return { msg: msg, waiting: waiting };
 }
 
 /** Remove the screenshots of one moment (e.g. you dropped the wrong ones). */
@@ -1999,8 +2013,86 @@ function apiClearShots(classId, date, phase) {
     saved.data.images = Math.max(0, (saved.data.images || 0) - saved.data.phases[phase].length);
     saved.data.phases[phase] = []; saved.data.ai[phase] = []; saved.data.files[phase] = [];
     writeOcrJson_(folder, saved);
+    if (claudeReads_(ctx.cfg)) claudeJob_(ctx, cls, date, folder, saved.data);
   });
   return true;
+}
+
+/* ---------- Claude reads the screenshots (from this account's Drive, no API key) ----------
+ * With "Screenshots read by" = CLAUDE, each class folder (TA Inbox/Processed/<class - week - date>) gets claude-job.json:
+ * the class, date, real start, roster in Populi order, names to ignore and the screenshots still to read (Drive file ids).
+ * Claude (Google Drive connected with this account) writes claude-results.json next to it:
+ * {present:[r], tardy:[r], end:[r]}, one r per screenshot (same index as the job) in the AI_SHOT_SCHEMA shape.
+ * The next run (or "Check Claude's results") puts them in ocr.json and takes the attendance; the results file is then
+ * renamed "claude-results applied.json" and the job is marked done.
+ */
+function claudeReads_(cfg) { return /^claude$/i.test(String(cfg.screenshotReader || '').trim()); }
+
+/** Screenshots saved without any reading (no OCR text, no AI result). */
+function claudeUnread_(data) {
+  return ['present', 'tardy', 'end'].reduce(function (n, k) {
+    return n + data.phases[k].filter(function (t, i) { return !t && !data.ai[k][i]; }).length;
+  }, 0);
+}
+
+function claudeJob_(ctx, cls, date, folder, data) {
+  var st = table_('Students'), shots = {};
+  ['present', 'tardy', 'end'].forEach(function (k) {
+    shots[k] = data.files[k].map(function (id, i) { return { index: i, fileId: id, read: !!(data.phases[k][i] || data.ai[k][i]) }; });
+  });
+  var job = {
+    status: claudeUnread_(data) ? 'waiting' : 'done', classId: cls.id, course: classLabel(cls), date: date,
+    start: minToLabel(sessionStart_(ctx, cls, date)),
+    ignore: String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
+    roster: st.rows.map(function (r) { return studentFrom_(st, r); })
+      .filter(function (s) { return s.classId === cls.id && s.active; })
+      .sort(function (a, b) { return (a.order || 1e6) - (b.order || 1e6); })
+      .map(function (s) { return { order: s.order, name: s.name, aliases: s.aliases || [] }; }),
+    shots: shots
+  };
+  var it = folder.getFilesByName('claude-job.json'), json = JSON.stringify(job, null, 1);
+  if (it.hasNext()) it.next().setContent(json); else folder.createFile('claude-job.json', json, 'application/json');
+}
+
+/** Results Claude left in the class folders → attendance. Returns one line per class taken. */
+function claudeApply_(ctx) {
+  if (!claudeReads_(ctx.cfg)) return [];
+  var out = [], y = yearOf_(ctx), t = ctx.sessT;
+  t.rows.forEach(function (row) {
+    var id = t.get(row, 'Source ID');
+    if (t.get(row, 'Source') !== 'Zoom screenshots' || !id) return;
+    var folder;
+    try { folder = DriveApp.getFolderById(id); } catch (e) { return; }
+    var it = folder.getFilesByName('claude-results.json');
+    if (!it.hasNext()) return;
+    var rf = it.next(), cls = classById_(ctx, t.get(row, 'Class ID')), date = parseDateCell(t.get(row, 'Date'), y);
+    if (!cls) return;
+    var res;
+    try { res = JSON.parse(rf.getBlob().getDataAsString()); } catch (e) { out.push(classLabel(cls) + ' ' + date + ': claude-results.json is not valid JSON'); return; }
+    var saved = readOcrJson_(folder);
+    ['present', 'tardy', 'end'].forEach(function (k) {
+      (res[k] || []).forEach(function (r, i) { if (r && i < saved.data.phases[k].length) saved.data.ai[k][i] = r; });
+    });
+    writeOcrJson_(folder, saved);
+    rf.setName('claude-results applied.json');
+    claudeJob_(ctx, cls, date, folder, saved.data);
+    if (claudeUnread_(saved.data)) { out.push(classLabel(cls) + ' ' + date + ': some screenshots are still waiting for Claude'); return; }
+    var msg = processScreenshotSession_(ctx, cls, date, saved.data.phases, folder.getId(), saved.data.images || 0, saved.data.ai);
+    appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (read by Claude)', 'screenshots', cls.id, date, msg]);
+    out.push(classLabel(cls) + ' ' + date + ': ' + msg);
+  });
+  return out;
+}
+
+/** Dashboard: take the attendance from whatever Claude has already read. */
+function apiClaudeResults() {
+  var lines = [];
+  withLock_(function () {
+    var ctx = load_();
+    lines = claudeApply_(ctx);
+    if (lines.length) { save_(ctx.sessT); runLight_(ctx); }
+  });
+  return { lines: lines };
 }
 
 function apiProcessNow() {
