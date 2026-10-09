@@ -269,6 +269,7 @@
   .drop .big { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
   .lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
   .lanes.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .lanes.one { grid-template-columns: minmax(0, 1fr); }
   .lane { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-height: 150px; }
   .lane.over { border-color: var(--brand2); background: var(--brand-soft); }
   .lane h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 6px; }
@@ -490,7 +491,8 @@ var LANES = {
   present: ['15 min', 'Seen here → Present'],
   tardy: ['31 min', 'First seen here → Tardy'],
   end: ['Last screenshot', 'Missing here → Absent (left early)'],
-  unsorted: ['Not sorted', 'Taken outside the class time. Move each one to a column.']
+  unsorted: ['Not sorted', 'Taken outside the class time. Move each one to a column.'],
+  populi: ['Populi attendance', 'Recorded exactly as marked in Populi']
 };
 var T = { files: [], classId: null, date: '', start: '', picked: false, busy: false, done: 0, total: 0, msg: '' };
 
@@ -532,6 +534,7 @@ function takeStart() { var c = takeClass(), v = parseTime(T.start, c); return v 
 /** 15-min shot before minute 22, 31-min shot before minute 45, the last one after that. */
 function laneFor(t) {
   var c = takeClass();
+  if (c && !isZoom(c)) return 'populi'; // in person: a screenshot of Populi, no minute rule
   if (!c || !T.date || ymd(new Date(t)) !== T.date) return 'unsorted';
   var m = minOfDay(t) - takeStart();
   if (m < -30 || m > c.endMin - c.startMin + 30) return 'unsorted';
@@ -586,16 +589,17 @@ function viewTake() {
 }
 function drawTake() {
   var el = $('take'); if (!el) return;
-  var c = takeClass(), zoom = isZoom(c), by = { present: [], tardy: [], end: [], unsorted: [] };
+  var c = takeClass(), zoom = isZoom(c), by = { present: [], tardy: [], end: [], unsorted: [], populi: [] };
   T.files.forEach(function (x) { by[x.lane].push(x); });
-  var lanes = by.unsorted.length ? ['unsorted', 'present', 'tardy', 'end'] : ['present', 'tardy', 'end'];
-  var h = '<div class="row"><div><h1>Take attendance</h1><p class="sub">Drop all the Zoom screenshots of a class at once, in any order. ' +
-    'Each one goes to its column by the time it was taken, and the class is found on its own.</p></div></div>';
+  var lanes = c && !zoom ? ['populi'] : by.unsorted.length ? ['unsorted', 'present', 'tardy', 'end'] : ['present', 'tardy', 'end'];
+  var h = '<div class="row"><div><h1>Take attendance</h1><p class="sub">' + (c && !zoom
+    ? 'In person: drop the screenshot of Populi\'s attendance for this class (already marked). Each student is recorded exactly as Populi shows.'
+    : 'Drop all the Zoom screenshots of a class at once, in any order. Each one goes to its column by the time it was taken, and the class is found on its own.') + '</p></div></div>';
   h += '<div class="take"><div>';
   h += '<div class="drop" id="drop"><div class="big">' + (T.files.length ? 'Drop more screenshots' : 'Drop the screenshots here') + '</div>' +
     '<div class="muted">or click to choose them · or press <span class="kbd">⌘</span> <span class="kbd">V</span> right after a screenshot (it is placed by the time you paste it)</div></div>' +
     '<input type="file" id="takeInput" accept="image/*" multiple style="display:none">';
-  h += '<div class="lanes' + (lanes.length === 4 ? ' four' : '') + '">' + lanes.map(function (k) {
+  h += '<div class="lanes' + (lanes.length === 4 ? ' four' : lanes.length === 1 ? ' one' : '') + '">' + lanes.map(function (k) {
     return '<div class="lane' + (k === 'unsorted' ? ' unsorted' : '') + '" data-lane="' + k + '"><h3>' + LANES[k][0] + ' <span class="chip">' + by[k].length + '</span></h3>' +
       '<div class="why">' + LANES[k][1] + '</div>' + by[k].map(thumbHTML).join('') +
       (by[k].length || k === 'unsorted' ? '' : '<div class="muted small">No screenshot yet</div>') + '</div>';
@@ -605,15 +609,13 @@ function drawTake() {
     return '<button class="' + (x.id === T.classId ? 'on' : '') + '" data-act="takeCls" data-c="' + esc(x.id) + '">' + esc(x.course.split(':')[0]) + '<small>' + esc(x.day.slice(0, 3)) + ' · ' + esc(minLabel(x.startMin)) + '</small></button>';
   }).join('') + '</div>';
   h += '<label for="takeDate">Date</label><input type="date" id="takeDate" value="' + esc(T.date) + '">';
-  h += '<label for="takeStart">Class really started at</label><input id="takeStart" placeholder="' + esc(c ? minLabel(c.startMin) + ' (scheduled)' : '') + '" value="' + esc(T.start) + '">';
+  if (zoom || !c) h += '<label for="takeStart">Class really started at</label><input id="takeStart" placeholder="' + esc(c ? minLabel(c.startMin) + ' (scheduled)' : '') + '" value="' + esc(T.start) + '">';
   if (T.detected && c && T.files.length) h += '<div class="detected">Found by the screenshot times: ' + esc(c.course.split(':')[0]) + ' · ' + esc(longToday(T.date)) + '</div>';
-  if (c && !zoom) {
-    h += '<p class="small muted">This class is in person: mark it by hand (or drop the Populi export in TA Inbox).</p>' +
-      '<button class="btn primary" style="width:100%;justify-content:center" data-go="session" data-class="' + esc(c.id) + '" data-date="' + esc(T.date) + '">Mark it by hand</button>';
-  } else {
+  {
     var n = T.files.length - by.unsorted.length;
     h += '<button class="btn primary" style="width:100%;justify-content:center;margin-top:14px" data-act="takeGo"' + (T.busy || !n || !c || !T.date ? ' disabled' : '') + '>' +
       (T.busy ? 'Reading… ' + T.done + ' of ' + T.total : 'Read ' + n + ' screenshot' + (n === 1 ? '' : 's') + ' and take attendance') + '</button>';
+    if (c && !zoom) h += '<div class="small muted" style="margin-top:8px">Or <a data-go="session" data-class="' + esc(c.id) + '" data-date="' + esc(T.date) + '" style="cursor:pointer;color:var(--brand2)">mark it by hand</a>.</div>';
     if (T.busy) h += '<div class="progress"><span style="width:' + Math.round(100 * T.done / Math.max(1, T.total)) + '%"></span></div>';
     if (T.msg) h += '<div class="small muted" style="margin-top:8px">' + esc(T.msg) + '</div>';
     if (by.unsorted.length) h += '<div class="small" style="color:var(--warn);margin-top:8px">' + by.unsorted.length + ' screenshot' + (by.unsorted.length === 1 ? ' is' : 's are') + ' not sorted: move ' + (by.unsorted.length === 1 ? 'it' : 'them') + ' to a column, or remove ' + (by.unsorted.length === 1 ? 'it' : 'them') + '.</div>';
@@ -637,7 +639,7 @@ function thumbHTML(x) {
   var c = takeClass(), m = c ? minOfDay(x.t) - takeStart() : null, sameDay = T.date && ymd(new Date(x.t)) === T.date;
   var when = minLabel(minOfDay(x.t)) + (sameDay && m != null ? ' · min ' + m : ' · ' + shortDate(ymd(new Date(x.t))));
   return '<div class="thumb" draggable="true" data-id="' + x.id + '"><img src="' + x.url + '" alt=""><div class="meta"><span>' + esc(when) + '</span>' +
-    '<select data-act="takeLane" data-id="' + x.id + '" aria-label="Column">' + ['present', 'tardy', 'end', 'unsorted'].map(function (k) {
+    '<select data-act="takeLane" data-id="' + x.id + '" aria-label="Column">' + (x.lane === 'populi' ? ['populi'] : ['present', 'tardy', 'end', 'unsorted']).map(function (k) {
       return '<option value="' + k + '"' + (x.lane === k ? ' selected' : '') + '>' + LANES[k][0] + '</option>';
     }).join('') + '</select><button class="x" data-act="takeRemove" data-id="' + x.id + '" title="Remove">×</button></div></div>';
 }
@@ -1339,7 +1341,6 @@ var ACTIONS = {
   takePick: function (b) {
     var c = classInfo(b.getAttribute('data-c')), d = b.getAttribute('data-d');
     T.picked = true; setTakeClass(c.id, d);
-    if (!isZoom(c)) { go('session', { classId: c.id, date: d }); return; }
     if (S.view === 'take') drawTake(); else go('take');
   },
   takeGo: function () { takeSubmit(); },

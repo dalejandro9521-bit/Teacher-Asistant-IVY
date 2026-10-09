@@ -3339,11 +3339,13 @@ function apiMailForwardExcuse(threadId) {
 /* ---------- screenshots dropped in the dashboard ---------- */
 
 var PHASE_FOLDERS = { present: '1. Present', tardy: '2. Tardy', end: '3. Absent' };
+/** Zoom moments + "populi": a screenshot of Populi's attendance for an in-person class, recorded exactly as marked. */
+var SHOT_KINDS = ['present', 'tardy', 'end', 'populi'];
 
 /** The Drive folder that holds this class's screenshots for that date (created under TA Inbox / Processed). */
 function sessionFolder_(ctx, cls, date) {
   var row = sessionRow_(ctx, cls, date, true), t = ctx.sessT, id = t.get(row, 'Source ID');
-  if (t.get(row, 'Source') === 'Zoom screenshots' && id) {
+  if (/screenshot/i.test(t.get(row, 'Source')) && id) {
     try { return DriveApp.getFolderById(id); } catch (e) { /* deleted: make a new one */ }
   }
   var inbox = DriveApp.getFolderById(ctx.cfg.inboxFolderId), done = subfolder_(inbox, 'Processed');
@@ -3362,7 +3364,7 @@ function readOcrJson_(folder) {
   if (it.hasNext()) { file = it.next(); data = JSON.parse(file.getBlob().getDataAsString()); }
   ['phases', 'ai', 'files'].forEach(function (f) {
     data[f] = data[f] || {};
-    ['present', 'tardy', 'end'].forEach(function (k) { data[f][k] = data[f][k] || []; });
+    SHOT_KINDS.forEach(function (k) { data[f][k] = data[f][k] || []; });
   });
   return { file: file, data: data };
 }
@@ -3385,7 +3387,7 @@ function loadLite_() {
 }
 
 function apiUploadShot(classId, date, phase, name, mime, base64) {
-  if (!PHASE_FOLDERS[phase]) throw new Error('Unknown moment: ' + phase);
+  if (!PHASE_FOLDERS[phase] && phase !== 'populi') throw new Error('Unknown moment: ' + phase);
   var ctx, cls, folder, file;
   // 1. Save the image (locked: the class folder must be created once).
   withLock_(function () {
@@ -3394,7 +3396,8 @@ function apiUploadShot(classId, date, phase, name, mime, base64) {
     folder = sessionFolder_(ctx, cls, date);
     save_(ctx.sessT);
     var blob = Utilities.newBlob(Utilities.base64Decode(base64), mime || 'image/jpeg', name || 'screenshot.jpg');
-    file = subfolder_(folder, PHASE_FOLDERS[phase]).createFile(blob);
+    if (phase === 'populi' && !claudeReads_(ctx.cfg)) throw new Error('Populi screenshots are read by Claude: set "Screenshots read by" to CLAUDE in Config.');
+    file = subfolder_(folder, PHASE_FOLDERS[phase] || 'Populi').createFile(blob);
   });
   if (!file) throw new Error('Busy — try again in a few seconds.');
   // 2. Read it (slow, so not locked): free OCR always, and Claude when it is on. With CLAUDE, Claude reads it from Drive later.
@@ -3467,7 +3470,7 @@ function apiAnalyzeSession(classId, date) {
       waiting = true;
       return;
     }
-    msg = processScreenshotSession_(ctx, cls, date, saved.data.phases, folder.getId(), saved.data.images || 0, saved.data.ai);
+    msg = takeFromShots_(ctx, cls, date, folder, saved.data);
     appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (dashboard)', 'screenshots', cls.id, date, msg]);
     runLight_(ctx);
   });
@@ -3479,7 +3482,7 @@ function apiClearShots(classId, date, phase) {
   withLock_(function () {
     var ctx = load_(), cls = classById_(ctx, classId), folder = sessionFolder_(ctx, cls, date);
     save_(ctx.sessT);
-    var sub = subfolder_(folder, PHASE_FOLDERS[phase]), files = sub.getFiles();
+    var sub = subfolder_(folder, PHASE_FOLDERS[phase] || 'Populi'), files = sub.getFiles();
     while (files.hasNext()) files.next().setTrashed(true);
     var saved = readOcrJson_(folder);
     saved.data.images = Math.max(0, (saved.data.images || 0) - saved.data.phases[phase].length);
@@ -3502,18 +3505,19 @@ function claudeReads_(cfg) { return /^claude$/i.test(String(cfg.screenshotReader
 
 /** Screenshots saved without any reading (no OCR text, no AI result). */
 function claudeUnread_(data) {
-  return ['present', 'tardy', 'end'].reduce(function (n, k) {
+  return SHOT_KINDS.reduce(function (n, k) {
     return n + data.phases[k].filter(function (t, i) { return !t && !data.ai[k][i]; }).length;
   }, 0);
 }
 
 function claudeJob_(ctx, cls, date, folder, data) {
   var st = table_('Students'), shots = {};
-  ['present', 'tardy', 'end'].forEach(function (k) {
+  SHOT_KINDS.forEach(function (k) {
     shots[k] = data.files[k].map(function (id, i) { return { index: i, fileId: id, read: !!(data.phases[k][i] || data.ai[k][i]) }; });
   });
   var job = {
     status: claudeUnread_(data) ? 'waiting' : 'done', classId: cls.id, course: classLabel(cls), date: date,
+    kind: data.phases.populi.length ? 'populi' : 'zoom',
     start: minToLabel(sessionStart_(ctx, cls, date)),
     ignore: String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
     roster: st.rows.map(function (r) { return studentFrom_(st, r); })
@@ -3532,7 +3536,7 @@ function claudeApply_(ctx) {
   var out = [], y = yearOf_(ctx), t = ctx.sessT;
   t.rows.forEach(function (row) {
     var id = t.get(row, 'Source ID');
-    if (t.get(row, 'Source') !== 'Zoom screenshots' || !id) return;
+    if (!/screenshot/i.test(t.get(row, 'Source')) || !id) return;
     var folder;
     try { folder = DriveApp.getFolderById(id); } catch (e) { return; }
     var it = folder.getFilesByName('claude-results.json');
@@ -3542,18 +3546,53 @@ function claudeApply_(ctx) {
     var res;
     try { res = JSON.parse(rf.getBlob().getDataAsString()); } catch (e) { out.push(classLabel(cls) + ' ' + date + ': claude-results.json is not valid JSON'); return; }
     var saved = readOcrJson_(folder);
-    ['present', 'tardy', 'end'].forEach(function (k) {
+    SHOT_KINDS.forEach(function (k) {
       (res[k] || []).forEach(function (r, i) { if (r && i < saved.data.phases[k].length) saved.data.ai[k][i] = r; });
     });
     writeOcrJson_(folder, saved);
     rf.setName('claude-results applied.json');
     claudeJob_(ctx, cls, date, folder, saved.data);
     if (claudeUnread_(saved.data)) { out.push(classLabel(cls) + ' ' + date + ': some screenshots are still waiting for Claude'); return; }
-    var msg = processScreenshotSession_(ctx, cls, date, saved.data.phases, folder.getId(), saved.data.images || 0, saved.data.ai);
+    var msg = takeFromShots_(ctx, cls, date, folder, saved.data);
     appendRow_('Inbox log', [nowStr_(), folder.getName() + '/ (read by Claude)', 'screenshots', cls.id, date, msg]);
     out.push(classLabel(cls) + ' ' + date + ': ' + msg);
   });
   return out;
+}
+
+/** Attendance from the screenshots of a class: Populi screenshots as marked, else the Zoom moments rule. */
+function takeFromShots_(ctx, cls, date, folder, data) {
+  if (data.phases.populi.length) return populiShots_(ctx, cls, date, folder, data);
+  return processScreenshotSession_(ctx, cls, date, data.phases, folder.getId(), data.images || 0, data.ai);
+}
+
+var POPULI_STATUS = { present: STATUS.P, tardy: STATUS.T, absent: STATUS.A, excused: STATUS.E };
+
+/**
+ * In-person class: Claude read Populi's attendance list ({rows:[{shown_name, roster_number, status, confidence}]} per
+ * screenshot). Each student gets exactly the status Populi shows; no 15/31-minute rule. Unsure or unmatched rows are listed.
+ */
+function populiShots_(ctx, cls, date, folder, data) {
+  var roster = roster_(ctx, cls.id), byOrder = {}, got = {}, entries = [], unsure = [];
+  roster.forEach(function (s) { if (s.order) byOrder[s.order] = s; });
+  data.ai.populi.forEach(function (r) {
+    ((r || {}).rows || []).forEach(function (x) {
+      var s = byOrder[x.roster_number], st = POPULI_STATUS[String(x.status || '').toLowerCase()];
+      if (!s || !st || (x.confidence != null && x.confidence < AI_SURE)) { unsure.push((x.shown_name || '?') + (x.status ? ' (' + x.status + ')' : '')); return; }
+      if (got[s.id]) return;
+      got[s.id] = true;
+      entries.push({ student: s, status: st, source: 'Populi screenshot', notes: 'As marked in Populi' });
+    });
+  });
+  var c = applyEntries_(ctx, cls, date, entries);
+  touchSession_(ctx, cls, date, 'Populi screenshot', folder.getId(), sessionStart_(ctx, cls, date));
+  var n = function (st) { return entries.filter(function (e) { return e.status === st; }).length; };
+  var missing = roster.filter(function (s) { return !got[s.id]; }).map(function (s) { return '#' + (s.order || '?') + ' ' + s.name; });
+  var msg = 'Populi screenshot: ' + n(STATUS.P) + ' present, ' + n(STATUS.T) + ' tardy, ' + n(STATUS.A) + ' absent' +
+    (n(STATUS.E) ? ', ' + n(STATUS.E) + ' excused' : '') + ' (as marked in Populi). ' + c.kept + ' kept (manual/excused).';
+  if (missing.length) msg += ' Not in the screenshot (not marked): ' + missing.join(', ') + '.';
+  if (unsure.length) msg += ' Could not match: ' + unsure.join('; ') + '.';
+  return msg;
 }
 
 /** Dashboard: take the attendance from whatever Claude has already read. */

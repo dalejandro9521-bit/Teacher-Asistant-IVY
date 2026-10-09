@@ -754,6 +754,37 @@ test('screenshots dropped in the dashboard: upload → OCR → analysis, clear o
   assert.deepEqual(j(env.gas.apiSession('C3', '2026-10-05')).shots, { present: 1, tardy: 1, end: 1 });
 });
 
+test('In-person class: a Populi screenshot read by Claude is recorded exactly as marked (no 15/31 rule)', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.setConfig('Screenshots read by', 'CLAUDE');
+  const S = env.sheet('Students');
+  [['2001', 'Elena Ramos', 1], ['2002', 'Tom Nguyen', 2], ['2003', 'Grace Okafor', 3], ['2004', 'Luis Silva', 4]]
+    .forEach(x => S.appendRow([x[0], x[1], '', 'C1', 'Yes', String(x[2])]));
+  const b64 = t => Buffer.from(t).toString('base64');
+  env.gas.apiUploadShot('C1', '2026-10-05', 'populi', 'populi.png', 'image/png', b64('pixels'));
+  assert.equal(env.gas.apiAnalyzeSession('C1', '2026-10-05').waiting, true);
+  const sess = env.sheet('Sessions').objects().find(x => x['Class ID'] === 'C1');
+  const f = env.gas.DriveApp.getFolderById(sess['Source ID']);
+  const job = JSON.parse(f.getFilesByName('claude-job.json').next().content);
+  assert.equal(job.kind, 'populi');
+  assert.equal(job.shots.populi.length, 1);
+  const row = (n, st, conf) => ({ shown_name: 'x', roster_number: n, status: st, confidence: conf == null ? 0.98 : conf });
+  f.createFile('claude-results.json', JSON.stringify({ populi: [{ rows: [row(1, 'Present'), row(2, 'Tardy'), row(3, 'Absent'), row(9, 'Present', 0.4)] }] }), 'application/json');
+  env.gas.tick();
+  assert.equal(env.row('2026-10-05', 'C1', '2001').Status, 'Present');
+  assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Tardy');
+  assert.equal(env.row('2026-10-05', 'C1', '2003').Status, 'Absent');
+  assert.equal(env.row('2026-10-05', 'C1', '2003').Source, 'Populi screenshot');
+  assert.equal(env.row('2026-10-05', 'C1', '2004'), undefined);          // not in the screenshot: not marked
+  const log = env.sheet('Inbox log').objects().find(x => /read by Claude/.test(x.File));
+  assert.match(log.Result, /1 present, 1 tardy, 1 absent \(as marked in Populi\)/);
+  assert.match(log.Result, /Not in the screenshot \(not marked\): #4 Luis Silva/);
+  assert.match(log.Result, /Could not match: x \(Present\)/);
+  // OCR mode does not take Populi screenshots
+  const env2 = setupTerm({ mode: 'POPULI' });
+  assert.throws(() => env2.gas.apiUploadShot('C1', '2026-10-05', 'populi', 'p.png', 'image/png', b64('x')), /read by Claude/);
+});
+
 test('Screenshots read by CLAUDE: no OCR, nothing marked until Claude writes its results in the class folder', () => {
   const env = setupTerm({ mode: 'POPULI' });
   env.setConfig('Screenshots read by', 'CLAUDE');
