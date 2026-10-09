@@ -60,10 +60,22 @@ function findCol_(header, re, not) {
 
 /** 'zoom' if it looks like a Zoom participants report, otherwise 'populi'. */
 function detectKind(rows) {
+  var h = (rows[0] || []).map(function (c) { return String(c).trim().toLowerCase(); });
+  if (h.indexOf('due') >= 0 && (h.indexOf('name') >= 0 || h.indexOf('title') >= 0) && (h.indexOf('group') >= 0 || h.indexOf('points') >= 0)) return 'assignments';
   for (var i = 0; i < Math.min(rows.length, 15); i++) {
     if (rows[i].some(function (c) { return /join\s*time/i.test(c); })) return 'zoom';
   }
   return 'populi';
+}
+
+/** Assignment list (Name, Group, Points, Due, Window) → [{title, group, points, due: "yyyy-mm-dd hh:mm", window}]. */
+function parseAssignments(rows) {
+  var h = rows[0] || [], col = function (re) { return findCol_(h, re); };
+  var cT = col(/^(name|title)$/i), cG = col(/^group$/i), cP = col(/^points$/i), cD = col(/^due/i), cW = col(/^window$/i);
+  return rows.slice(1).map(function (r) {
+    var g = function (c) { return c >= 0 ? String(r[c] == null ? '' : r[c]).trim() : ''; };
+    return { title: g(cT), group: g(cG), points: g(cP), due: g(cD), window: g(cW) };
+  }).filter(function (a) { return a.title && a.due; });
 }
 
 /**

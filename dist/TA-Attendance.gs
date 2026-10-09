@@ -410,10 +410,22 @@ function findCol_(header, re, not) {
 
 /** 'zoom' if it looks like a Zoom participants report, otherwise 'populi'. */
 function detectKind(rows) {
+  var h = (rows[0] || []).map(function (c) { return String(c).trim().toLowerCase(); });
+  if (h.indexOf('due') >= 0 && (h.indexOf('name') >= 0 || h.indexOf('title') >= 0) && (h.indexOf('group') >= 0 || h.indexOf('points') >= 0)) return 'assignments';
   for (var i = 0; i < Math.min(rows.length, 15); i++) {
     if (rows[i].some(function (c) { return /join\s*time/i.test(c); })) return 'zoom';
   }
   return 'populi';
+}
+
+/** Assignment list (Name, Group, Points, Due, Window) → [{title, group, points, due: "yyyy-mm-dd hh:mm", window}]. */
+function parseAssignments(rows) {
+  var h = rows[0] || [], col = function (re) { return findCol_(h, re); };
+  var cT = col(/^(name|title)$/i), cG = col(/^group$/i), cP = col(/^points$/i), cD = col(/^due/i), cW = col(/^window$/i);
+  return rows.slice(1).map(function (r) {
+    var g = function (c) { return c >= 0 ? String(r[c] == null ? '' : r[c]).trim() : ''; };
+    return { title: g(cT), group: g(cG), points: g(cP), due: g(cD), window: g(cW) };
+  }).filter(function (a) { return a.title && a.due; });
 }
 
 /**
@@ -1031,25 +1043,35 @@ function buildStudentNotice(p) {
  */
 function buildStandingNotice(p) {
   var cfg = p.cfg || {}, c = rulesConfig_(cfg), t = p.tally, cls = p.cls;
-  var first = String((p.student || {}).name || '').split(/\s+/)[0] || 'student';
-  var missed = (p.dates || []).length ? '\n\nClasses missed or late: ' + p.dates.map(function (d) { return longDate(d).replace(/, \d{4}$/, ''); }).join(', ') + '.' : '';
-  var body, subject;
+  var first = String((p.student || {}).name || '').split(/\s+/)[0];
+  var course = String(cls.course || '').split(':')[0].trim() || classLabel(cls);
+  var section = cls.section || ((DAY_NAMES[dayIndex(cls.day)] || cls.day || '') + ' ' + classTime(cls)).trim();
+  var n = t.effective, missedTxt = n + ' class' + (n === 1 ? '' : 'es') +
+    (t.tardies >= c.tardiesPerAbsence ? ' (every ' + c.tardiesPerAbsence + ' tardies count as 1 absence)' : '');
+  var dates = (p.dates || []).length ? '\n\nClasses missed or late: ' + p.dates.map(function (d) { return longDate(d).replace(/, \d{4}$/, ''); }).join(', ') + '.' : '';
+  var hours = String(cfg.officeHours || '').trim();
+  var days = +cfg.replyDays > 0 ? +cfg.replyDays : 7;
+  var deadline = p.today ? longDate(numToDate(dayNum(p.today) + days)).replace(/, \d{4}$/, '') : 'the end of this week';
+  var subject, body;
   if (p.level === 'below80') {
-    subject = 'Attendance – ' + classLabel(cls) + ' – You are below ' + c.minAttendancePct + '%';
-    body = 'I am writing because your attendance in ' + classLabel(cls) + ' is now ' + t.pct + '%, below the ' + c.minAttendancePct +
-      '% minimum required to pass the course. You have ' + t.effective + ' counted absences and the limit is ' + c.maxAbsences + '.' + missed +
+    subject = 'Important: your attendance in ' + course;
+    body = 'You\'ve missed ' + missedTxt + ' in ' + course + ' (' + section + '), which puts your attendance at ' + t.pct + '%. That is below the ' +
+      c.minAttendancePct + '% attendance required, and more than ' + c.maxAbsences + ' absences means failing the course. ' +
+      'I want to make sure you know where things stand and help you find a way forward.' + dates +
       '\n\nYour attendance in this course:\n' + summaryLines_(t, cfg) +
-      '\n\nPlease contact me or ' + (cfg.officeName || 'the main office') + ' as soon as possible to talk about your options. ' +
-      'If any of these absences was for a medical reason, an accepted medical excuse removes it from your count.';
+      '\n\nCould you reply by ' + deadline + (hours ? ' or stop by during ' + hours : '') + '? We can talk about what happened and what options you have.';
   } else {
-    subject = 'Attendance – ' + classLabel(cls) + ' – Your current attendance is ' + t.pct + '%';
     var left = Math.max(0, t.remaining);
-    body = 'This is a reminder about your attendance in ' + classLabel(cls) + '. Your attendance is ' + t.pct + '% and you have ' +
-      (left ? left + ' absence' + (left === 1 ? '' : 's') + ' left' : 'no absences left') + ' before you fall below the ' + c.minAttendancePct +
-      '% you need to pass.' + missed +
-      '\n\nYour attendance in this course:\n' + summaryLines_(t, cfg) + '\n\n' + standingSentence_(t, cfg);
+    subject = 'Checking in: ' + course + ' attendance';
+    body = 'I noticed you\'ve missed ' + missedTxt + ' in ' + course + ' (' + section + '), which puts your attendance at ' + t.pct + '%. ' +
+      'I just wanted to check in and make sure everything is okay.' + dates +
+      '\n\nYour attendance in this course:\n' + summaryLines_(t, cfg) +
+      '\n\n' + (left ? 'You have ' + left + ' absence' + (left === 1 ? '' : 's') + ' left before you fall below the ' + c.minAttendancePct + '% required to pass.'
+        : 'You have no absences left: one more and you fall below the ' + c.minAttendancePct + '% required to pass.') +
+      '\n\nPlease review the material from the sessions you missed, and let me know if anything is getting in the way of attending. ' +
+      (hours ? 'I\'m happy to help you catch up during ' + hours + '.' : 'I\'m happy to help you catch up; just reply to this email.');
   }
-  var text = 'Dear ' + first + ',\n\n' + body + '\n\n' + medicalExcuseText_(cfg) + '\n\nBest regards,\n' + signature_(cfg);
+  var text = 'Hi' + (first ? ' ' + first : '') + ',\n\n' + body + '\n\n' + medicalExcuseText_(cfg) + '\n\nBest,\n' + signature_(cfg);
   return { subject: subject, text: text, html: textToHtml_(text) };
 }
 
@@ -1091,6 +1113,9 @@ function buildWeeklyReport(p) {
   var th = 'style="text-align:left;padding:4px 8px;border-bottom:1px solid #ccc;background:#f4f4f4"';
   var td = 'style="padding:4px 8px;border-bottom:1px solid #eee"';
   var counts = { missed: 0, risk: 0 };
+  var ov = weeklyOverview_(p, totals, c, th, td);
+  html.push(ov.html); text.push.apply(text, ov.text);
+  if (ov.html) { html.push('<h2 style="margin:28px 0 4px;font-size:17px">Details by class</h2>'); text.push('DETAILS BY CLASS', ''); }
 
   p.classes.forEach(function (cls) {
     var roster = p.students.filter(function (s) { return s.classId === cls.id; });
@@ -1172,6 +1197,148 @@ function buildWeeklyReport(p) {
     text: text.join('\n'),
     html: html.join('')
   };
+}
+
+/**
+ * The one-page Friday overview of every class: the week in 4 numbers, by class, who needs a follow-up (Populi order),
+ * what is due next week, and what is still left before the weekend.
+ * Optional inputs (from the system): p.sent {classId|studentId: {level, date, at}}, p.questions {classId: open names},
+ * p.assignments [{classId, title, due, time, window, group}], p.todo [{text, sub}].
+ */
+function weeklyOverview_(p, totals, c, th, td) {
+  var html = [], text = [], sent = p.sent || {}, questions = p.questions || {};
+  var all = { P: 0, T: 0, A: 0, E: 0 }, n = { below100: 0, below80: 0, need: 0, done: 0 };
+  var pill = function (txt, color) {
+    return '<span style="display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px;font-weight:bold;color:' + color +
+      ';background:' + color + '1a">' + esc_(txt) + '</span>';
+  };
+  var rows = [], follow = [];
+  p.classes.forEach(function (cls) {
+    var roster = p.students.filter(function (s) { return s.classId === cls.id; })
+      .sort(function (a, b) { return (a.order || 1e6) - (b.order || 1e6) || a.name.localeCompare(b.name); });
+    var wc = { P: 0, T: 0, A: 0, E: 0 }, marked = 0;
+    p.records.forEach(function (r) {
+      if (r.classId !== cls.id || r.date < p.weekStart || r.date > p.weekEnd) return;
+      var k = /^accepted$/i.test(r.excuse || '') ? 'E' : String(r.status || '').charAt(0);
+      if (k in wc) { wc[k]++; all[k]++; marked++; }
+    });
+    var list = [];
+    roster.forEach(function (s) {
+      var t = totals[cls.id + '|' + s.id] || emptyTally(p.cfg);
+      var level = t.state === 'failing' ? 'below80' : t.effective > 0 ? 'below100' : '';
+      if (!level) return;
+      var last = sent[cls.id + '|' + s.id];
+      var done = !!(last && last.level === level && last.at === t.effective + '/' + t.tardies);
+      n[level]++; n.need++; if (done) n.done++;
+      list.push({ s: s, t: t, level: level, done: done, last: last });
+    });
+    var q = +questions[cls.id] || 0, toSend = list.filter(function (x) { return !x.done; }).length;
+    var status = !marked ? ['No attendance loaded', '#a05a00'] : q ? [q + ' name' + (q === 1 ? '' : 's') + ' to confirm', '#a05a00']
+      : toSend ? [toSend + ' follow-up' + (toSend === 1 ? '' : 's') + ' to send', '#c62828']
+      : list.length ? ['Follow-ups sent', '#2e7d32'] : ['Everyone at 100%', '#2e7d32'];
+    var pct = marked ? Math.round(100 * (wc.P + wc.T + wc.E) / marked) + '%' : '—';
+    rows.push({ cls: cls, roster: roster.length, wc: wc, pct: pct, status: status });
+    follow.push({ cls: cls, list: list, q: q });
+  });
+  var markedAll = all.P + all.T + all.A + all.E;
+  var rate = markedAll ? Math.round(100 * (all.P + all.T + all.E) / markedAll) + '%' : '—';
+
+  // 1. The week in 4 numbers.
+  var kpi = function (big, small, color) {
+    return '<td style="padding:10px 14px;border:1px solid #e3e3e3;border-radius:8px;width:25%;vertical-align:top">' +
+      '<div style="font-size:24px;font-weight:bold;color:' + (color || '#222') + '">' + esc_(big) + '</div>' +
+      '<div style="font-size:12px;color:#666">' + esc_(small) + '</div></td>';
+  };
+  html.push('<table style="border-collapse:separate;border-spacing:6px;width:100%;margin:0 0 8px"><tr>',
+    kpi(rate, 'attendance this week, all classes'), kpi(String(n.below100), 'below 100% (counted absences)', n.below100 ? '#8d6e00' : '#2e7d32'),
+    kpi(String(n.below80), 'below 80% (losing the course)', n.below80 ? '#c62828' : '#2e7d32'),
+    kpi(n.done + ' / ' + n.need, 'follow-ups sent', n.done < n.need ? '#c62828' : '#2e7d32'), '</tr></table>');
+  text.push('THE WEEK: ' + rate + ' attendance · ' + n.below100 + ' below 100% · ' + n.below80 + ' below 80% · ' + n.done + '/' + n.need + ' follow-ups sent', '');
+
+  // 2. By class.
+  html.push('<h3 style="margin:16px 0 6px">By class</h3><table style="border-collapse:collapse;font-size:13px;width:100%"><tr>' +
+    ['Class', 'Students', 'Present', 'Tardy', 'Absent', 'This week', 'Status'].map(function (h) { return '<th ' + th + '>' + h + '</th>'; }).join('') + '</tr>');
+  text.push('BY CLASS');
+  rows.forEach(function (x) {
+    html.push('<tr><td ' + td + '><b>' + esc_(classLabel(x.cls)) + '</b></td><td ' + td + '>' + x.roster + '</td><td ' + td + '>' + x.wc.P +
+      '</td><td ' + td + '>' + x.wc.T + '</td><td ' + td + '>' + x.wc.A + (x.wc.E ? ' (+' + x.wc.E + ' excused)' : '') + '</td><td ' + td + '>' + x.pct +
+      '</td><td ' + td + '>' + pill(x.status[0], x.status[1]) + '</td></tr>');
+    text.push('  ' + classLabel(x.cls) + ': ' + x.wc.P + ' P · ' + x.wc.T + ' T · ' + x.wc.A + ' A · ' + x.pct + ' — ' + x.status[0]);
+  });
+  html.push('</table>'); text.push('');
+
+  // 3. Who needs a follow-up, in Populi order.
+  html.push('<h3 style="margin:18px 0 6px">Who needs a follow-up</h3>');
+  text.push('WHO NEEDS A FOLLOW-UP');
+  if (!n.need) { html.push('<p style="margin:0;color:#2e7d32">Nobody: every student is at 100%.</p>'); text.push('  Nobody.'); }
+  follow.forEach(function (f) {
+    if (!f.list.length) return;
+    html.push('<p style="margin:10px 0 4px"><b>' + esc_(classLabel(f.cls)) + '</b></p>');
+    text.push('  ' + classLabel(f.cls));
+    [['below80', 'Below 80%', '#c62828'], ['below100', 'Below 100%', '#8d6e00']].forEach(function (lv) {
+      var g = f.list.filter(function (x) { return x.level === lv[0]; });
+      if (!g.length) return;
+      html.push('<table style="border-collapse:collapse;font-size:13px;width:100%;margin:0 0 6px"><tr><th ' + th + ' colspan="4"><span style="color:' + lv[2] + '">' + lv[1] +
+        '</span></th></tr>');
+      g.forEach(function (x) {
+        var st = x.done ? 'Sent ' + x.last.date : f.q ? 'Waiting: name to confirm' : 'To send';
+        var col = x.done ? '#2e7d32' : f.q ? '#a05a00' : '#c62828';
+        html.push('<tr><td ' + td + '>' + esc_((x.s.order ? '#' + x.s.order + ' ' : '') + x.s.name) + '</td><td ' + td + '>' + x.t.effective + ' counted absence' + (x.t.effective === 1 ? '' : 's') +
+          ' (' + x.t.absences + ' A, ' + x.t.tardies + ' T)</td><td ' + td + '>' + x.t.pct + '%</td><td ' + td + '><b style="color:' + col + '">' + esc_(st) + '</b></td></tr>');
+        text.push('    ' + lv[1] + ': ' + (x.s.order ? '#' + x.s.order + ' ' : '') + x.s.name + ' — ' + x.t.effective + ' counted, ' + x.t.pct + '% — ' + st);
+      });
+      html.push('</table>');
+    });
+  });
+  text.push('');
+
+  // 4. Due next week (from the Assignments sheet).
+  if (p.assignments) {
+    var from = numToDate(dayNum(p.weekEnd) - 1), to = numToDate(dayNum(p.weekEnd) + 7);
+    var due = p.assignments.filter(function (a) { return a.due && a.due >= from && a.due <= to; })
+      .sort(function (a, b) { return a.due.localeCompare(b.due) || String(a.classId).localeCompare(String(b.classId)); });
+    html.push('<h3 style="margin:18px 0 6px">Due next week</h3>');
+    text.push('DUE NEXT WEEK');
+    if (!due.length) { html.push('<p style="margin:0;color:#555">Nothing due.</p>'); text.push('  Nothing due.'); }
+    else {
+      html.push('<table style="border-collapse:collapse;font-size:13px;width:100%"><tr>' +
+        ['Class', 'Assignment', 'Due', 'Window'].map(function (h) { return '<th ' + th + '>' + h + '</th>'; }).join('') + '</tr>');
+      due.forEach(function (a) {
+        var cls = p.classes.filter(function (k) { return k.id === a.classId; })[0];
+        var when = longDate(a.due).replace(/, \d{4}$/, '') + (a.time ? ' ' + a.time : '');
+        html.push('<tr><td ' + td + '>' + esc_(cls ? classLabel(cls) : a.classId) + '</td><td ' + td + '>' + esc_(a.title) + (a.group ? ' <span style="color:#777">· ' + esc_(a.group) + '</span>' : '') +
+          '</td><td ' + td + '>' + esc_(when) + '</td><td ' + td + '>' + (a.window ? '<b style="color:#a05a00;background:#fff3cd;padding:0 4px">' + esc_(a.window) + '</b>' : '') + '</td></tr>');
+        text.push('  ' + (cls ? classLabel(cls) : a.classId) + ' — ' + a.title + ' — ' + when + (a.window ? ' — ONLY ' + a.window : ''));
+      });
+      html.push('</table>');
+    }
+    var none = p.classes.filter(function (k) { return !p.assignments.some(function (a) { return a.classId === k.id; }); });
+    if (none.length) {
+      var names = none.map(function (k) { return classLabel(k); }).join(', ');
+      html.push('<p style="margin:6px 0 0;color:#777;font-size:12px">No assignments loaded for ' + esc_(names) + '.</p>');
+      text.push('  No assignments loaded for ' + names + '.');
+    }
+    text.push('');
+  }
+
+  // 5. Before the weekend.
+  if (p.todo) {
+    html.push('<h3 style="margin:18px 0 6px">Before the weekend</h3>');
+    text.push('BEFORE THE WEEKEND');
+    if (!p.todo.length) { html.push('<p style="margin:0;color:#2e7d32">Nothing left. Enjoy the weekend.</p>'); text.push('  Nothing left.'); }
+    else {
+      html.push('<ul style="margin:0 0 0 18px;padding:0">');
+      p.todo.forEach(function (x) {
+        html.push('<li style="margin:0 0 3px">' + esc_(x.text) + (x.sub ? ' <span style="color:#777">— ' + esc_(x.sub) + '</span>' : '') + '</li>');
+        text.push('  - ' + x.text);
+      });
+      html.push('</ul>');
+    }
+    text.push('');
+  }
+  html.push('<p style="margin:14px 0 0;color:#777;font-size:12px">Rules: ' + c.tardiesPerAbsence + ' tardies = 1 absence · each absence = ' + Math.round(100 / c.totalSessions) +
+    '% · minimum ' + c.minAttendancePct + '% (more than ' + c.maxAbsences + ' absences loses the course).</p>');
+  return { html: html.join(''), text: text };
 }
 
 /* ---------- student emails (Gmail inbox) ---------- */
@@ -1313,7 +1480,7 @@ var SHEETS = {
   Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active', 'Order', 'Zoom names'],
   Attendance: ['Date', 'Class ID', 'Student ID', 'Name', 'Status', 'Minutes late', 'Source', 'No ID', 'Left early',
     'Excuse', 'Excuse date', 'Notified', 'Office notified', 'Notes', 'Updated'],
-  Assignments: ['Class ID', 'Title', 'Due date', 'Remind days before', 'Notes', 'Reminded'],
+  Assignments: ['Class ID', 'Title', 'Due date', 'Remind days before', 'Notes', 'Reminded', 'Group', 'Window'],
   Summary: ['Class ID', 'Course', 'Student ID', 'Name', 'Email', 'Absences', 'Tardies', 'Excused', 'Counted absences',
     'Absences left', 'Attendance %', 'Status'],
   'Follow-ups': ['Created', 'Type', 'Class', 'Class date', 'Roster #', 'Students', 'Count', 'Subject', 'Message',
@@ -1333,6 +1500,8 @@ var CONFIG_FIELDS = [
   ['taTitle', 'TA title', 'Teacher Assistant', ''],
   ['replyTo', 'Reply-To email', 'dgomez230@ivy.edu', 'Every email goes out with this Reply-To.'],
   ['officeName', 'Office name', 'the main office', 'How emails refer to the office ("send your excuse to me or to ...").'],
+  ['officeHours', 'Office hours', '', 'Used in the below 100% / 80% follow-ups ("stop by during ..."), e.g. "Mondays 5:30–6 PM in Room 300". Empty → "reply to this email".'],
+  ['replyDays', 'Reply within (days)', '7', 'Below 80% follow-ups ask the student to reply within this many days.'],
   ['officeEmail', 'Office email', '', 'Gets the "student without ID" notices. Empty → they go to the Reply-To email.'],
   ['reportTo', 'Weekly report to', 'dgomez230@ivy.edu', 'Who gets the Friday report (comma-separated).'],
   ['emailMode', 'Email mode', 'POPULI', 'POPULI = write each email in Follow-ups to send from Populi (students with the same numbers share one email) · DRAFT = Gmail drafts · SEND = send from Gmail · LOG = only Outbox.'],
@@ -1539,11 +1708,33 @@ function weekStartOf_(ctx, week) {
 function reportForWeek_(ctx, week, start) {
   start = start || weekStartOf_(ctx, week);
   var end = numToDate(dayNum(start) + 6);
+  var y = yearOf_(ctx), questions = {}, at = table_('Assignments');
+  ctx.revT.rows.forEach(function (r) {
+    if (!ctx.revT.get(r, 'Done')) questions[ctx.revT.get(r, 'Class ID')] = (questions[ctx.revT.get(r, 'Class ID')] || 0) + 1;
+  });
+  var assignments = at.rows.map(function (r) {
+    var due = at.get(r, 'Due date'), time = String(due).match(/\d{1,2}:\d{2}\s*([ap]\.?m\.?)?/i);
+    return { classId: at.get(r, 'Class ID'), title: at.get(r, 'Title'), due: parseDateCell(due, y), time: time ? time[0] : '',
+      group: at.get(r, 'Group'), window: at.get(r, 'Window') };
+  }).filter(function (a) { return a.title && a.due; });
+  // The to-do list, with missing attendance as one line per class ("weeks 1, 2, 3").
+  var todo = [], loads = {};
+  tasks_(ctx).forEach(function (x) {
+    if (x.type !== 'load') return todo.push({ text: x.text, sub: x.sub });
+    if (x.go.date > end) return;
+    var k = x.go.classId;
+    if (!loads[k]) { loads[k] = { text: x.text.split(' · Week ')[0], weeks: [], sub: x.sub }; todo.push(loads[k]); }
+    loads[k].weeks.push(termWeek(x.go.date, ctx.cfg.termStart));
+  });
+  todo.forEach(function (x) { if (x.weeks) { x.text += ' · week' + (x.weeks.length > 1 ? 's ' : ' ') + x.weeks.join(', '); delete x.weeks; } });
+  var toSend = standing_(ctx).classes.reduce(function (n, c) { return n + c.messages.length; }, 0);
+  if (toSend) todo.push({ text: 'Send ' + toSend + ' below 100% / 80% follow-up message' + (toSend === 1 ? '' : 's') + ' in Populi', sub: 'Dashboard → Below 100% / 80%.' });
   var r = buildWeeklyReport({
     classes: ctx.classes.filter(function (c) { return c.active; }),
     students: ctx.students.filter(function (s) { return s.active; }),
     records: records_(ctx),
-    weekStart: start, weekEnd: end, today: today_(), week: week, cfg: ctx.cfg
+    weekStart: start, weekEnd: end, today: today_(), week: week, cfg: ctx.cfg,
+    sent: standingSent_(), questions: questions, assignments: assignments, todo: todo
   });
   r.week = week; r.start = start; r.end = end;
   return r;
@@ -1572,6 +1763,29 @@ function assignmentReminders() {
     });
     save_(t);
   });
+}
+
+/**
+ * Assignment list of a class into the Assignments sheet (same title + due date = same row). New rows get
+ * "Remind days before" = none: the Friday reminders are drafted elsewhere, this list only feeds the report.
+ */
+function importAssignments_(ctx, cls, list) {
+  var out = { added: 0, updated: 0 };
+  withLock_(function () {
+    var t = table_('Assignments'), y = yearOf_(ctx), idx = {};
+    t.rows.forEach(function (r) { idx[t.get(r, 'Class ID') + '|' + t.get(r, 'Title') + '|' + parseDateCell(t.get(r, 'Due date'), y)] = r; });
+    list.forEach(function (a) {
+      var k = cls.id + '|' + a.title + '|' + parseDateCell(a.due, y), r = idx[k];
+      if (!r) {
+        r = blankRow_(t); t.rows.push(r); idx[k] = r; out.added++;
+        t.set(r, 'Class ID', cls.id); t.set(r, 'Title', a.title); t.set(r, 'Remind days before', 'none');
+      } else out.updated++;
+      t.set(r, 'Due date', a.due); t.set(r, 'Group', a.group); t.set(r, 'Window', a.window);
+      if (a.points && !t.get(r, 'Notes')) t.set(r, 'Notes', a.points + ' points');
+    });
+    save_(t);
+  });
+  return out;
 }
 
 /* ---------- inbox ---------- */
@@ -1704,6 +1918,12 @@ function rowsFromFile_(file) {
  */
 function handleFile_(ctx, fileName, rows, created, fileId) {
   var kind = detectKind(rows), cfg = ctx.cfg;
+  if (kind === 'assignments') {
+    var ak = pickClass({ fileName: fileName }, ctx.classes, rosterByClass_(ctx), []);
+    if (!ak.cls) return { ok: false, kind: kind, cls: '', dates: '', msg: 'Assignment list: could not tell the class. Add [C1] (the Class ID) to the file name.' };
+    var ar = importAssignments_(ctx, ak.cls, parseAssignments(rows));
+    return { ok: true, kind: kind, cls: ak.cls.id, dates: '', msg: 'Assignments: ' + ar.added + ' new, ' + ar.updated + ' updated (shown in the Friday report; no reminders are sent for them).' };
+  }
   if (kind === 'zoom') {
     var z = parseZoom(rows);
     var people = z.participants.map(function (p) { return { name: p.name, email: p.email }; });
@@ -2581,7 +2801,7 @@ function standing_(ctx) {
 /** The message for students who share the same numbers (one student: their first name and the dates). */
 function standingMessage_(ctx, cls, group) {
   var one = group.length === 1 ? group[0] : null;
-  return buildStandingNotice({ level: group[0].level, student: { name: one ? one.name : '' }, cls: cls, cfg: ctx.cfg,
+  return buildStandingNotice({ level: group[0].level, student: { name: one ? one.name : '' }, cls: cls, cfg: ctx.cfg, today: today_(),
     tally: totals_(ctx)[cls.id + '|' + group[0].id] || emptyTally(ctx.cfg), dates: one ? one.dates : [] });
 }
 

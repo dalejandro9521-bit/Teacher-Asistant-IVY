@@ -555,6 +555,61 @@ test('weekly reports for any week: picker, report with totals as of that week, e
   assert.match(env.mail.sent[1].body, /Week of Monday, October 12, 2026/);
 });
 
+test('Friday overview: all classes in one page, follow-ups with sent status, assignment list from the inbox, what is left', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.setConfig('Term start', '2026-10-05');
+  // an assignment list (Name, Group, Points, Due, Window) dropped in TA Inbox, class from the course code in the file name
+  env.inbox().addFile('ENG111-assignments.csv', [
+    'Name,Group,Points,Due,Window',
+    'LRQ #4,Lecture Reading Quizzes,20,2026-10-26 23:59,Oct 26 9:00am-11:59pm only',
+    'MV #4,Memory Verses,10,2026-10-26 23:59,',
+    'LRQ #9,Lecture Reading Quizzes,20,2026-12-07 23:59,'
+  ].join('\n'));
+  env.gas.tick();
+  const a = env.sheet('Assignments').objects();
+  assert.equal(a.length, 3);
+  assert.deepEqual([a[0]['Class ID'], a[0].Title, a[0]['Remind days before'], a[0].Window], ['C1', 'LRQ #4', 'none', 'Oct 26 9:00am-11:59pm only']);
+  env.inbox().addFile('ENG111-assignments again.csv', 'Name,Group,Points,Due,Window\nMV #4,Memory Verses,10,2026-10-26 23:59,');
+  env.gas.tick();
+  assert.equal(env.sheet('Assignments').objects().length, 3); // same title + date = same row
+
+  const sh = env.sheet('Attendance');
+  ['2026-10-05', '2026-10-12'].forEach(d => {
+    sh.appendRow([d, 'C3', '1001', 'Ana Maria Lopez', 'Absent', '', 'Manual']);
+    sh.appendRow([d, 'C3', '1002', 'Brian Smith', 'Present', '', 'Manual']);
+    sh.appendRow([d, 'C3', '1003', 'Carla Pérez', 'Present', '', 'Manual']);
+    sh.appendRow([d, 'C3', '1004', 'David Kim', 'Present', '', 'Manual']);
+  });
+  sh.appendRow(['2026-10-19', 'C3', '1001', 'Ana Maria Lopez', 'Absent', '', 'Manual']);
+  sh.appendRow(['2026-10-19', 'C3', '1002', 'Brian Smith', 'Absent', '', 'Manual']);
+  sh.appendRow(['2026-10-19', 'C3', '1003', 'Carla Pérez', 'Present', '', 'Manual']);
+  sh.appendRow(['2026-10-19', 'C3', '1004', 'David Kim', 'Present', '', 'Manual']);
+  env.setNow('2026-10-23T12:00:00Z'); // Friday of week 3, 8 AM
+
+  let r = env.gas.apiWeeklyReport(3);
+  assert.match(r.html, /attendance this week, all classes/);
+  assert.match(r.html, />50%</);                                   // 2 of 4 marked in C3 this week
+  assert.match(r.html, /By class[\s\S]*BIO 101[\s\S]*2 follow-ups to send/);
+  assert.match(r.html, /ENG 111[^<]*<\/b><\/td><td[^>]*>0<\/td>[\s\S]*?No attendance loaded/);
+  assert.match(r.html, /Below 80%[\s\S]*Ana Maria Lopez<\/td><td[^>]*>3 counted absences \(3 A, 0 T\)[\s\S]*To send/);
+  assert.match(r.html, /Below 100%[\s\S]*Brian Smith/);
+  assert.match(r.html, /0 \/ 2/);
+  assert.match(r.html, /Due next week[\s\S]*LRQ #4[\s\S]*Oct 26 9:00am-11:59pm only/);
+  assert.doesNotMatch(r.html, /LRQ #9/);                           // not due next week
+  assert.match(r.html, /No assignments loaded for MATH 123/);
+  assert.match(r.html, /Before the weekend[\s\S]*Load attendance · ENG 111 · weeks 1, 2, 3/);
+  assert.match(r.html, /Send 2 below 100% \/ 80% follow-up messages/);
+  assert.match(r.html, /Details by class[\s\S]*Losing the course or at risk/); // the per-class detail stays
+  env.gas.apiSendWeeklyReport(3);
+  assert.match(env.mail.sent[0].body, /Below 80%: Ana Maria Lopez — 3 counted, 70% — To send/);
+
+  env.gas.apiStandingSent('C3', ['1001']);
+  r = env.gas.apiWeeklyReport(3);
+  assert.match(r.html, /Ana Maria Lopez[\s\S]*?Sent 2026-10-23/);
+  assert.match(r.html, /1 \/ 2/);
+  assert.match(r.html, /1 follow-up to send/);
+});
+
 test('to-do list, quick marking of an on-campus class, excuses, office changes, stale follow-ups, student history', () => {
   const env = setupTerm({ mode: 'POPULI' });
   const j = x => JSON.parse(JSON.stringify(x));
@@ -916,15 +971,19 @@ test('standing follow-ups: below 100% and below 80%, grouped by numbers, done wh
   assert.equal(st.messages.length, 3);
   const [m80, m1, mt] = st.messages;
   assert.equal(m80.level, 'below80');
-  assert.match(m80.subject, /below 80%/);
-  assert.match(m80.text, /^Dear Ana,/);
-  assert.match(m80.text, /now 70%, below the 80% minimum/);
+  assert.match(m80.subject, /^Important: your attendance in /);
+  assert.match(m80.text, /^Hi Ana,/);
+  assert.match(m80.text, /missed 3 classes in .* attendance at 70%\. That is below the 80% attendance required, and more than 2 absences means failing the course/);
+  assert.match(m80.text, /Could you reply by Tuesday, October 27\?/);
   assert.match(m80.text, /Classes missed or late: Monday, October 5, Monday, October 12, Monday, October 19/);
   assert.deepEqual(m1.roster, [2, 3]);
-  assert.match(m1.text, /^Dear student,/);
-  assert.match(m1.text, /attendance is 90% and you have 1 absence left/);
+  assert.match(m1.text, /^Hi,/);
+  assert.match(m1.text, /missed 1 class in .*attendance at 90%/);
+  assert.match(m1.text, /You have 1 absence left/);
+  assert.match(m1.text, /just reply to this email/);
   assert.deepEqual(mt.ids, ['206']);
-  assert.match(mt.text, /^Dear Fer,/);
+  assert.match(mt.text, /^Hi Fer,/);
+  assert.match(mt.text, /every 3 tardies count as 1 absence/);
   assert.match(mt.text, /1 absence \+ |Tardies: 3/);
   // Diego sends Beto + Caro's message in Populi
   st = j(env.gas.apiStandingSent('C1', ['202', '203'])).classes.find(c => c.id === 'C1');

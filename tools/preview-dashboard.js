@@ -60,6 +60,10 @@ api.apiSession = JSON.parse(JSON.stringify(g.apiSession('C3', '2026-10-05')));
 api.apiReportWeeks = JSON.parse(JSON.stringify(g.apiReportWeeks()));
 api.apiStudent = JSON.parse(JSON.stringify(g.apiStudent('C3', '104')));
 api.apiSetRecord = { status: 'Absent', left: true, noId: false, excuse: 'Received', notes: '', effective: 1, remaining: 1, pct: 90, stateLabel: '1 absence left', state: 'warning' };
+// What is due next Monday (like Diego's assignment lists in TA Inbox)
+[['C1', 'LRQ #2', '2026-10-12 23:59', 'Lecture Reading Quizzes', 'Oct 12 9:00am-11:59pm only'], ['C1', 'MV #2', '2026-10-12 23:59', 'Memory Verses', ''],
+  ['C2', 'LRQ #2', '2026-10-12 23:59', 'Lecture Reading Quizzes', 'Oct 12 4:00pm-11:59pm only'], ['C2', 'TRQ #2', '2026-10-12 23:59', 'Textbook Reading Questions', '']]
+  .forEach(a => env.sheet('Assignments').appendRow([a[0], a[1], a[2], 'none', '', '', a[3], a[4]]));
 api.apiWeeklyReport = JSON.parse(JSON.stringify(g.apiWeeklyReport(1)));
 api.apiStanding = JSON.parse(JSON.stringify(g.apiStanding()));
 api.apiStandingSent = api.apiStanding;

@@ -1294,7 +1294,7 @@ function viewReports() {
   fresh('apiReportWeeks', [], function (d) {
     S.weeks = d;
     if (!S.reportWeek) S.reportWeek = d.current;
-    var h = '<h1>Weekly reports</h1><p class="sub">Pick a week to see its report: who was absent or tardy that week and who is losing the course, for every class. ' +
+    var h = '<h1>Weekly reports</h1><p class="sub">Every class on one page: the week in numbers, who needs a follow-up, what is due next week and what is left, then the details by class. ' +
       'It also goes to ' + esc(d.reportTo) + ' automatically every Friday morning.</p>';
     h += '<div class="weeks">' + d.weeks.map(function (w) {
       return '<button class="wkbtn' + (w.week === S.reportWeek ? ' on' : '') + (w.future ? ' future' : '') + '" data-act="pickWeek" data-w="' + w.week + '">' +

@@ -9,7 +9,7 @@ var SHEETS = {
   Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active', 'Order', 'Zoom names'],
   Attendance: ['Date', 'Class ID', 'Student ID', 'Name', 'Status', 'Minutes late', 'Source', 'No ID', 'Left early',
     'Excuse', 'Excuse date', 'Notified', 'Office notified', 'Notes', 'Updated'],
-  Assignments: ['Class ID', 'Title', 'Due date', 'Remind days before', 'Notes', 'Reminded'],
+  Assignments: ['Class ID', 'Title', 'Due date', 'Remind days before', 'Notes', 'Reminded', 'Group', 'Window'],
   Summary: ['Class ID', 'Course', 'Student ID', 'Name', 'Email', 'Absences', 'Tardies', 'Excused', 'Counted absences',
     'Absences left', 'Attendance %', 'Status'],
   'Follow-ups': ['Created', 'Type', 'Class', 'Class date', 'Roster #', 'Students', 'Count', 'Subject', 'Message',
@@ -29,6 +29,8 @@ var CONFIG_FIELDS = [
   ['taTitle', 'TA title', 'Teacher Assistant', ''],
   ['replyTo', 'Reply-To email', 'dgomez230@ivy.edu', 'Every email goes out with this Reply-To.'],
   ['officeName', 'Office name', 'the main office', 'How emails refer to the office ("send your excuse to me or to ...").'],
+  ['officeHours', 'Office hours', '', 'Used in the below 100% / 80% follow-ups ("stop by during ..."), e.g. "Mondays 5:30–6 PM in Room 300". Empty → "reply to this email".'],
+  ['replyDays', 'Reply within (days)', '7', 'Below 80% follow-ups ask the student to reply within this many days.'],
   ['officeEmail', 'Office email', '', 'Gets the "student without ID" notices. Empty → they go to the Reply-To email.'],
   ['reportTo', 'Weekly report to', 'dgomez230@ivy.edu', 'Who gets the Friday report (comma-separated).'],
   ['emailMode', 'Email mode', 'POPULI', 'POPULI = write each email in Follow-ups to send from Populi (students with the same numbers share one email) · DRAFT = Gmail drafts · SEND = send from Gmail · LOG = only Outbox.'],
@@ -235,11 +237,33 @@ function weekStartOf_(ctx, week) {
 function reportForWeek_(ctx, week, start) {
   start = start || weekStartOf_(ctx, week);
   var end = numToDate(dayNum(start) + 6);
+  var y = yearOf_(ctx), questions = {}, at = table_('Assignments');
+  ctx.revT.rows.forEach(function (r) {
+    if (!ctx.revT.get(r, 'Done')) questions[ctx.revT.get(r, 'Class ID')] = (questions[ctx.revT.get(r, 'Class ID')] || 0) + 1;
+  });
+  var assignments = at.rows.map(function (r) {
+    var due = at.get(r, 'Due date'), time = String(due).match(/\d{1,2}:\d{2}\s*([ap]\.?m\.?)?/i);
+    return { classId: at.get(r, 'Class ID'), title: at.get(r, 'Title'), due: parseDateCell(due, y), time: time ? time[0] : '',
+      group: at.get(r, 'Group'), window: at.get(r, 'Window') };
+  }).filter(function (a) { return a.title && a.due; });
+  // The to-do list, with missing attendance as one line per class ("weeks 1, 2, 3").
+  var todo = [], loads = {};
+  tasks_(ctx).forEach(function (x) {
+    if (x.type !== 'load') return todo.push({ text: x.text, sub: x.sub });
+    if (x.go.date > end) return;
+    var k = x.go.classId;
+    if (!loads[k]) { loads[k] = { text: x.text.split(' · Week ')[0], weeks: [], sub: x.sub }; todo.push(loads[k]); }
+    loads[k].weeks.push(termWeek(x.go.date, ctx.cfg.termStart));
+  });
+  todo.forEach(function (x) { if (x.weeks) { x.text += ' · week' + (x.weeks.length > 1 ? 's ' : ' ') + x.weeks.join(', '); delete x.weeks; } });
+  var toSend = standing_(ctx).classes.reduce(function (n, c) { return n + c.messages.length; }, 0);
+  if (toSend) todo.push({ text: 'Send ' + toSend + ' below 100% / 80% follow-up message' + (toSend === 1 ? '' : 's') + ' in Populi', sub: 'Dashboard → Below 100% / 80%.' });
   var r = buildWeeklyReport({
     classes: ctx.classes.filter(function (c) { return c.active; }),
     students: ctx.students.filter(function (s) { return s.active; }),
     records: records_(ctx),
-    weekStart: start, weekEnd: end, today: today_(), week: week, cfg: ctx.cfg
+    weekStart: start, weekEnd: end, today: today_(), week: week, cfg: ctx.cfg,
+    sent: standingSent_(), questions: questions, assignments: assignments, todo: todo
   });
   r.week = week; r.start = start; r.end = end;
   return r;
@@ -268,6 +292,29 @@ function assignmentReminders() {
     });
     save_(t);
   });
+}
+
+/**
+ * Assignment list of a class into the Assignments sheet (same title + due date = same row). New rows get
+ * "Remind days before" = none: the Friday reminders are drafted elsewhere, this list only feeds the report.
+ */
+function importAssignments_(ctx, cls, list) {
+  var out = { added: 0, updated: 0 };
+  withLock_(function () {
+    var t = table_('Assignments'), y = yearOf_(ctx), idx = {};
+    t.rows.forEach(function (r) { idx[t.get(r, 'Class ID') + '|' + t.get(r, 'Title') + '|' + parseDateCell(t.get(r, 'Due date'), y)] = r; });
+    list.forEach(function (a) {
+      var k = cls.id + '|' + a.title + '|' + parseDateCell(a.due, y), r = idx[k];
+      if (!r) {
+        r = blankRow_(t); t.rows.push(r); idx[k] = r; out.added++;
+        t.set(r, 'Class ID', cls.id); t.set(r, 'Title', a.title); t.set(r, 'Remind days before', 'none');
+      } else out.updated++;
+      t.set(r, 'Due date', a.due); t.set(r, 'Group', a.group); t.set(r, 'Window', a.window);
+      if (a.points && !t.get(r, 'Notes')) t.set(r, 'Notes', a.points + ' points');
+    });
+    save_(t);
+  });
+  return out;
 }
 
 /* ---------- inbox ---------- */
@@ -400,6 +447,12 @@ function rowsFromFile_(file) {
  */
 function handleFile_(ctx, fileName, rows, created, fileId) {
   var kind = detectKind(rows), cfg = ctx.cfg;
+  if (kind === 'assignments') {
+    var ak = pickClass({ fileName: fileName }, ctx.classes, rosterByClass_(ctx), []);
+    if (!ak.cls) return { ok: false, kind: kind, cls: '', dates: '', msg: 'Assignment list: could not tell the class. Add [C1] (the Class ID) to the file name.' };
+    var ar = importAssignments_(ctx, ak.cls, parseAssignments(rows));
+    return { ok: true, kind: kind, cls: ak.cls.id, dates: '', msg: 'Assignments: ' + ar.added + ' new, ' + ar.updated + ' updated (shown in the Friday report; no reminders are sent for them).' };
+  }
   if (kind === 'zoom') {
     var z = parseZoom(rows);
     var people = z.participants.map(function (p) { return { name: p.name, email: p.email }; });
@@ -1277,7 +1330,7 @@ function standing_(ctx) {
 /** The message for students who share the same numbers (one student: their first name and the dates). */
 function standingMessage_(ctx, cls, group) {
   var one = group.length === 1 ? group[0] : null;
-  return buildStandingNotice({ level: group[0].level, student: { name: one ? one.name : '' }, cls: cls, cfg: ctx.cfg,
+  return buildStandingNotice({ level: group[0].level, student: { name: one ? one.name : '' }, cls: cls, cfg: ctx.cfg, today: today_(),
     tally: totals_(ctx)[cls.id + '|' + group[0].id] || emptyTally(ctx.cfg), dates: one ? one.dates : [] });
 }
 
