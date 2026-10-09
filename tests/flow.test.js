@@ -1187,3 +1187,33 @@ test('Populi screenshots: a re-upload while Claude reads never blocks the class;
   env.gas.tick();
   assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Tardy');
 });
+
+test('Roster from the dashboard: Populi CSV or pasted names, wrong-class guard, add and remove by hand (all logged)', () => {
+  const env = setupTerm();
+  const S = env.sheet('Students');
+  S.appendRow(['1005', 'Eva Green', 'eva@ivy.edu', 'C3', 'Yes']);
+  S.appendRow(['1006', 'Frank Ocean', 'frank@ivy.edu', 'C3', 'Yes']);
+  const csv = ['Student,Student ID,Email,Status', 'Brian Smith,1002,brian@ivy.edu,Enrolled', 'Ana Maria Lopez,1001,ana@ivy.edu,Enrolled',
+    'Carla Pérez,1003,carla@ivy.edu,Enrolled', 'David Kim,1004,david@ivy.edu,Enrolled', 'Eva Green,1005,eva@ivy.edu,Enrolled',
+    'Gina Hall,1007,gina@ivy.edu,Enrolled'].join('\n');
+  const r = JSON.parse(JSON.stringify(env.gas.apiImportRoster('C3', csv, 'roster.csv')));
+  assert.deepEqual([r.total, r.addedNames, r.removedNames], [6, ['Gina Hall'], ['Frank Ocean']]);
+  const st = () => env.sheet('Students').objects().filter(x => x['Class ID'] === 'C3');
+  assert.equal(st().find(x => x.Name === 'Brian Smith').Order, '1');            // Populi order
+  assert.equal(st().find(x => x.Name === 'Gina Hall')['On roster since'], '2026-10-05');
+  assert.equal(st().find(x => x.Name === 'Frank Ocean').Active, 'No');
+  // another class's roster: asks first
+  const other = ['Student', 'Zed One', 'Zed Two', 'Zed Three', 'Zed Four', 'Zed Five', 'Zed Six'].join('\n');
+  assert.match(env.gas.apiImportRoster('C3', other, 'pasted').warning, /Only 0 of these 6 students/);
+  assert.equal(st().filter(x => x.Active === 'Yes').length, 6, 'nothing changed');
+  // one student by hand, then removed
+  const a = env.gas.apiAddStudent('C3', 'Hugo Ruiz', '2026-10-12');
+  assert.equal(a.order, 7);
+  const hugo = st().find(x => x.Name === 'Hugo Ruiz');
+  assert.equal(hugo['On roster since'], '2026-10-12');
+  env.gas.apiRemoveStudent('C3', hugo['Student ID']);
+  assert.equal(st().find(x => x.Name === 'Hugo Ruiz').Active, 'No');
+  const log = env.sheet('Roster changes').objects().map(x => x.Name + ': ' + x.Change);
+  assert.deepEqual(log, ['Gina Hall: Added to the roster', 'Frank Ocean: No longer on the roster (inactive)',
+    'Hugo Ruiz: Added to the roster (#7, from 2026-10-12)', 'Hugo Ruiz: Removed from the roster (inactive)']);
+});

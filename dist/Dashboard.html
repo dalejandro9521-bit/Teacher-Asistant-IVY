@@ -294,6 +294,13 @@
   .weekPick button.missed { border-left: 4px solid var(--a); } .weekPick button.now { border-left: 4px solid var(--brand2); } .weekPick button.later { border-left: 4px solid var(--line); }
   .weekPick button.on { background: var(--brand-soft); border-color: var(--brand2); box-shadow: 0 0 0 1px var(--brand2) inset; font-weight: 600; }
   .redo { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 12px; }
+  .roster-panel { margin: 16px 0 14px; padding: 16px 18px; }
+  .roster-panel label { display: block; margin: 8px 0 3px; font-size: 12px; color: var(--ink2); }
+  .roster-panel input { display: block; width: 100%; box-sizing: border-box; border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; font: inherit; font-size: 13px; }
+  .rp-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 24px; }
+  .roster-panel textarea { width: 100%; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; box-sizing: border-box; }
+  .drop.sm { padding: 14px; }
+  .rp-msg { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--brand-soft); font-size: 13px; }
   .ctabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
   .ctabs button { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-left: 4px solid #6b3fa0; background: #fff; border-radius: 10px; padding: 7px 12px; cursor: pointer; color: var(--ink); font-size: 13px; text-align: left; }
   .ctabs button:first-child { border-left-color: var(--brand2); }
@@ -1077,7 +1084,9 @@ function viewClass() {
       return '<div class="card wt ' + cls + '" data-go="session" data-date="' + esc(w.date) + '"><b>Week ' + w.week + ' · ' + esc(shortDate(w.date)) + '</b><div class="small">' + info + '</div>' +
         (extra ? '<div style="margin-top:6px">' + extra + '</div>' : '') + '</div>';
     }).join('') + '</div>';
+    h += rosterPanelHTML(d);
     h += '<div class="toolbar"><input class="search" id="search" placeholder="Search a student…" value="' + esc(S.search) + '">' +
+      '<button class="btn sm" data-act="rosterToggle">' + (S.rosterOpen ? 'Close roster' : 'Update roster') + '</button>' +
       '<div class="seg" id="seg">' + ['all', 'risk', 'absent'].map(function (f) {
         return '<button class="' + (S.filter === f ? 'on' : '') + '" data-act="filter" data-f="' + f + '">' + { all: 'Everyone', risk: 'At risk', absent: 'Missed a class' }[f] + '</button>';
       }).join('') + '</div><div class="spacer"></div><span class="small muted">' + st('P') + ' present ' + st('T') + ' tardy ' + st('A') + ' absent ' + st('A', true) + ' left early ' + st('E') + ' excused</span></div>';
@@ -1085,7 +1094,57 @@ function viewClass() {
     $('main').innerHTML = h;
     drawClassTable();
     $('search').addEventListener('input', function (e) { S.search = e.target.value; drawClassTable(); });
+    setupRosterPanel();
   });
+}
+/** Class page: update the roster from Populi (file or pasted), or add one student by hand. */
+function rosterPanelHTML(d) {
+  if (!S.rosterOpen) return '';
+  var code = esc(d.cls.course.split(':')[0]);
+  return '<div class="card roster-panel"><div class="row"><b>Roster of ' + code + '</b><span class="muted small">' + d.students.length + ' students now, in Populi order</span></div>' +
+    '<div class="rp-grid"><div><div class="small" style="margin:8px 0 6px"><b>1. Whole roster from Populi</b> (when people were added or dropped)</div>' +
+    '<div class="drop sm" id="rosterDrop"><div><b>Drop the roster CSV here</b> or click to choose it</div><div class="muted small">Populi → ' + code + ' → Roster → Export (CSV)</div></div>' +
+    '<input type="file" id="rosterFile" accept=".csv,.txt,.tsv,text/csv,text/plain" style="display:none">' +
+    '<div class="small muted" style="margin:8px 0 4px">…or copy the roster table in Populi and paste it here:</div>' +
+    '<textarea id="rosterPaste" rows="4" placeholder="Paste the roster (or one name per line, in Populi order)"></textarea>' +
+    '<button class="btn primary sm" data-act="rosterPasteGo" style="margin-top:6px">Update roster from the pasted text</button></div>' +
+    '<div><div class="small" style="margin:8px 0 6px"><b>2. Add one student</b> (joined late)</div>' +
+    '<label for="newName">Name as in Populi</label><input id="newName" placeholder="First Last">' +
+    '<label for="newSince">In the class since</label><input type="date" id="newSince" value="' + esc(ymd(new Date())) + '">' +
+    '<div class="small muted" style="margin-top:4px">Classes before this date do not count against them.</div>' +
+    '<button class="btn sm" data-act="rosterAdd" style="margin-top:8px">+ Add to the end of the roster</button>' +
+    '<div class="small muted" style="margin-top:12px">To take someone off: open the student and use "Remove from roster". Every change is listed in the "Roster changes" sheet.</div></div></div>' +
+    (S.rosterMsg ? '<div class="rp-msg">' + S.rosterMsg + '</div>' : '') + '</div>';
+}
+function setupRosterPanel() {
+  var d = $('rosterDrop'), f = $('rosterFile');
+  if (!d) return;
+  d.addEventListener('click', function () { f.click(); });
+  d.addEventListener('dragover', function (e) { e.preventDefault(); d.classList.add('over'); });
+  d.addEventListener('dragleave', function () { d.classList.remove('over'); });
+  d.addEventListener('drop', function (e) { e.preventDefault(); e.stopPropagation(); d.classList.remove('over'); if (e.dataTransfer.files[0]) rosterFromFile(e.dataTransfer.files[0]); });
+  f.onchange = function () { if (f.files[0]) rosterFromFile(f.files[0]); f.value = ''; };
+}
+function rosterFromFile(file) {
+  if (!/\.(csv|txt|tsv)$/i.test(file.name)) { toast('Use the CSV export from Populi (or paste the roster)', true); return; }
+  var r = new FileReader();
+  r.onload = function () { rosterImport(String(r.result), file.name, false); };
+  r.readAsText(file);
+}
+function rosterImport(text, name, force) {
+  var classId = S.classId;
+  S.rosterMsg = 'Updating the roster…'; viewClass();
+  call('apiImportRoster', classId, text, name || 'pasted', force).then(function (r) {
+    if (r.warning) {
+      S.rosterMsg = esc(r.warning) + ' <button class="btn sm" data-act="rosterForce">Yes, update it anyway</button>';
+      S.rosterPending = text; viewClass(); return;
+    }
+    S.rosterMsg = '<b>Roster updated:</b> ' + r.total + ' students in Populi order.' +
+      (r.addedNames.length ? '<br>New (earlier classes do not count): ' + esc(r.addedNames.join(', ')) : '') +
+      (r.removedNames.length ? '<br>No longer on the roster: ' + esc(r.removedNames.join(', ')) : '') +
+      (!r.addedNames.length && !r.removedNames.length ? ' No one added or removed.' : '');
+    MEM = {}; storeClear(); loadAll(false).then(function () { viewClass(); });
+  }).catch(function () { S.rosterMsg = ''; viewClass(); });
 }
 function drawClassTable() {
   var d = S.cls, q = S.search.trim().toLowerCase();
@@ -1331,7 +1390,8 @@ function viewStudent() {
     var h = '<div class="crumbs"><a data-go="home">Home</a> / <a data-go="class" data-class="' + esc(d.cls.id) + '">' + esc(d.cls.course.split(':')[0]) + '</a> / ' + esc(d.student.name) + '</div>' +
       '<div class="row"><div><h1>' + esc(d.student.name) + ' <span class="muted" style="font-weight:500">#' + (d.student.order || '?') + '</span></h1>' +
       '<p class="sub">' + esc(d.cls.course) + ' · ' + esc(d.student.email || 'no email') + (d.student.aliases && d.student.aliases.length ? ' · Zoom: ' + esc(d.student.aliases.join(', ')) : '') + '</p></div>' +
-      '<div class="spacer"></div>' + stateChip(t.state, t.stateLabel) + '</div>';
+      '<div class="spacer"></div>' + stateChip(t.state, t.stateLabel) +
+      '<button class="btn ghost sm" style="margin-left:8px" data-act="removeStudent" data-sid="' + esc(d.student.id) + '" data-name="' + esc(d.student.name) + '">Remove from roster</button></div>';
     h += '<div class="stats"><div class="card stat A"><div class="n">' + t.effective + '</div><div class="small muted">Counted absences (of 2)</div></div>' +
       '<div class="card stat"><div class="n">' + t.remaining + '</div><div class="small muted">Absences left</div></div>' +
       '<div class="card stat T"><div class="n">' + t.tardies + '</div><div class="small muted">Tardies (3 = 1 absence)</div></div>' +
@@ -1519,6 +1579,25 @@ var ACTIONS = {
   },
   takeLane: function () { /* handled on change */ },
   standFilter: function (b) { S.standFilter = b.getAttribute('data-f'); drawStanding(); },
+  rosterToggle: function () { S.rosterOpen = !S.rosterOpen; S.rosterMsg = ''; viewClass(); },
+  rosterPasteGo: function () { var t = ($('rosterPaste') || {}).value || ''; if (!t.trim()) { toast('Paste the roster first', true); return; } rosterImport(t, 'pasted', false); },
+  rosterForce: function () { rosterImport(S.rosterPending || '', 'pasted', true); },
+  rosterAdd: function () {
+    var n = ($('newName') || {}).value || '', since = ($('newSince') || {}).value || '';
+    if (!n.trim()) { toast('Write the name', true); return; }
+    call('apiAddStudent', S.classId, n, since).then(function (r) {
+      S.rosterMsg = '<b>Added:</b> #' + r.order + ' ' + esc(r.name) + ' (from ' + esc(shortDate(since)) + ').';
+      MEM = {}; storeClear(); loadAll(false).then(function () { viewClass(); });
+    });
+  },
+  removeStudent: function (b) {
+    var name = b.getAttribute('data-name');
+    if (!confirm('Remove ' + name + ' from the roster? Their records stay; they stop counting and getting notices.')) return;
+    call('apiRemoveStudent', S.classId, b.getAttribute('data-sid')).then(function () {
+      toast(name + ' removed from the roster');
+      MEM = {}; storeClear(); loadAll(false).then(function () { go('class', { classId: S.classId }); });
+    });
+  },
   fuClass: function (b) { S.fuClass = b.getAttribute('data-c'); if (S.view === 'standing') drawStanding(); else drawFollowups(); },
   standSent: function (b) {
     var classId = b.getAttribute('data-c'), ids = b.getAttribute('data-ids').split(',');

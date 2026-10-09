@@ -2035,7 +2035,7 @@ function nextOrder_(ctx, classId) {
  * checkboxes). Students no longer in the export are set inactive; their attendance stays.
  */
 function importRoster_(ctx, cls, people) {
-  var t = ctx.studentsT, out = { total: people.length, added: 0, inactive: 0 }, seen = {};
+  var t = ctx.studentsT, out = { total: people.length, added: 0, inactive: 0, addedNames: [], removedNames: [] }, seen = {};
   var mine = ctx.students.filter(function (s) { return s.classId === cls.id; }), first = !mine.length, day = today_();
   people.forEach(function (p, i) {
     var s = matchStudent({ id: p.id, email: p.email, name: p.name }, mine), row;
@@ -2046,6 +2046,7 @@ function importRoster_(ctx, cls, people) {
       t.set(row, 'Student ID', p.id || p.email || p.name);
       t.set(row, 'Class ID', cls.id);
       out.added++;
+      out.addedNames.push(p.name || p.id);
       // Added after the class started: logged, and earlier classes are not counted against them.
       if (!first) { t.set(row, 'On roster since', day); rosterChange_(cls, p.id || p.email || p.name, p.name, 'Added to the roster', 'Populi roster file'); }
     }
@@ -2060,6 +2061,7 @@ function importRoster_(ctx, cls, people) {
     if (t.get(r, 'Class ID') === cls.id && !seen[t.get(r, 'Student ID')] && t.get(r, 'Active') !== 'No') {
       t.set(r, 'Active', 'No');
       out.inactive++;
+      out.removedNames.push(t.get(r, 'Name'));
       rosterChange_(cls, t.get(r, 'Student ID'), t.get(r, 'Name'), 'No longer on the roster (inactive)', 'Populi roster file');
     }
   });
@@ -2431,6 +2433,67 @@ function answerQuestions_(ctx) {
  * end of the roster (the next Populi roster file puts them in Populi's order and keeps this row), with the date they
  * joined so earlier classes are not counted against them. Logged in "Roster changes".
  */
+/* ---------- Roster from the dashboard ---------- */
+
+/**
+ * The class's Populi roster (CSV export, or the table copied from Populi and pasted) → the class roster in Populi order.
+ * New students are added from today (earlier classes do not count), missing ones become inactive; all logged in
+ * "Roster changes". A file that shares almost no one with the current roster is refused (probably another class).
+ */
+function apiImportRoster(classId, text, fileName, force) {
+  var out;
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId);
+    if (!cls) throw new Error('No class ' + classId);
+    var people = parseRoster(parseCSV(text));
+    if (!people.length) {
+      // just names, one per line (pasted from anywhere)
+      people = String(text || '').split(/\r?\n/).map(function (x) { return x.replace(/^\s*#?\d+[.)\s-]+/, '').trim(); })
+        .filter(function (x) { return x && !/^(student|name)s?$/i.test(x); }).map(function (n) { return { name: n, id: '', email: '', active: true }; });
+    }
+    if (!people.length) throw new Error('No students found. Use Populi\'s roster export (CSV) or paste the roster.');
+    var mine = ctx.students.filter(function (s) { return s.classId === cls.id && s.active; });
+    var same = people.filter(function (p) { return matchStudent({ id: p.id, email: p.email, name: p.name }, mine); }).length;
+    if (!force && mine.length >= 5 && same < Math.min(mine.length, people.length) * 0.5) {
+      out = { warning: 'Only ' + same + ' of these ' + people.length + ' students are on the ' + cls.course.split(':')[0] + ' roster now. Is this the right class?' };
+      return;
+    }
+    var r = importRoster_(ctx, cls, people);
+    save_(ctx.studentsT);
+    runLight_(ctx);
+    out = { total: r.total, added: r.added, inactive: r.inactive, addedNames: r.addedNames, removedNames: r.removedNames };
+  });
+  return out;
+}
+
+/** One student added by hand at the end of the roster (from a date: earlier classes do not count). */
+function apiAddStudent(classId, name, since) {
+  name = String(name || '').trim();
+  if (!name) throw new Error('Write the student\'s name');
+  var out;
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId);
+    if (!cls) throw new Error('No class ' + classId);
+    var s = addLateStudent_(ctx, cls, name, since || today_(), 'Added by hand in the dashboard');
+    save_(ctx.studentsT);
+    out = { id: s.id, name: s.name, order: s.order };
+  });
+  return out;
+}
+
+/** Take a student off the roster (inactive: their records stay; they stop counting and getting notices). */
+function apiRemoveStudent(classId, studentId) {
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId), t = ctx.studentsT;
+    var s = ctx.students.filter(function (x) { return x.classId === classId && x.id === studentId; })[0];
+    if (!cls || !s) throw new Error('Student not found');
+    t.set(t.rows[s.row], 'Active', 'No');
+    save_(t);
+    rosterChange_(cls, s.id, s.name, 'Removed from the roster (inactive)', 'By hand in the dashboard');
+  });
+  return true;
+}
+
 function addLateStudent_(ctx, cls, name, since, how) {
   var t = ctx.studentsT, roster = ctx.students.filter(function (x) { return x.classId === cls.id; });
   var have = matchStudent({ name: name }, roster);
