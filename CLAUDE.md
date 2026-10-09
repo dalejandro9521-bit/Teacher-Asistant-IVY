@@ -25,7 +25,8 @@ Attendance automation for Diego, a Teacher Assistant (dgomez230@ivy.edu). Talk t
 ## Classes
 C1 HA 103 Mon 9:00–1:00 (Room 300) · C2 OT 215 Mon 1:30–5:30 (Room 304) · C3 HA 105 Mon 6–10 pm Zoom ·
 C4 SB 100 Thu 9:00–1:00 Zoom. 2026 Fall Quarter: week 1 = Oct 5–9, week 10 = Dec 7–11. Campus: Vienna, VA (Eastern).
-In person attendance is scanned in Populi (barcode). Zoom attendance: screenshots of the participant list read by
+Diego's TA hours: Mon 9:00 AM–2:30 PM, Mon 6–7 PM (first hour of HA 105), Thu 9:00 AM–1:00 PM.
+In person attendance is scanned in Populi (barcode); Diego uploads a screenshot of Populi already marked. Zoom attendance: screenshots of the participant list read by
 Google Drive OCR in Apps Script (`handleScreenshotFolder_`, free), optionally Claude vision (`aiReadShot_`, when the
 API key is set and "Read screenshots with AI" = Yes), or a Zoom participants report.
 
