@@ -2079,7 +2079,8 @@ function applyEntries_(ctx, cls, date, entries) {
       row = t.rows[idx[key]];
       if (t.get(row, 'Source') === 'Manual' || normalizeStatus(t.get(row, 'Status')) === STATUS.E ||
           /^accepted$/i.test(t.get(row, 'Excuse'))) { out.kept++; return; }
-      if (t.get(row, 'Status') === e.status && String(t.get(row, 'Left early') === 'Yes') === String(!!e.leftEarly)) return;
+      if (t.get(row, 'Status') === e.status && String(t.get(row, 'Left early') === 'Yes') === String(!!e.leftEarly) &&
+          (!e.noId || yes_(t.get(row, 'No ID')))) return;
       out.updated++;
     } else {
       row = blankRow_(t);
@@ -2095,6 +2096,7 @@ function applyEntries_(ctx, cls, date, entries) {
     t.set(row, 'Minutes late', e.minutesLate === '' || e.minutesLate == null ? '' : String(e.minutesLate));
     t.set(row, 'Source', e.source);
     t.set(row, 'Left early', e.leftEarly ? 'Yes' : '');
+    if (e.noId) t.set(row, 'No ID', 'Yes');
     if (e.notes) t.set(row, 'Notes', e.notes);
     t.set(row, 'Updated', nowStr_());
   });
@@ -3517,7 +3519,7 @@ function apiAnalyzeSession(classId, date) {
     var unread = claudeUnread_(saved.data);
     if (unread) {
       // Nothing is marked from screenshots nobody has read yet (it would make everyone absent).
-      msg = 'Waiting for Claude: ' + unread + ' screenshot(s) to read. The attendance is taken as soon as Claude reads them.';
+      msg = 'Saved. Waiting for Claude to read ' + unread + ' screenshot(s): it checks Monday and Thursday after class (10:47 AM, 7:47 PM, 9:47 PM), or ask Claude in the chat to read them now. The attendance is taken right after.';
       waiting = true;
       return;
     }
@@ -3620,7 +3622,7 @@ function takeFromShots_(ctx, cls, date, folder, data) {
 var POPULI_STATUS = { present: STATUS.P, tardy: STATUS.T, absent: STATUS.A, excused: STATUS.E };
 
 /**
- * In-person class: Claude read Populi's attendance list ({rows:[{shown_name, roster_number, status, confidence}]} per
+ * In-person class: Claude read Populi's attendance list ({rows:[{shown_name, roster_number, status, note, no_id, confidence}]} per
  * screenshot). Each student gets exactly the status Populi shows; no 15/31-minute rule. Unsure or unmatched rows are listed.
  */
 function populiShots_(ctx, cls, date, folder, data) {
@@ -3636,7 +3638,9 @@ function populiShots_(ctx, cls, date, folder, data) {
       }
       if (got[s.id]) return;
       got[s.id] = true;
-      entries.push({ student: s, status: st, source: 'Populi screenshot', notes: 'As marked in Populi' });
+      // Populi's note column: "No ID" marks the check-in without ID (counted for the office notice), any note is kept
+      var note = String(x.note || '').trim(), noId = x.no_id === true || /\bno\s*id\b|forgot (his|her|their) id/i.test(note);
+      entries.push({ student: s, status: st, source: 'Populi screenshot', noId: noId, notes: 'As marked in Populi' + (note ? ': ' + note : '') });
     });
   });
   var c = applyEntries_(ctx, cls, date, entries);

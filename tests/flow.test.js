@@ -812,12 +812,15 @@ test('In-person class: a Populi screenshot read by Claude is recorded exactly as
   assert.equal(job.kind, 'populi');
   assert.equal(job.shots.populi.length, 1);
   const row = (n, st, conf) => ({ shown_name: 'x', roster_number: n, status: st, confidence: conf == null ? 0.98 : conf });
-  f.createFile('claude-results.json', JSON.stringify({ populi: [{ rows: [row(1, 'Present'), row(2, 'Tardy'), row(3, 'Absent'), row(9, 'Present', 0.4)] }] }), 'application/json');
+  f.createFile('claude-results.json', JSON.stringify({ populi: [{ rows: [Object.assign(row(1, 'Present'), { note: 'NO ID' }), Object.assign(row(2, 'Tardy'), { note: 'Left at 3' }), row(3, 'Absent'), row(9, 'Present', 0.4)] }] }), 'application/json');
   env.gas.tick();
   assert.equal(env.row('2026-10-05', 'C1', '2001').Status, 'Present');
   assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Tardy');
   assert.equal(env.row('2026-10-05', 'C1', '2003').Status, 'Absent');
   assert.equal(env.row('2026-10-05', 'C1', '2003').Source, 'Populi screenshot');
+  assert.equal(env.row('2026-10-05', 'C1', '2001')['No ID'], 'Yes');   // Populi note "NO ID" counts for the office notice
+  assert.equal(env.row('2026-10-05', 'C1', '2002')['No ID'], '');
+  assert.match(env.row('2026-10-05', 'C1', '2002').Notes, /As marked in Populi: Left at 3/);
   assert.equal(env.row('2026-10-05', 'C1', '2004'), undefined);          // not in the screenshot: not marked
   const log = env.sheet('Inbox log').objects().find(x => /read by Claude/.test(x.File));
   assert.match(log.Result, /1 present, 1 tardy, 1 absent \(as marked in Populi\)/);
@@ -840,7 +843,7 @@ test('Screenshots read by CLAUDE: no OCR, nothing marked until Claude writes its
   assert.equal(env.ocr.calls, 0, 'no OCR');
   const a = env.gas.apiAnalyzeSession('C3', '2026-10-05');
   assert.equal(a.waiting, true);
-  assert.match(a.msg, /Waiting for Claude: 2 screenshot/);
+  assert.match(a.msg, /Waiting for Claude to read 2 screenshot/);
   assert.equal(env.att().filter(x => x['Class ID'] === 'C3').length, 0, 'nobody marked absent while unread');
 
   // the job Claude reads: roster in Populi order + the screenshots' Drive ids
