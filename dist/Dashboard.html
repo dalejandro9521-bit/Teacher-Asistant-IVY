@@ -975,6 +975,7 @@ function drawClassTable() {
     '<th class="num">Absences</th><th class="num">Tardies</th><th class="num">Counted</th><th class="num">Left</th><th class="num">Attendance</th><th>Status</th></tr></thead><tbody>';
   rows.forEach(function (s) {
     h += '<tr><td class="sticky num muted">' + (s.order || '') + '</td><td class="sticky2"><b style="font-weight:500" class="name-link" data-go="student" data-sid="' + esc(s.id) + '">' + esc(s.name) + '</b>' +
+      (s.since ? ' <span class="chip warn" title="Added to the class after it started: classes before this date do not count">Joined ' + esc(shortDate(s.since)) + '</span>' : '') +
       (s.aliases && s.aliases.length ? '<div class="small muted">Zoom: ' + esc(s.aliases.join(', ')) + '</div>' : '') + '</td>' +
       s.weeks.map(function (w) { return '<td class="num">' + (w ? st(w.s, w.left, (LETTER_NAME[w.s] || '') + (w.note ? ' — ' + w.note : '')) : st('')) + '</td>'; }).join('') +
       '<td class="num">' + s.absences + '</td><td class="num">' + s.tardies + '</td><td class="num"><b>' + s.effective + '</b></td><td class="num">' + s.remaining + '</td>' +
@@ -1261,12 +1262,13 @@ function questionCard(q) {
     '<div class="opts">' + (sugg.length ? '<span class="small muted">Is it</span>' + sugg.map(function (s) {
       return '<button class="btn sm" data-act="answer" data-row="' + q.row + '" data-ans="' + esc(s.split(' ')[0]) + '">' + esc(s) + '</button>';
     }).join('') : '<span class="small muted">No similar name on the roster.</span>') +
+    '<button class="btn sm" data-act="answer" data-row="' + q.row + '" data-ans="new" title="Added to the class after it started: adds them at the end of the roster, from this date">+ New student</button>' +
     '<input placeholder="Other: # or name" id="ans' + q.row + '"><button class="btn sm primary" data-act="answerInput" data-row="' + q.row + '">Save</button>' +
     '<button class="btn sm ghost" data-act="answer" data-row="' + q.row + '" data-ans="ignore">Not a student</button></div></div>';
 }
 function viewReview() {
   fresh('apiQuestions', [], function (qs) {
-    var h = '<h1>Names to confirm</h1><p class="sub">When a Zoom name could be two students, or doesn\'t look like anyone, the system asks instead of guessing. Your answer is remembered for next time.</p>';
+    var h = '<h1>Names to confirm</h1><p class="sub">When a name could be two students, or doesn\'t look like anyone, the system asks instead of guessing. Your answer is remembered for next time. Someone added to the class after it started? Press "+ New student": they join the roster from that date and it is logged in "Roster changes".</p>';
     h += qs.length ? qs.map(questionCard).join('') : '<div class="card empty"><b>All clear</b>Every name in the screenshots was recognized.</div>';
     $('main').innerHTML = h;
   });

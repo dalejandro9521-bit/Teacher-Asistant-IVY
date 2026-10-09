@@ -568,6 +568,11 @@ function aiObservations(result, roster) {
   var out = [];
   function one(kind, name, time, num, conf, alts) {
     var s = num > 0 ? byOrder[num] || null : null;
+    if (!s && num === 0 && name) {
+      // Not matched by the reader: a name Diego already confirmed (alias) or a student added since is still recognized.
+      var r = resolveName(name, roster);
+      if (r && r.student) { s = r.student; conf = Math.max(conf || 0, 0.95); alts = []; }
+    }
     var cands = [];
     if (s) cands.push(s);
     (alts || []).forEach(function (n) { if (byOrder[n] && cands.indexOf(byOrder[n]) < 0) cands.push(byOrder[n]); });

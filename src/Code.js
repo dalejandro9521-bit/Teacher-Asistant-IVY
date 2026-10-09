@@ -6,7 +6,8 @@
 var SHEETS = {
   Config: ['Setting', 'Value', 'Notes'],
   Classes: ['Class ID', 'Course', 'Section', 'Professor', 'Professor email', 'Day', 'Start', 'End', 'Mode', 'Zoom meeting ID', 'Active'],
-  Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active', 'Order', 'Zoom names'],
+  Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active', 'Order', 'Zoom names', 'On roster since'],
+  'Roster changes': ['Time', 'Class ID', 'Student ID', 'Name', 'Change', 'How'],
   Attendance: ['Date', 'Class ID', 'Student ID', 'Name', 'Status', 'Minutes late', 'Source', 'No ID', 'Left early',
     'Excuse', 'Excuse date', 'Notified', 'Office notified', 'Notes', 'Updated'],
   Assignments: ['Class ID', 'Title', 'Due date', 'Remind days before', 'Notes', 'Reminded', 'Group', 'Window'],
@@ -525,7 +526,7 @@ function handleFile_(ctx, fileName, rows, created, fileId) {
 }
 
 function addToRoster_(ctx, cls, people) {
-  var t = ctx.studentsT, n = 0;
+  var t = ctx.studentsT, n = 0, hadRoster = roster_(ctx, cls.id).length > 0;
   people.forEach(function (p) {
     var roster = roster_(ctx, cls.id);
     if (matchStudent({ id: p.id, email: p.email, name: p.name }, roster)) return;
@@ -539,6 +540,7 @@ function addToRoster_(ctx, cls, people) {
     t.set(row, 'Order', String(nextOrder_(ctx, cls.id)));
     t.rows.push(row);
     ctx.students.push(studentFrom_(t, row));
+    if (hadRoster) rosterChange_(cls, p.id || p.email || p.name, p.name || p.id, 'Added to the roster', 'Populi attendance file');
     n++;
   });
   return n;
@@ -555,7 +557,7 @@ function nextOrder_(ctx, classId) {
  */
 function importRoster_(ctx, cls, people) {
   var t = ctx.studentsT, out = { total: people.length, added: 0, inactive: 0 }, seen = {};
-  var mine = ctx.students.filter(function (s) { return s.classId === cls.id; });
+  var mine = ctx.students.filter(function (s) { return s.classId === cls.id; }), first = !mine.length, day = today_();
   people.forEach(function (p, i) {
     var s = matchStudent({ id: p.id, email: p.email, name: p.name }, mine), row;
     if (s) row = t.rows[s.row];
@@ -565,6 +567,8 @@ function importRoster_(ctx, cls, people) {
       t.set(row, 'Student ID', p.id || p.email || p.name);
       t.set(row, 'Class ID', cls.id);
       out.added++;
+      // Added after the class started: logged, and earlier classes are not counted against them.
+      if (!first) { t.set(row, 'On roster since', day); rosterChange_(cls, p.id || p.email || p.name, p.name, 'Added to the roster', 'Populi roster file'); }
     }
     if (p.name) t.set(row, 'Name', p.name);
     if (p.email) t.set(row, 'Email', p.email);
@@ -577,6 +581,7 @@ function importRoster_(ctx, cls, people) {
     if (t.get(r, 'Class ID') === cls.id && !seen[t.get(r, 'Student ID')] && t.get(r, 'Active') !== 'No') {
       t.set(r, 'Active', 'No');
       out.inactive++;
+      rosterChange_(cls, t.get(r, 'Student ID'), t.get(r, 'Name'), 'No longer on the roster (inactive)', 'Populi roster file');
     }
   });
   ctx.students = studentsFrom_(t);
@@ -590,6 +595,8 @@ function applyEntries_(ctx, cls, date, entries) {
     idx[parseDateCell(t.get(r, 'Date'), yearOf_(ctx)) + '|' + t.get(r, 'Class ID') + '|' + t.get(r, 'Student ID')] = i;
   });
   entries.forEach(function (e) {
+    // Not enrolled yet on that date: an absence is not counted (nothing to record).
+    if (e.student.since && date < e.student.since && e.status === STATUS.A) return;
     var key = date + '|' + cls.id + '|' + e.student.id, row;
     if (key in idx) {
       row = t.rows[idx[key]];
@@ -889,7 +896,7 @@ function addQuestions_(ctx, cls, date, review) {
     }).join(', '));
     t.set(row, 'Suggestions', q.candidates.length
       ? q.candidates.map(function (s) { return '#' + (s.order || '?') + ' ' + s.name; }).join(' / ')
-      : 'No similar name in the roster');
+      : 'No similar name in the roster (if they were just added to the class, answer "new")');
     t.rows.push(row);
     added++;
   });
@@ -915,6 +922,17 @@ function answerQuestions_(ctx) {
       rerun[sessionKey_(classId, date)] = true;
       return;
     }
+    var nw = ans.match(/^(?:new|nuevo|nueva|add|agregar)\b\s*:?\s*(.*)$/i);
+    if (nw) {
+      var cls = classById_(ctx, classId);
+      if (!cls) return;
+      var ns = addLateStudent_(ctx, cls, nw[1].trim() || seenName, date, 'Seen in the ' + date + ' screenshots as "' + seenName + '"');
+      addAlias_(ctx, ns, seenName);
+      t.set(r, 'Done', 'Added to the roster as #' + ns.order + ' ' + ns.name + ' · ' + nowStr_());
+      t.set(r, 'Notes', '');
+      rerun[sessionKey_(classId, date)] = true;
+      return;
+    }
     var roster = roster_(ctx, classId), num = ans.match(/^#?\s*(\d{1,3})$/), s = null;
     if (num) s = roster.filter(function (x) { return x.order === +num[1]; })[0] || null;
     if (!s) s = matchStudent({ id: ans, name: ans }, roster);
@@ -925,6 +943,33 @@ function answerQuestions_(ctx) {
     rerun[sessionKey_(classId, date)] = true;
   });
   return rerun;
+}
+
+/**
+ * A student added to the class after it started (Diego confirmed a name that was not on the roster). They go at the
+ * end of the roster (the next Populi roster file puts them in Populi's order and keeps this row), with the date they
+ * joined so earlier classes are not counted against them. Logged in "Roster changes".
+ */
+function addLateStudent_(ctx, cls, name, since, how) {
+  var t = ctx.studentsT, roster = ctx.students.filter(function (x) { return x.classId === cls.id; });
+  var have = matchStudent({ name: name }, roster);
+  if (have) {
+    if (!have.active) { t.set(t.rows[have.row], 'Active', 'Yes'); ctx.students = studentsFrom_(t); rosterChange_(cls, have.id, have.name, 'Back on the roster', how); }
+    return ctx.students.filter(function (x) { return x.classId === cls.id && x.id === have.id; })[0];
+  }
+  var order = roster.reduce(function (m, x) { return Math.max(m, x.order || 0); }, 0) + 1;
+  var id = 'new-' + normalizeName(name).replace(/\s+/g, '-'), row = blankRow_(t);
+  [['Student ID', id], ['Name', name], ['Class ID', cls.id], ['Active', 'Yes'], ['Order', String(order)], ['On roster since', since || today_()]]
+    .forEach(function (kv) { t.set(row, kv[0], kv[1]); });
+  t.rows.push(row);
+  ctx.students = studentsFrom_(t);
+  rosterChange_(cls, id, name, 'Added to the roster (#' + order + ', from ' + (since || today_()) + ')', how);
+  return ctx.students.filter(function (x) { return x.classId === cls.id && x.id === id; })[0];
+}
+
+function rosterChange_(cls, id, name, change, how) {
+  if (!ss_().getSheetByName('Roster changes')) table_('Roster changes'); // created on first use (older spreadsheets)
+  appendRow_('Roster changes', [nowStr_(), cls.id, id, name, change, how]);
 }
 
 function addAlias_(ctx, student, alias) {
@@ -1107,7 +1152,7 @@ function class_(classId, ctx) {
     }),
     students: roster_(ctx, cls.id).map(function (s) {
       var t = totals[cls.id + '|' + s.id] || emptyTally(ctx.cfg);
-      return { id: s.id, order: s.order, name: s.name, email: s.email, aliases: s.aliases,
+      return { id: s.id, order: s.order, name: s.name, email: s.email, aliases: s.aliases, since: s.since,
         weeks: dates.map(function (d) { var c = cell[s.id + '|' + d]; return c ? Object.assign(c, { note: notes[s.id + '|' + d] || '' }) : null; }),
         absences: t.absences, tardies: t.tardies, effective: t.effective, remaining: Math.max(0, t.remaining), pct: t.pct,
         state: t.state, stateLabel: STATE_LABEL[t.state] };
@@ -2101,18 +2146,23 @@ var POPULI_STATUS = { present: STATUS.P, tardy: STATUS.T, absent: STATUS.A, excu
  * screenshot). Each student gets exactly the status Populi shows; no 15/31-minute rule. Unsure or unmatched rows are listed.
  */
 function populiShots_(ctx, cls, date, folder, data) {
-  var roster = roster_(ctx, cls.id), byOrder = {}, got = {}, entries = [], unsure = [];
+  var roster = roster_(ctx, cls.id), byOrder = {}, got = {}, entries = [], unsure = [], review = [];
   roster.forEach(function (s) { if (s.order) byOrder[s.order] = s; });
   data.ai.populi.forEach(function (r) {
     ((r || {}).rows || []).forEach(function (x) {
       var s = byOrder[x.roster_number], st = POPULI_STATUS[String(x.status || '').toLowerCase()];
-      if (!s || !st || (x.confidence != null && x.confidence < AI_SURE)) { unsure.push((x.shown_name || '?') + (x.status ? ' (' + x.status + ')' : '')); return; }
+      if (!s || !st || (x.confidence != null && x.confidence < AI_SURE)) {
+        unsure.push((x.shown_name || '?') + (x.status ? ' (' + x.status + ')' : ''));
+        if (x.shown_name && !s) review.push({ name: x.shown_name, seenIn: ['Populi screenshot'], candidates: [] });
+        return;
+      }
       if (got[s.id]) return;
       got[s.id] = true;
       entries.push({ student: s, status: st, source: 'Populi screenshot', notes: 'As marked in Populi' });
     });
   });
   var c = applyEntries_(ctx, cls, date, entries);
+  var asked = addQuestions_(ctx, cls, date, review);
   touchSession_(ctx, cls, date, 'Populi screenshot', folder.getId(), sessionStart_(ctx, cls, date));
   var n = function (st) { return entries.filter(function (e) { return e.status === st; }).length; };
   var missing = roster.filter(function (s) { return !got[s.id]; }).map(function (s) { return '#' + (s.order || '?') + ' ' + s.name; });
@@ -2120,6 +2170,7 @@ function populiShots_(ctx, cls, date, folder, data) {
     (n(STATUS.E) ? ', ' + n(STATUS.E) + ' excused' : '') + ' (as marked in Populi). ' + c.kept + ' kept (manual/excused).';
   if (missing.length) msg += ' Not in the screenshot (not marked): ' + missing.join(', ') + '.';
   if (unsure.length) msg += ' Could not match: ' + unsure.join('; ') + '.';
+  if (asked) msg += ' ' + asked + ' name(s) not on the roster to confirm in Review (answer "new" to add them).';
   return msg;
 }
 
@@ -2402,6 +2453,7 @@ function studentFrom_(t, r) {
   return { id: t.get(r, 'Student ID'), name: t.get(r, 'Name'), email: t.get(r, 'Email'), classId: t.get(r, 'Class ID'),
     active: !/^(no|n|false|0)$/i.test(t.get(r, 'Active')), order: parseInt(t.get(r, 'Order'), 10) || 0,
     aliases: t.get(r, 'Zoom names').split(/\s*;\s*/).filter(String),
+    since: parseDateCell(t.get(r, 'On roster since')) || '',
     row: t.rows.indexOf(r) };
 }
 

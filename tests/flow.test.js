@@ -754,6 +754,46 @@ test('screenshots dropped in the dashboard: upload → OCR → analysis, clear o
   assert.deepEqual(j(env.gas.apiSession('C3', '2026-10-05')).shots, { present: 1, tardy: 1, end: 1 });
 });
 
+test('A student added after the class started: asked about, "new" adds them from that date, logged, earlier classes not counted', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  env.setConfig('Screenshots read by', 'CLAUDE');
+  [2, 3, 4, 5].forEach((row, i) => env.sheet('Students').put(row, 6, String(i + 1)));
+  const b64 = t => Buffer.from(t).toString('base64');
+  const p = (name, n) => ({ shown_name: name, roster_number: n, confidence: 0.95, alternatives: [] });
+  const take = (date, people) => {
+    env.gas.apiUploadShot('C3', date, 'present', 's.png', 'image/png', b64('x'));
+    env.gas.apiUploadShot('C3', date, 'end', 'e.png', 'image/png', b64('x'));
+    const sess = env.sheet('Sessions').objects().find(x => x['Class ID'] === 'C3' && x.Date === date);
+    env.gas.DriveApp.getFolderById(sess['Source ID']).createFile('claude-results.json', JSON.stringify({
+      present: [{ participants: people, chat: [], unreadable: 0 }], end: [{ participants: people, chat: [], unreadable: 0 }] }), 'application/json');
+    env.gas.tick();
+  };
+  env.setNow('2026-10-05T23:30:00Z');
+  take('2026-10-05', [p('Ana Lopez', 1), p('Brian Smith', 2), p('Carla Perez', 3), p('David Kim', 4)]);
+  env.setNow('2026-10-12T23:30:00Z');
+  // week 2: an extra person nobody knows → asked, not guessed
+  take('2026-10-12', [p('Ana Lopez', 1), p('Brian Smith', 2), p('Carla Perez', 3), p('David Kim', 4), p('Nora Vega', 0)]);
+  const q = env.sheet('Review').objects();
+  assert.equal(q.length, 1);
+  assert.equal(q[0]['Name seen'], 'Nora Vega');
+  assert.match(q[0].Suggestions, /answer "new"/);
+  // Diego: she was just added to the class
+  const rows = env.gas.apiQuestions();
+  env.gas.apiAnswer(rows[0].row, 'new');
+  const nora = env.sheet('Students').objects().find(s => s.Name === 'Nora Vega');
+  assert.deepEqual([nora['Class ID'], nora.Order, nora['On roster since'], nora.Active], ['C3', '5', '2026-10-12', 'Yes']);
+  assert.equal(env.row('2026-10-12', 'C3', nora['Student ID']).Status, 'Present');   // the class was re-run with her
+  assert.equal(env.row('2026-10-05', 'C3', nora['Student ID']), undefined);          // week 1 is not counted against her
+  const log = env.sheet('Roster changes').objects();
+  assert.equal(log.length, 1);
+  assert.match(log[0].Change, /Added to the roster \(#5, from 2026-10-12\)/);
+  assert.match(log[0].How, /Seen in the 2026-10-12 screenshots as "Nora Vega"/);
+  assert.equal(env.gas.apiClass('C3').students.find(s => s.name === 'Nora Vega').since, '2026-10-12');
+  // re-running week 1 later (e.g. its start time changes) still does not mark her absent there
+  env.gas.apiSetStart('C3', '2026-10-05', '6:05');
+  assert.equal(env.row('2026-10-05', 'C3', nora['Student ID']), undefined);
+});
+
 test('In-person class: a Populi screenshot read by Claude is recorded exactly as marked (no 15/31 rule)', () => {
   const env = setupTerm({ mode: 'POPULI' });
   env.setConfig('Screenshots read by', 'CLAUDE');
