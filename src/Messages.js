@@ -104,6 +104,35 @@ function buildStudentNotice(p) {
   };
 }
 
+/**
+ * Follow-up about a student's standing in a course (not about one class).
+ * level: 'below80' (losing the course) | 'below100' (has absences or tardies, still passing)
+ * p: {level, student:{name} (empty name → "Dear student,"), cls, tally, cfg, dates: ['yyyy-mm-dd' of absences/tardies]}
+ */
+function buildStandingNotice(p) {
+  var cfg = p.cfg || {}, c = rulesConfig_(cfg), t = p.tally, cls = p.cls;
+  var first = String((p.student || {}).name || '').split(/\s+/)[0] || 'student';
+  var missed = (p.dates || []).length ? '\n\nClasses missed or late: ' + p.dates.map(function (d) { return longDate(d).replace(/, \d{4}$/, ''); }).join(', ') + '.' : '';
+  var body, subject;
+  if (p.level === 'below80') {
+    subject = 'Attendance – ' + classLabel(cls) + ' – You are below ' + c.minAttendancePct + '%';
+    body = 'I am writing because your attendance in ' + classLabel(cls) + ' is now ' + t.pct + '%, below the ' + c.minAttendancePct +
+      '% minimum required to pass the course. You have ' + t.effective + ' counted absences and the limit is ' + c.maxAbsences + '.' + missed +
+      '\n\nYour attendance in this course:\n' + summaryLines_(t, cfg) +
+      '\n\nPlease contact me or ' + (cfg.officeName || 'the main office') + ' as soon as possible to talk about your options. ' +
+      'If any of these absences was for a medical reason, an accepted medical excuse removes it from your count.';
+  } else {
+    subject = 'Attendance – ' + classLabel(cls) + ' – Your current attendance is ' + t.pct + '%';
+    var left = Math.max(0, t.remaining);
+    body = 'This is a reminder about your attendance in ' + classLabel(cls) + '. Your attendance is ' + t.pct + '% and you have ' +
+      (left ? left + ' absence' + (left === 1 ? '' : 's') + ' left' : 'no absences left') + ' before you fall below the ' + c.minAttendancePct +
+      '% you need to pass.' + missed +
+      '\n\nYour attendance in this course:\n' + summaryLines_(t, cfg) + '\n\n' + standingSentence_(t, cfg);
+  }
+  var text = 'Dear ' + first + ',\n\n' + body + '\n\n' + medicalExcuseText_(cfg) + '\n\nBest regards,\n' + signature_(cfg);
+  return { subject: subject, text: text, html: textToHtml_(text) };
+}
+
 /** To the office when a student checks in without their ID more than the allowed times. */
 function buildNoIdNotice(p) {
   var cfg = p.cfg || {}, s = p.student, cls = p.cls;

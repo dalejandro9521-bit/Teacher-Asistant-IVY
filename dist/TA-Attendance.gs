@@ -1024,6 +1024,35 @@ function buildStudentNotice(p) {
   };
 }
 
+/**
+ * Follow-up about a student's standing in a course (not about one class).
+ * level: 'below80' (losing the course) | 'below100' (has absences or tardies, still passing)
+ * p: {level, student:{name} (empty name → "Dear student,"), cls, tally, cfg, dates: ['yyyy-mm-dd' of absences/tardies]}
+ */
+function buildStandingNotice(p) {
+  var cfg = p.cfg || {}, c = rulesConfig_(cfg), t = p.tally, cls = p.cls;
+  var first = String((p.student || {}).name || '').split(/\s+/)[0] || 'student';
+  var missed = (p.dates || []).length ? '\n\nClasses missed or late: ' + p.dates.map(function (d) { return longDate(d).replace(/, \d{4}$/, ''); }).join(', ') + '.' : '';
+  var body, subject;
+  if (p.level === 'below80') {
+    subject = 'Attendance – ' + classLabel(cls) + ' – You are below ' + c.minAttendancePct + '%';
+    body = 'I am writing because your attendance in ' + classLabel(cls) + ' is now ' + t.pct + '%, below the ' + c.minAttendancePct +
+      '% minimum required to pass the course. You have ' + t.effective + ' counted absences and the limit is ' + c.maxAbsences + '.' + missed +
+      '\n\nYour attendance in this course:\n' + summaryLines_(t, cfg) +
+      '\n\nPlease contact me or ' + (cfg.officeName || 'the main office') + ' as soon as possible to talk about your options. ' +
+      'If any of these absences was for a medical reason, an accepted medical excuse removes it from your count.';
+  } else {
+    subject = 'Attendance – ' + classLabel(cls) + ' – Your current attendance is ' + t.pct + '%';
+    var left = Math.max(0, t.remaining);
+    body = 'This is a reminder about your attendance in ' + classLabel(cls) + '. Your attendance is ' + t.pct + '% and you have ' +
+      (left ? left + ' absence' + (left === 1 ? '' : 's') + ' left' : 'no absences left') + ' before you fall below the ' + c.minAttendancePct +
+      '% you need to pass.' + missed +
+      '\n\nYour attendance in this course:\n' + summaryLines_(t, cfg) + '\n\n' + standingSentence_(t, cfg);
+  }
+  var text = 'Dear ' + first + ',\n\n' + body + '\n\n' + medicalExcuseText_(cfg) + '\n\nBest regards,\n' + signature_(cfg);
+  return { subject: subject, text: text, html: textToHtml_(text) };
+}
+
 /** To the office when a student checks in without their ID more than the allowed times. */
 function buildNoIdNotice(p) {
   var cfg = p.cfg || {}, s = p.student, cls = p.cls;
@@ -1288,7 +1317,7 @@ var SHEETS = {
   Summary: ['Class ID', 'Course', 'Student ID', 'Name', 'Email', 'Absences', 'Tardies', 'Excused', 'Counted absences',
     'Absences left', 'Attendance %', 'Status'],
   'Follow-ups': ['Created', 'Type', 'Class', 'Class date', 'Roster #', 'Students', 'Count', 'Subject', 'Message',
-    'Visibility (check in Populi)', 'Done'],
+    'Visibility (check in Populi)', 'Done', 'Standing'],
   Sessions: ['Class ID', 'Date', 'Scheduled start', 'Actual start', 'Source', 'Source ID', 'Processed with start',
     'Open questions', 'Populi updated', 'Updated'],
   Review: ['Created', 'Class ID', 'Date', 'Name seen', 'Seen in', 'Suggestions', 'Student (# or name, or "ignore")', 'Done', 'Notes'],
@@ -2219,7 +2248,7 @@ function doGet() {
 
 function classInfo_(cls) {
   return { id: cls.id, label: classLabel(cls), course: cls.course, day: DAY_NAMES[dayIndex(cls.day)] || cls.day,
-    time: classTime(cls), mode: cls.mode, active: cls.active };
+    dayIndex: dayIndex(cls.day), startMin: cls.start, endMin: cls.end, time: classTime(cls), mode: cls.mode, active: cls.active };
 }
 
 function rowsOf_(t) {
@@ -2279,7 +2308,7 @@ function apiAll() {
   var hit = cacheGet_('all');
   if (hit) return hit;
   var ctx = load_(), out = { overview: overview_(ctx), classes: {}, questions: questions_(ctx), followups: followups_(ctx),
-    reportWeeks: reportWeeks_(ctx), mail: mail_(ctx), at: nowStr_() };
+    reportWeeks: reportWeeks_(ctx), mail: mail_(ctx), standing: standing_(ctx), at: nowStr_() };
   ctx.classes.filter(function (c) { return c.active; }).forEach(function (c) { out.classes[c.id] = class_(c.id, ctx); });
   cachePut_('all', out, 120);
   return out;
@@ -2486,6 +2515,102 @@ function reportsFolder_(ctx) {
   try { parent = DriveApp.getFolderById(ctx.cfg.inboxFolderId).getParents(); } catch (e) { parent = null; }
   var root = parent && parent.hasNext() ? parent.next() : DriveApp.getRootFolder();
   return subfolder_(root, 'TA Reports');
+}
+
+/* ---------- standing follow-ups: below 100% and below 80% ---------- */
+
+var STANDING_TYPES = { below80: 'Standing: below 80%', below100: 'Standing: below 100%' };
+
+/** Level of a student in a course: below80 (losing it), below100 (has counted absences), or '' (100% so far). */
+function standingLevel_(t) {
+  if (t.state === 'failing') return 'below80';
+  return t.effective > 0 ? 'below100' : '';
+}
+
+/** The last standing follow-up sent to each class|student: {level, date, at: "effective/tardies"}. */
+function standingSent_() {
+  var fu = table_('Follow-ups'), out = {};
+  fu.rows.forEach(function (r) {
+    var type = fu.get(r, 'Type'), level = type === STANDING_TYPES.below80 ? 'below80' : type === STANDING_TYPES.below100 ? 'below100' : '';
+    if (!level || !fu.get(r, 'Done')) return;
+    var classId = fu.get(r, 'Class').split(' · ')[0], date = fu.get(r, 'Created').slice(0, 10);
+    fu.get(r, 'Standing').split(/\s*;\s*/).forEach(function (x) {
+      var m = x.match(/^(.+)@(\d+)\/(\d+)$/);
+      if (m) out[classId + '|' + m[1]] = { level: level, date: date, at: m[2] + '/' + m[3] };
+    });
+  });
+  return out;
+}
+
+/**
+ * Who needs a follow-up about their standing, per class, in Populi order. Students with the same numbers share one
+ * message (select them together in Populi). A student is up to date when they were already told these exact numbers.
+ */
+function standing_(ctx) {
+  var totals = totals_(ctx), recs = records_(ctx), sent = standingSent_(), vis = ctx.cfg.populiVisibility;
+  var classes = ctx.classes.filter(function (c) { return c.active; }).map(function (cls) {
+    var students = [];
+    roster_(ctx, cls.id).forEach(function (s) {
+      var t = totals[cls.id + '|' + s.id] || emptyTally(ctx.cfg), level = standingLevel_(t);
+      if (!level) return;
+      var dates = recs.filter(function (r) { return r.classId === cls.id && r.studentId === s.id && !/^accepted$/i.test(r.excuse) &&
+        (r.status === STATUS.A || r.status === STATUS.T); }).map(function (r) { return r.date; }).sort();
+      var last = sent[cls.id + '|' + s.id] || null;
+      students.push({ id: s.id, order: s.order, name: s.name, level: level, absences: t.absences, tardies: t.tardies, effective: t.effective,
+        remaining: Math.max(0, t.remaining), pct: t.pct, state: t.state, stateLabel: STATE_LABEL[t.state], dates: dates, last: last,
+        upToDate: !!(last && last.level === level && last.at === t.effective + '/' + t.tardies) });
+    });
+    var groups = {}, order = [];
+    students.filter(function (x) { return !x.upToDate; }).forEach(function (x) {
+      var k = [x.level, x.absences, x.tardies, x.effective, x.remaining, x.pct].join('|');
+      if (!groups[k]) { groups[k] = []; order.push(k); }
+      groups[k].push(x);
+    });
+    return Object.assign(classInfo_(cls), {
+      students: students,
+      messages: order.map(function (k) {
+        var g = groups[k], msg = standingMessage_(ctx, cls, g);
+        return { level: g[0].level, ids: g.map(function (x) { return x.id; }), roster: g.map(function (x) { return x.order || '?'; }),
+          names: g.map(function (x) { return x.name; }), subject: msg.subject, text: msg.text };
+      }).sort(function (a, b) { return (a.level === 'below80' ? 0 : 1) - (b.level === 'below80' ? 0 : 1); })
+    });
+  });
+  return { classes: classes, visibility: vis };
+}
+
+/** The message for students who share the same numbers (one student: their first name and the dates). */
+function standingMessage_(ctx, cls, group) {
+  var one = group.length === 1 ? group[0] : null;
+  return buildStandingNotice({ level: group[0].level, student: { name: one ? one.name : '' }, cls: cls, cfg: ctx.cfg,
+    tally: totals_(ctx)[cls.id + '|' + group[0].id] || emptyTally(ctx.cfg), dates: one ? one.dates : [] });
+}
+
+function apiStanding() { return standing_(load_()); }
+
+/** Diego sent a standing follow-up from Populi: it is recorded (with the numbers it was about) in Follow-ups as done. */
+function apiStandingSent(classId, ids) {
+  var out;
+  withLock_(function () {
+    var ctx = load_(), cls = classById_(ctx, classId);
+    if (!cls) throw new Error('No class ' + classId);
+    var all = standing_(ctx).classes.filter(function (c) { return c.id === classId; })[0];
+    var group = all.students.filter(function (x) { return ids.indexOf(x.id) >= 0; });
+    if (!group.length) throw new Error('Those students have no follow-up pending');
+    var levels = group.map(function (x) { return x.level; }).filter(function (l, i, a) { return a.indexOf(l) === i; });
+    levels.forEach(function (level) {
+      var g = group.filter(function (x) { return x.level === level; }), msg = standingMessage_(ctx, cls, g), now = nowStr_();
+      var fu = table_('Follow-ups'), row = blankRow_(fu);
+      [['Created', now], ['Type', STANDING_TYPES[level]], ['Class', cls.id + ' · ' + classLabel(cls)],
+        ['Roster #', g.map(function (x) { return x.order || '?'; }).join(', ')], ['Students', g.map(function (x) { return x.name; }).join(', ')],
+        ['Count', String(g.length)], ['Subject', msg.subject], ['Message', msg.text], ['Visibility (check in Populi)', ctx.cfg.populiVisibility],
+        ['Done', 'Yes · ' + now], ['Standing', g.map(function (x) { return x.id + '@' + x.effective + '/' + x.tardies; }).join('; ')]
+      ].forEach(function (kv) { fu.set(row, kv[0], kv[1]); });
+      fu.rows.push(row);
+      save_(fu);
+    });
+    out = standing_(ctx);
+  });
+  return out;
 }
 
 /* ---------- to-do list, quick editing, student history ---------- */

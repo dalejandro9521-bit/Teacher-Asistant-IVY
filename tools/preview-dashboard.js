@@ -30,6 +30,11 @@ env.setNow('2026-10-06T03:00:00Z');
 g.tick();
 env.sheet('Attendance').appendRow(['2026-10-05', 'C1', '200', names[0], 'Absent', '', 'Populi']);
 env.sheet('Attendance').appendRow(['2026-10-05', 'C1', '201', names[1], 'Absent', '', 'Populi']);
+// Two more weeks of HA 103 so some students are below 80% (in the preview only)
+['2026-10-12', '2026-10-19'].forEach((d, w) => names.slice(0, 12).forEach((n, i) => {
+  const st = i === 0 ? 'Absent' : (i === 3 && w === 1) ? 'Absent' : (i === 5 || i === 6) && w === 0 ? 'Tardy' : 'Present';
+  env.sheet('Attendance').appendRow([d, 'C1', String(200 + i), n, st, '', 'Populi', '', '', '', '', st === 'Present' ? '' : st + ' · ' + d + ' 14:00 · POPULI']);
+}));
 g.tick(); // HA 103 has no open questions → its follow-up is ready
 
 // Student emails, read by "Claude" (canned answers here)
@@ -56,16 +61,20 @@ api.apiReportWeeks = JSON.parse(JSON.stringify(g.apiReportWeeks()));
 api.apiStudent = JSON.parse(JSON.stringify(g.apiStudent('C3', '104')));
 api.apiSetRecord = { status: 'Absent', left: true, noId: false, excuse: 'Received', notes: '', effective: 1, remaining: 1, pct: 90, stateLabel: '1 absence left', state: 'warning' };
 api.apiWeeklyReport = JSON.parse(JSON.stringify(g.apiWeeklyReport(1)));
+api.apiStanding = JSON.parse(JSON.stringify(g.apiStanding()));
+api.apiStandingSent = api.apiStanding;
 
 const stub = `window.__API = ${JSON.stringify(api)};
 window.google = { script: { run: (function make(ok, fail) {
   const r = { withSuccessHandler: f => make(f, fail), withFailureHandler: f => make(ok, f) };
-  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots','apiAll','apiMail','apiMailStatus','apiMailToGmail','apiMailForwardExcuse','apiCheckMail','apiMailRedraft'].forEach(n => {
+  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots','apiAll','apiMail','apiMailStatus','apiMailToGmail','apiMailForwardExcuse','apiCheckMail','apiMailRedraft','apiStanding','apiStandingSent','apiShotFiles','apiAiReadFile'].forEach(n => {
     r[n] = (...a) => setTimeout(() => { let v = window.__API[n]; if (n === 'apiClass') v = v[a[0]] || v.C3; if (n === 'apiProcessNow') v = { files: 0, sent: 0 };
       if (n === 'apiAnswer') v = { note: 'Linked to #12 Malek Bay' };
       if (n === 'apiMailRedraft') v = { draft: 'Hi Ana,\\n\\nGot it, thanks! I sent it to the office.\\n\\nDiego' };
       if (n === 'apiMailForwardExcuse') v = { to: 'office@ivy.edu' };
-      if (n === 'apiCheckMail') v = { changed: 0 }; ok(v === undefined ? true : v); }, 50);
+      if (n === 'apiCheckMail') v = { changed: 0 };
+      if (n === 'apiUploadShot') v = { names: 9 };
+      if (n === 'apiAnalyzeSession') v = { msg: '10 present, 2 tardy, 6 absent. 1 name to confirm' }; ok(v === undefined ? true : v); }, 50);
   });
   return r; })() } };`;
 
@@ -77,7 +86,7 @@ window.google = { script: { run: (function make(ok, fail) {
     .replace('<script>', '<script>' + stub + '</script>\n<script>');
   fs.writeFileSync(path.join(out, 'dashboard.html'), html); // the page itself, with made-up data, to open in a browser
   const errors = [];
-  page.on('pageerror', e => { errors.push(e.message); console.error('PAGE ERROR', e.message); });
+  page.on('pageerror', e => { errors.push(e.message); console.error('PAGE ERROR', e.stack); });
   await page.route('**/fonts.googleapis.com/**', r => r.abort()); // no network here; the system font is the fallback
   await page.setContent(html, { waitUntil: 'load' });
   const shot = async (name) => { await page.waitForTimeout(400); await page.screenshot({ path: path.join(out, name + '.png') }); };
@@ -104,6 +113,13 @@ window.google = { script: { run: (function make(ok, fail) {
   await page.click('[data-go="reports"]'); await shot('7-weekly-report');
   await page.click('[data-go="mail"]'); await shot('8-student-emails');
   await page.click('[data-act="mailRewrite"][data-i="0"]'); await shot('8b-email-rewritten');
+  // Below 100% / 80%
+  await page.click('[data-go="standing"]'); await shot('9-standing');
+  // Take attendance: Mac screenshots of the Monday evening class, dropped at once (made-up file times)
+  await page.click('[data-go="take"]'); await shot('10-take-empty');
+  const mac = (t, d) => ({ name: 'Screenshot 2026-10-05 at ' + t + '.png', mimeType: 'image/png', buffer: png });
+  await page.setInputFiles('#takeInput', [mac('6.45.02 PM'), mac('6.45.40 PM'), mac('7.01.10 PM'), mac('7.01.44 PM'), mac('7.31.01 PM')]);
+  await shot('11-take-sorted');
   await browser.close();
   if (errors.length) { console.error('Page errors:', errors); process.exit(1); }
   console.log('Screenshots in', out);

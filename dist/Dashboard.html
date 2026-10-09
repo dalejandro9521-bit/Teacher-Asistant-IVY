@@ -258,6 +258,62 @@
   .dz.over { border-color: var(--p); background: var(--p-bg); }
   .dz .dz-n { margin-top: 10px; }
   .changed { background: var(--warn-bg); color: var(--warn); border-radius: 8px; padding: 10px 12px; margin-top: 10px; font-size: 13px; }
+  /* take attendance */
+  .nav-cta { margin: 0 0 10px; background: #fff; color: var(--brand); font-weight: 700; justify-content: center; opacity: 1; }
+  .nav-cta:hover { background: #eef3fb; }
+  .nav-cta.on { background: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,.35); }
+  .kbd { display: inline-block; font-size: 11px; font-weight: 600; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 0 5px; color: var(--ink2); background: #fff; }
+  .take { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 18px; align-items: start; }
+  .drop { border: 2px dashed #b9c4d0; border-radius: 14px; padding: 34px 20px; text-align: center; background: #fff; cursor: pointer; transition: all .15s; }
+  .drop:hover, .drop.over { border-color: var(--brand2); background: var(--brand-soft); }
+  .drop .big { font-size: 17px; font-weight: 600; margin-bottom: 4px; }
+  .lanes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+  .lanes.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .lane { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px; min-height: 150px; }
+  .lane.over { border-color: var(--brand2); background: var(--brand-soft); }
+  .lane h3 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 6px; }
+  .lane .why { font-size: 12px; color: var(--ink3); margin: 2px 0 10px; }
+  .lane.unsorted { border-color: #f5c26b; background: var(--warn-bg); }
+  .thumb { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin-bottom: 8px; background: #f9fafb; cursor: grab; }
+  .thumb img { display: block; width: 100%; height: 92px; object-fit: cover; object-position: top; }
+  .thumb .meta { display: flex; align-items: center; gap: 6px; padding: 5px 8px; font-size: 12px; }
+  .thumb .meta select { margin-left: auto; font: inherit; font-size: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 1px 4px; background: #fff; }
+  .thumb .x { border: 0; background: transparent; color: var(--ink3); font-size: 15px; line-height: 1; padding: 0 2px; }
+  .side { position: sticky; top: 0; display: flex; flex-direction: column; gap: 12px; }
+  .side .card { padding: 16px; }
+  .side label { display: block; font-size: 12px; font-weight: 600; color: var(--ink2); margin: 10px 0 4px; }
+  .side input, .side select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; background: #fff; }
+  .clsPick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+  .clsPick button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 7px 8px; text-align: left; font-size: 13px; }
+  .clsPick button small { display: block; color: var(--ink3); font-size: 11px; }
+  .clsPick button.on { border-color: var(--brand2); background: var(--brand-soft); color: var(--brand); font-weight: 600; }
+  .detected { font-size: 12px; color: var(--p); background: var(--p-bg); border-radius: 6px; padding: 6px 8px; margin-top: 8px; }
+  .progress { height: 6px; background: #eef1f4; border-radius: 3px; overflow: hidden; margin-top: 10px; }
+  .progress span { display: block; height: 100%; background: var(--brand2); transition: width .2s; }
+  .waiting { display: flex; flex-direction: column; gap: 6px; }
+  .waiting button { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 10px; text-align: left; font-size: 13px; }
+  .waiting button:hover { border-color: var(--brand2); }
+  /* standing */
+  .stand-cls { margin-bottom: 22px; }
+  .stand-cls > .row h2 { margin: 0; }
+  .lvl { display: inline-flex; align-items: center; font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+  .lvl.below80 { background: var(--a); color: #fff; }
+  .lvl.below100 { background: var(--t-bg); color: var(--t); }
+  .msgs { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 12px; margin-top: 12px; }
+  .msg { padding: 14px 16px; border-left: 4px solid var(--t); }
+  .msg.below80 { border-left-color: var(--a); }
+  .msg .sel { font-size: 15px; margin: 8px 0 2px; }
+  .msg .sel b { color: var(--brand); }
+  .msg pre { white-space: pre-wrap; font-family: inherit; font-size: 12.5px; background: #f9fafb; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; max-height: 150px; overflow: auto; margin: 8px 0; }
+  .msg.sent { opacity: .5; }
+  tr.focus td { background: var(--brand-soft) !important; }
+  #finder { padding: 10px; }
+  #finder button { display: block; width: 100%; text-align: left; border: 0; background: transparent; padding: 8px 10px; border-radius: 6px; }
+  #finder button:hover, #finder button.first { background: var(--brand-soft); }
+  .hero { display: flex; align-items: center; gap: 16px; padding: 16px 20px; margin-bottom: 18px; background: linear-gradient(120deg, var(--brand) 0%, var(--brand2) 100%); color: #fff; border: 0; }
+  .hero .k { font-size: 12px; text-transform: uppercase; letter-spacing: .8px; opacity: .75; }
+  .hero .t { font-size: 18px; font-weight: 700; }
+  .hero .btn { background: #fff; color: var(--brand); border-color: #fff; font-weight: 700; }
   .report table { width: auto; }
 </style>
 </head>
@@ -321,10 +377,13 @@ function go(view, params) {
 function renderNav() {
   var o = S.overview || { classes: [], openQuestions: 0, pendingFollowups: 0 };
   var h = '<div class="logo">TA Attendance</div><div class="logo-sub">' + (o.week ? 'Week ' + o.week + ' · ' : '') + esc(shortDate(o.today)) + '</div>';
+  h += '<button class="nav-i nav-cta' + (S.view === 'take' ? ' on' : '') + '" data-go="take" title="Shortcut: N">+ Take attendance</button>';
   h += item('home', 'Home', '', '');
-  h += item('review', 'Questions', o.openQuestions ? '<span class="badge alert">' + o.openQuestions + '</span>' : '', '');
+  var pend = standingPending();
+  h += item('standing', 'Below 100% / 80%', pend ? '<span class="badge alert">' + pend + '</span>' : '', '');
+  h += item('followups', 'After-class notices', o.pendingFollowups ? '<span class="badge">' + o.pendingFollowups + '</span>' : '', '');
+  h += item('review', 'Names to confirm', o.openQuestions ? '<span class="badge alert">' + o.openQuestions + '</span>' : '', '');
   h += item('mail', 'Student emails', o.mailWaiting ? '<span class="badge alert">' + o.mailWaiting + '</span>' : '', '');
-  h += item('followups', 'Follow-ups', o.pendingFollowups ? '<span class="badge">' + o.pendingFollowups + '</span>' : '', '');
   h += item('reports', 'Weekly reports', '', '');
   h += '<div class="nav-h">Classes</div>';
   o.classes.forEach(function (c) {
@@ -333,7 +392,7 @@ function renderNav() {
       '<small>' + esc(c.day) + ' · ' + esc(c.time) + '</small></span>' + (c.questions ? '<span class="badge alert">' + c.questions + '</span>' : '') + '</button>';
   });
   h += '<div class="nav-h">More</div>' + item('activity', 'Activity log', '', '');
-  h += '<div class="nav-foot">Data stays in this Google account.</div>';
+  h += '<div class="nav-foot"><span class="kbd">N</span> take attendance · <span class="kbd">F</span> follow-ups · <span class="kbd">/</span> find a student<br>Data stays in this Google account.</div>';
   $('nav').innerHTML = h;
   function item(v, label, extra) {
     return '<button class="nav-i' + (S.view === v ? ' on' : '') + '" data-go="' + v + '"><span>' + label + '</span>' + extra + '</button>';
@@ -357,7 +416,8 @@ function render() {
   renderView();
 }
 function renderView() {
-  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity, reports: viewReports, student: viewStudent, mail: viewMail };
+  var views = { home: viewHome, class: viewClass, session: viewSession, review: viewReview, followups: viewFollowups, activity: viewActivity, reports: viewReports,
+    student: viewStudent, mail: viewMail, take: viewTake, standing: viewStanding };
   (views[S.view] || viewHome)();
 }
 /* Speed: every page shows its last copy at once (this browser tab only), then the fresh one when it arrives. */
@@ -370,7 +430,7 @@ function cacheRead(k) {
 function cacheWrite(k, v) { MEM[k] = v; STAMP[k] = Date.now(); try { sessionStorage.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
 /* Calls that only read. Any other call is a write: copies older than it are re-checked, and everything reloads in the background. */
 var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1,
-  apiStudent: 1, apiMail: 1, apiShotFiles: 1 };
+  apiStudent: 1, apiMail: 1, apiShotFiles: 1, apiStanding: 1 };
 var STAMP = {}, FRESH_MS = 60000;
 function afterWrite() {
   STAMP = {};
@@ -385,16 +445,17 @@ function seedAll(a) {
   cacheWrite(ckey('apiFollowups'), a.followups);
   cacheWrite(ckey('apiReportWeeks'), a.reportWeeks);
   cacheWrite(ckey('apiMail'), a.mail);
+  if (a.standing) cacheWrite(ckey('apiStanding'), a.standing);
   S.overview = a.overview;
 }
 function loadAll(redraw) {
   return new Promise(function (ok) {
     google.script.run.withSuccessHandler(function (a) {
-      var before = JSON.stringify(cacheRead(ckey('apiOverview'))) + JSON.stringify(cacheRead(ckey('apiMail')));
+      var before = JSON.stringify(cacheRead(ckey('apiOverview'))) + JSON.stringify(cacheRead(ckey('apiMail'))) + JSON.stringify(cacheRead(ckey('apiStanding')));
       seedAll(a); renderNav();
       var typing = document.activeElement && /TEXTAREA|INPUT/.test(document.activeElement.tagName);
-      var changed = before !== JSON.stringify(a.overview) + JSON.stringify(a.mail);
-      if (redraw !== false && changed && !typing && /^(home|class|review|followups|mail)$/.test(S.view)) { S.nav = (S.nav || 0) + 1; renderView(); }
+      var changed = before !== JSON.stringify(a.overview) + JSON.stringify(a.mail) + JSON.stringify(a.standing);
+      if (redraw !== false && changed && !typing && /^(home|class|review|followups|mail|standing)$/.test(S.view)) { S.nav = (S.nav || 0) + 1; renderView(); }
       ok(a);
     }).withFailureHandler(function () { ok(null); }).apiAll();
   });
@@ -419,6 +480,317 @@ function refreshOverview() {
   return fresh('apiOverview', [], function (o) { S.overview = o; renderNav(); });
 }
 
+/* ---------- Take attendance: drop every screenshot of a class at once ---------- */
+var LANES = {
+  present: ['15 min', 'Seen here → Present'],
+  tardy: ['31 min', 'First seen here → Tardy'],
+  end: ['Last screenshot', 'Missing here → Absent (left early)'],
+  unsorted: ['Not sorted', 'Taken outside the class time. Move each one to a column.']
+};
+var T = { files: [], classId: null, date: '', start: '', picked: false, busy: false, done: 0, total: 0, msg: '' };
+
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+function ymd(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); }
+function minLabel(m) { var h = Math.floor(m / 60) % 24, mm = m % 60; return ((h + 11) % 12 + 1) + ':' + pad2(mm) + ' ' + (h < 12 ? 'AM' : 'PM'); }
+function minOfDay(t) { var d = new Date(t); return d.getHours() * 60 + d.getMinutes(); }
+function classesInfo() { return (S.overview || {}).classes || []; }
+function classInfo(id) { return classesInfo().filter(function (c) { return c.id === id; })[0] || null; }
+function takeClass() { return classInfo(T.classId); }
+function isZoom(c) { return c && /zoom/i.test(c.mode || ''); }
+
+/** When a screenshot was taken: from the Mac's file name ("Screenshot 2026-10-05 at 6.15.32 PM"), else the file's time. */
+function shotTime(f) {
+  var m = String(f.name || '').match(/(\d{4})-(\d{2})-(\d{2})\D+?(\d{1,2})[.:](\d{2})[.:](\d{2})[\s ]*([AaPp]\.?[Mm])?/);
+  if (m) {
+    var h = +m[4];
+    if (m[7]) { var pm = /p/i.test(m[7]); h = h % 12 + (pm ? 12 : 0); }
+    return new Date(+m[1], +m[2] - 1, +m[3], h, +m[5], +m[6]).getTime();
+  }
+  return f.lastModified || Date.now();
+}
+/** "6:30 PM", "18:30", "6:30" (afternoon for an evening class), "7" → minutes of the day. */
+function parseTime(txt, cls) {
+  var m = String(txt || '').trim().match(/^(\d{1,2})(?:[:.](\d{2}))?\s*([AaPp])?\.?[Mm]?\.?$/);
+  if (!m) return null;
+  var h = +m[1], mm = +(m[2] || 0);
+  if (h > 23 || mm > 59) return null;
+  if (m[3]) h = h % 12 + (/p/i.test(m[3]) ? 12 : 0);
+  else if (h < 12 && cls && cls.startMin >= 12 * 60) h += 12;
+  return h * 60 + mm;
+}
+/** The class that was on at that moment (30 minutes of margin each side). */
+function classAtTime(t) {
+  var d = new Date(t), m = minOfDay(t);
+  return classesInfo().filter(function (c) { return c.active !== false && c.dayIndex === d.getDay() && m >= c.startMin - 30 && m <= c.endMin + 30; })[0] || null;
+}
+function takeStart() { var c = takeClass(), v = parseTime(T.start, c); return v != null ? v : (c ? c.startMin : 0); }
+/** 15-min shot before minute 22, 31-min shot before minute 45, the last one after that. */
+function laneFor(t) {
+  var c = takeClass();
+  if (!c || !T.date || ymd(new Date(t)) !== T.date) return 'unsorted';
+  var m = minOfDay(t) - takeStart();
+  if (m < -30 || m > c.endMin - c.startMin + 30) return 'unsorted';
+  return m < 22 ? 'present' : m < 45 ? 'tardy' : 'end';
+}
+/** The real start already saved for that class and date (Sessions), if any. */
+function savedStart(classId, date) {
+  var d = cacheRead(ckey('apiClass', [classId]));
+  var s = d && (d.sessions || []).filter(function (x) { return x.date === date; })[0];
+  var c = classInfo(classId);
+  return s && c && s.start && s.start !== minLabel(c.startMin) ? s.start : '';
+}
+function setTakeClass(id, date) {
+  T.classId = id; T.date = date || T.date; T.start = savedStart(id, T.date);
+  T.files.forEach(function (x) { x.manual = false; });
+  relane();
+}
+function relane() { T.files.forEach(function (x) { if (!x.manual) x.lane = laneFor(x.t); }); }
+function autoPick() {
+  var votes = {};
+  T.files.forEach(function (x) { var c = classAtTime(x.t); if (c) { var k = c.id + '|' + ymd(new Date(x.t)); votes[k] = (votes[k] || 0) + 1; } });
+  var best = Object.keys(votes).sort(function (a, b) { return votes[b] - votes[a]; })[0];
+  if (best) { var p = best.split('|'); if (T.classId !== p[0] || T.date !== p[1]) setTakeClass(p[0], p[1]); T.detected = true; }
+}
+/** Without screenshots yet: the class happening now, else the latest class still waiting for attendance. */
+function takeDefault() {
+  if (T.classId) return;
+  var now = classAtTime(Date.now());
+  if (now) { setTakeClass(now.id, ymd(new Date())); return; }
+  var load = ((S.overview || {}).tasks || []).filter(function (t) { return t.type === 'load'; });
+  var z = load.filter(function (t) { return isZoom(classInfo(t.go.classId)); })[0] || load[0];
+  if (z) setTakeClass(z.go.classId, z.go.date);
+}
+function addShots(files, pasted) {
+  files = files.filter(function (f) { return /^image\//.test(f.type); });
+  if (!files.length) { toast('Drop image files (PNG or JPG)', true); return; }
+  if (T.busy) { toast('Wait until these screenshots are read', true); return; }
+  files.forEach(function (f) {
+    T.files.push({ id: String(Math.random()).slice(2), file: f, t: pasted ? Date.now() : shotTime(f), url: URL.createObjectURL(f), lane: 'unsorted', manual: false });
+  });
+  T.files.sort(function (a, b) { return a.t - b.t; });
+  if (!T.picked) autoPick();
+  relane();
+  if (S.view !== 'take') go('take'); else drawTake();
+}
+function viewTake() {
+  takeDefault();
+  $('main').innerHTML = '<div id="take"></div>';
+  drawTake();
+  // the real start of a class already loaded (to sort by the right minute)
+  if (T.classId && !cacheRead(ckey('apiClass', [T.classId]))) quiet('apiClass', [T.classId]).then(function () { if (!T.start) { T.start = savedStart(T.classId, T.date); relane(); drawTake(); } });
+}
+function drawTake() {
+  var el = $('take'); if (!el) return;
+  var c = takeClass(), zoom = isZoom(c), by = { present: [], tardy: [], end: [], unsorted: [] };
+  T.files.forEach(function (x) { by[x.lane].push(x); });
+  var lanes = by.unsorted.length ? ['unsorted', 'present', 'tardy', 'end'] : ['present', 'tardy', 'end'];
+  var h = '<div class="row"><div><h1>Take attendance</h1><p class="sub">Drop all the Zoom screenshots of a class at once, in any order. ' +
+    'Each one goes to its column by the time it was taken, and the class is found on its own.</p></div></div>';
+  h += '<div class="take"><div>';
+  h += '<div class="drop" id="drop"><div class="big">' + (T.files.length ? 'Drop more screenshots' : 'Drop the screenshots here') + '</div>' +
+    '<div class="muted">or click to choose them · or press <span class="kbd">⌘</span> <span class="kbd">V</span> right after a screenshot (it is placed by the time you paste it)</div></div>' +
+    '<input type="file" id="takeInput" accept="image/*" multiple style="display:none">';
+  h += '<div class="lanes' + (lanes.length === 4 ? ' four' : '') + '">' + lanes.map(function (k) {
+    return '<div class="lane' + (k === 'unsorted' ? ' unsorted' : '') + '" data-lane="' + k + '"><h3>' + LANES[k][0] + ' <span class="chip">' + by[k].length + '</span></h3>' +
+      '<div class="why">' + LANES[k][1] + '</div>' + by[k].map(thumbHTML).join('') +
+      (by[k].length || k === 'unsorted' ? '' : '<div class="muted small">No screenshot yet</div>') + '</div>';
+  }).join('') + '</div></div>';
+  // side panel
+  h += '<div class="side"><div class="card"><b>Class</b><div class="clsPick" style="margin-top:8px">' + classesInfo().filter(function (x) { return x.active !== false; }).map(function (x) {
+    return '<button class="' + (x.id === T.classId ? 'on' : '') + '" data-act="takeCls" data-c="' + esc(x.id) + '">' + esc(x.course.split(':')[0]) + '<small>' + esc(x.day.slice(0, 3)) + ' · ' + esc(minLabel(x.startMin)) + '</small></button>';
+  }).join('') + '</div>';
+  h += '<label for="takeDate">Date</label><input type="date" id="takeDate" value="' + esc(T.date) + '">';
+  h += '<label for="takeStart">Class really started at</label><input id="takeStart" placeholder="' + esc(c ? minLabel(c.startMin) + ' (scheduled)' : '') + '" value="' + esc(T.start) + '">';
+  if (T.detected && c && T.files.length) h += '<div class="detected">Found by the screenshot times: ' + esc(c.course.split(':')[0]) + ' · ' + esc(longToday(T.date)) + '</div>';
+  if (c && !zoom) {
+    h += '<p class="small muted">This class is in person: mark it by hand (or drop the Populi export in TA Inbox).</p>' +
+      '<button class="btn primary" style="width:100%;justify-content:center" data-go="session" data-class="' + esc(c.id) + '" data-date="' + esc(T.date) + '">Mark it by hand</button>';
+  } else {
+    var n = T.files.length - by.unsorted.length;
+    h += '<button class="btn primary" style="width:100%;justify-content:center;margin-top:14px" data-act="takeGo"' + (T.busy || !n || !c || !T.date ? ' disabled' : '') + '>' +
+      (T.busy ? 'Reading… ' + T.done + ' of ' + T.total : 'Read ' + n + ' screenshot' + (n === 1 ? '' : 's') + ' and take attendance') + '</button>';
+    if (T.busy) h += '<div class="progress"><span style="width:' + Math.round(100 * T.done / Math.max(1, T.total)) + '%"></span></div>';
+    if (T.msg) h += '<div class="small muted" style="margin-top:8px">' + esc(T.msg) + '</div>';
+    if (by.unsorted.length) h += '<div class="small" style="color:var(--warn);margin-top:8px">' + by.unsorted.length + ' screenshot' + (by.unsorted.length === 1 ? ' is' : 's are') + ' not sorted: move ' + (by.unsorted.length === 1 ? 'it' : 'them') + ' to a column, or remove ' + (by.unsorted.length === 1 ? 'it' : 'them') + '.</div>';
+    if (T.files.length && !T.busy) h += '<button class="btn ghost sm" style="margin-top:6px" data-act="takeClear">Remove all</button>';
+  }
+  if (c && T.date) h += '<div style="margin-top:10px"><a class="small" data-go="session" data-class="' + esc(c.id) + '" data-date="' + esc(T.date) + '" style="cursor:pointer;color:var(--brand2)">Open this class and week →</a></div>';
+  h += '</div>';
+  var load = ((S.overview || {}).tasks || []).filter(function (t) { return t.type === 'load'; });
+  if (load.length) {
+    h += '<div class="card"><b>Waiting for attendance</b><div class="waiting" style="margin-top:8px">' + load.slice(0, 6).map(function (t) {
+      return '<button data-act="takePick" data-c="' + esc(t.go.classId) + '" data-d="' + esc(t.go.date) + '">' + esc(t.text.replace(/^Load attendance · /, '')) + '</button>';
+    }).join('') + '</div></div>';
+  }
+  h += '<div class="card small muted"><b style="color:var(--ink)">On the Mac</b><br><span class="kbd">⌘</span> <span class="kbd">⇧</span> <span class="kbd">4</span> saves a screenshot to the Desktop with the time in its name: drop them all here after class.<br>' +
+    '<span class="kbd">⌃</span> <span class="kbd">⌘</span> <span class="kbd">⇧</span> <span class="kbd">4</span> copies it: press <span class="kbd">⌘</span> <span class="kbd">V</span> here during class and it is read right away.</div>';
+  h += '</div></div>';
+  el.innerHTML = h;
+  setupTakeDrops();
+}
+function thumbHTML(x) {
+  var c = takeClass(), m = c ? minOfDay(x.t) - takeStart() : null, sameDay = T.date && ymd(new Date(x.t)) === T.date;
+  var when = minLabel(minOfDay(x.t)) + (sameDay && m != null ? ' · min ' + m : ' · ' + shortDate(ymd(new Date(x.t))));
+  return '<div class="thumb" draggable="true" data-id="' + x.id + '"><img src="' + x.url + '" alt=""><div class="meta"><span>' + esc(when) + '</span>' +
+    '<select data-act="takeLane" data-id="' + x.id + '" aria-label="Column">' + ['present', 'tardy', 'end', 'unsorted'].map(function (k) {
+      return '<option value="' + k + '"' + (x.lane === k ? ' selected' : '') + '>' + LANES[k][0] + '</option>';
+    }).join('') + '</select><button class="x" data-act="takeRemove" data-id="' + x.id + '" title="Remove">×</button></div></div>';
+}
+function setupTakeDrops() {
+  var d = $('drop'), input = $('takeInput');
+  if (d) d.addEventListener('click', function () { input.click(); });
+  if (input) input.onchange = function () { addShots(Array.prototype.slice.call(input.files)); input.value = ''; };
+  document.querySelectorAll('.thumb').forEach(function (t) {
+    t.addEventListener('dragstart', function (e) { e.dataTransfer.setData('text/x-shot', t.getAttribute('data-id')); });
+  });
+  document.querySelectorAll('.lane').forEach(function (l) {
+    l.addEventListener('dragover', function (e) { e.preventDefault(); l.classList.add('over'); });
+    l.addEventListener('dragleave', function () { l.classList.remove('over'); });
+    l.addEventListener('drop', function (e) {
+      var id = e.dataTransfer.getData('text/x-shot');
+      l.classList.remove('over');
+      if (!id) return; // files dropped on a column: the page handler adds them
+      e.preventDefault(); e.stopPropagation();
+      moveShot(id, l.getAttribute('data-lane'));
+    });
+  });
+  var di = $('takeDate'), si = $('takeStart');
+  if (di) di.onchange = function () { T.date = di.value; T.picked = true; T.start = savedStart(T.classId, T.date); T.files.forEach(function (x) { x.manual = false; }); relane(); drawTake(); };
+  if (si) si.onchange = function () {
+    if (si.value.trim() && parseTime(si.value, takeClass()) == null) { toast('Not a time: ' + si.value + ' (e.g. 6:30 PM)', true); return; }
+    T.start = si.value.trim(); T.files.forEach(function (x) { x.manual = false; }); relane(); drawTake();
+  };
+}
+function moveShot(id, lane) { T.files.forEach(function (x) { if (x.id === id) { x.lane = lane; x.manual = true; } }); drawTake(); }
+function takeSubmit() {
+  var c = takeClass(), items = T.files.filter(function (x) { return x.lane !== 'unsorted'; });
+  if (!c || !T.date || !items.length) return;
+  var date = T.date, classId = c.id, start = T.start, i = 0, failed = false, aiErr = '';
+  T.busy = true; T.done = 0; T.total = items.length; T.msg = 'Saving and reading each screenshot…'; drawTake();
+  var pre = start && parseTime(start, c) !== c.startMin ? call('apiSetStart', classId, date, start) : Promise.resolve();
+  var worker = function () {
+    if (i >= items.length || failed) return Promise.resolve();
+    var x = items[i++];
+    return shrink(x.file).then(function (b64) {
+      var name = minLabel(minOfDay(x.t)).replace(/\W+/g, '') + '-' + x.id.slice(0, 4) + '.jpg';
+      return call('apiUploadShot', classId, date, x.lane, name, 'image/jpeg', b64);
+    }).then(function (r) {
+      if (r && r.aiError) aiErr = r.aiError;
+      x.sent = true; T.done++; drawTake();
+      return worker();
+    }, function (e) { failed = true; throw e; });
+  };
+  pre.then(function () { return Promise.all([worker(), worker(), worker()]); }).then(function () {
+    T.msg = 'Taking attendance with all the screenshots…'; drawTake();
+    return call('apiAnalyzeSession', classId, date);
+  }).then(function (r) {
+    toast('Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some; the OCR was used' : ''), !!aiErr);
+    T.files.forEach(function (x) { URL.revokeObjectURL(x.url); });
+    T.files = []; T.busy = false; T.msg = ''; T.picked = false; T.detected = false;
+    MEM = {}; try { sessionStorage.clear(); } catch (e) { /* ignore */ }
+    loadAll(false);
+    go('session', { classId: classId, date: date });
+  }).catch(function () {
+    T.busy = false;
+    T.files = T.files.filter(function (x) { if (x.sent) URL.revokeObjectURL(x.url); return !x.sent; }); // those already read are saved
+    T.msg = 'Stopped. The screenshots read so far are saved; press the button again for the rest.';
+    drawTake();
+  });
+}
+
+/* ---------- Below 100% / below 80%: follow-ups about each student's standing ---------- */
+function standingPending() {
+  var st = cacheRead(ckey('apiStanding'));
+  return st ? st.classes.reduce(function (n, c) { return n + c.messages.length; }, 0) : 0;
+}
+function viewStanding() {
+  fresh('apiStanding', [], function (d) { S.standing = d; renderNav(); drawStanding(); });
+}
+function drawStanding() {
+  var d = S.standing, f = S.standFilter || 'all', n = { below80: 0, limit: 0, below100: 0, msgs: 0 };
+  d.classes.forEach(function (c) {
+    c.students.forEach(function (s) { n[s.level]++; if (s.state === 'at-limit') n.limit++; });
+    n.msgs += c.messages.length;
+  });
+  var h = '<div class="row"><div><h1>Below 100% and below 80%</h1><p class="sub">Every student who has missed or been late, by class, in Populi order. ' +
+    'Students with the same numbers share one message: select them together in the Populi roster, paste, and mark it as sent.</p></div></div>';
+  h += '<div class="kpis" style="margin-bottom:16px">' +
+    kpiF(n.below80, 'Below 80% · losing the course', n.below80 ? 'alert' : '', 'below80') +
+    kpiF(n.limit, 'At 80% · no absences left', n.limit ? 'warn' : '', 'below100') +
+    kpiF(n.below100, 'Below 100%', '', 'below100') +
+    kpiF(n.msgs, 'Messages to send', n.msgs ? 'warn' : '', 'all') + '</div>';
+  h += '<div class="toolbar"><div class="seg">' + [['all', 'Everyone'], ['below80', 'Below 80%'], ['below100', 'Below 100%']].map(function (x) {
+    return '<button class="' + (f === x[0] ? 'on' : '') + '" data-act="standFilter" data-f="' + x[0] + '">' + x[1] + '</button>';
+  }).join('') + '</div><div class="spacer"></div><span class="small muted">Visibility in Populi: ' + esc(d.visibility || '') + '</span></div>';
+  var any = false;
+  d.classes.forEach(function (c) {
+    var studs = c.students.filter(function (s) { return f === 'all' || s.level === f; });
+    var msgs = c.messages.filter(function (m) { return f === 'all' || m.level === f; });
+    if (!studs.length) return;
+    any = true;
+    var code = c.course.split(':')[0];
+    h += '<div class="stand-cls"><div class="row"><h2>' + esc(c.course) + '</h2><span class="muted small">' + esc(c.day) + ' · ' + esc(c.time) + '</span><div class="spacer"></div>' +
+      (msgs.length ? '<span class="chip warn">' + msgs.length + ' message' + (msgs.length === 1 ? '' : 's') + ' to send</span>' : '<span class="chip good">All up to date</span>') + '</div>';
+    h += '<div class="card tbl-wrap" style="margin-top:10px;max-height:none"><table><thead><tr><th class="num">#</th><th>Student</th><th class="num">Absences</th><th class="num">Tardies</th>' +
+      '<th class="num">Counted</th><th class="num">Left</th><th class="num">Attendance</th><th>Level</th><th>Missed or late</th><th>Follow-up</th></tr></thead><tbody>' +
+      studs.map(function (s) {
+        var fu = s.upToDate ? '<span class="chip good">Sent ' + esc(shortDate(s.last.date)) + '</span>'
+          : s.last ? '<span class="chip warn">Sent ' + esc(shortDate(s.last.date)) + ' · changed since</span>' : '<span class="muted small">Not sent yet</span>';
+        return '<tr><td class="num muted">' + (s.order || '') + '</td><td><span class="name-link" data-go="student" data-class="' + esc(c.id) + '" data-sid="' + esc(s.id) + '">' + esc(s.name) + '</span></td>' +
+          '<td class="num">' + s.absences + '</td><td class="num">' + s.tardies + '</td><td class="num"><b>' + s.effective + '</b></td><td class="num">' + s.remaining + '</td>' +
+          '<td class="num"><b style="color:' + (s.level === 'below80' ? 'var(--a)' : s.state === 'at-limit' ? 'var(--warn)' : 'inherit') + '">' + s.pct + '%</b></td>' +
+          '<td><span class="lvl ' + s.level + '">' + (s.level === 'below80' ? 'Below 80%' : s.state === 'at-limit' ? 'No absences left' : 'Below 100%') + '</span></td>' +
+          '<td class="note">' + s.dates.map(shortDate).join(', ') + '</td><td>' + fu + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    if (msgs.length) {
+      h += '<div class="msgs">' + msgs.map(function (m) {
+        var key = c.id + ':' + m.ids.join(',');
+        return '<div class="card msg ' + m.level + '" data-key="' + esc(key) + '"><div class="row"><span class="lvl ' + m.level + '">' + (m.level === 'below80' ? 'Below 80%' : 'Below 100%') + '</span>' +
+          '<span class="small muted">' + m.ids.length + ' student' + (m.ids.length === 1 ? '' : 's') + '</span><div class="spacer"></div>' +
+          '<button class="btn sm primary" data-act="standSent" data-c="' + esc(c.id) + '" data-ids="' + esc(m.ids.join(',')) + '">Mark as sent</button></div>' +
+          '<div class="sel">Select in the ' + esc(code) + ' roster: <b>#' + m.roster.join(', #') + '</b></div><div class="small muted">' + esc(m.names.join(', ')) + '</div>' +
+          '<div class="row" style="margin-top:10px"><b style="font-weight:600;font-size:13px;flex:1;min-width:0">' + esc(m.subject) + '</b>' +
+          '<button class="btn sm" data-act="copy" data-what="Subject" data-text="' + esc(m.subject) + '">Copy subject</button>' +
+          '<button class="btn sm" data-act="copy" data-what="Message" data-text="' + esc(m.text) + '">Copy message</button></div>' +
+          '<pre>' + esc(m.text) + '</pre></div>';
+      }).join('') + '</div>';
+    }
+    h += '</div>';
+  });
+  if (!any) h += '<div class="card empty"><b>Everyone is at 100%</b>Students appear here as soon as they miss a class or arrive late.</div>';
+  $('main').innerHTML = h;
+  function kpiF(v, label, cls, filter) {
+    return '<div class="card kpi click ' + cls + '" data-act="standFilter" data-f="' + filter + '"><div class="n">' + v + '</div><div class="l">' + label + '</div></div>';
+  }
+}
+
+/* ---------- Find a student (/) ---------- */
+function openFinder() {
+  var box = $('finder');
+  if (!box) { box = document.createElement('div'); box.id = 'finder'; box.className = 'menu'; document.body.appendChild(box); }
+  box.innerHTML = '<input id="findIn" placeholder="Find a student in any class…" style="width:100%;border:1px solid var(--line);border-radius:8px;padding:9px 12px;font:inherit"><div id="findOut"></div>';
+  box.style.top = '70px'; box.style.left = 'calc(50% - 220px)'; box.style.width = '440px'; box.classList.add('on');
+  var input = $('findIn');
+  input.focus();
+  input.oninput = function () {
+    var q = input.value.trim().toLowerCase(), out = [];
+    if (q) classesInfo().forEach(function (c) {
+      var d = cacheRead(ckey('apiClass', [c.id]));
+      ((d && d.students) || []).forEach(function (s) {
+        if ((s.name + ' ' + (s.aliases || []).join(' ')).toLowerCase().indexOf(q) >= 0) out.push({ c: c, s: s });
+      });
+    });
+    $('findOut').innerHTML = out.slice(0, 12).map(function (x, i) {
+      return '<button data-go="student" data-class="' + esc(x.c.id) + '" data-sid="' + esc(x.s.id) + '"' + (i === 0 ? ' class="first"' : '') + '><b style="font-weight:600">' + esc(x.s.name) + '</b> ' +
+        '<span class="small muted">' + esc(x.c.course.split(':')[0]) + ' · ' + x.s.pct + '% · ' + esc(x.s.stateLabel) + '</span></button>';
+    }).join('') || (q ? '<div class="small muted" style="padding:8px 10px">No student matches.</div>' : '');
+  };
+  input.onkeydown = function (e) {
+    if (e.key === 'Escape') { box.classList.remove('on'); }
+    if (e.key === 'Enter') { var b = box.querySelector('button.first'); if (b) { box.classList.remove('on'); b.click(); } }
+  };
+}
+
 /* ---------- Home ---------- */
 function viewHome() {
   fresh('apiOverview', [], function (o, cached) {
@@ -428,14 +800,15 @@ function viewHome() {
     var h = '<div class="row"><div><h1>Good ' + greeting() + ', Diego</h1><p class="sub">' + (o.week ? 'Week ' + o.week + ' of 10 · ' : '') + esc(longToday(o.today)) + '</p></div><div class="spacer"></div>' +
       (o.inboxUrl ? '<a class="btn" href="' + esc(o.inboxUrl) + '" target="_blank">Open TA Inbox</a>' : '') +
       '<button class="btn primary" data-act="process">Process inbox now</button></div>';
+    h += heroCard(o);
     h += '<h2 style="margin-top:6px">To do' + (o.tasks.length ? ' <span class="muted small">(' + o.tasks.length + ')</span>' : '') + '</h2><div class="card todo">' +
       (o.tasks.length ? o.tasks.map(taskRow).join('') : '<div class="alldone">✓ All caught up. Nothing pending.</div>') + '</div>';
     h += '<h2>At a glance</h2><div class="kpis">' +
       kpi(o.mailWaiting || 0, 'Student emails waiting', o.mailWaiting ? 'warn' : '', 'mail') +
       kpi(o.openQuestions, 'Names to confirm', o.openQuestions ? 'warn' : '', 'review') +
       kpi(o.pendingFollowups, 'Follow-ups to send in Populi', o.pendingFollowups ? 'warn' : '', 'followups') +
-      kpi(limit, 'Students with no absences left', limit ? 'warn' : '', '') +
-      kpi(losing, 'Students below 80%', losing ? 'alert' : '', '') + '</div>';
+      kpi(limit, 'Students with no absences left', limit ? 'warn' : '', 'standing') +
+      kpi(losing, 'Students below 80%', losing ? 'alert' : '', 'standing') + '</div>';
     h += '<h2>Your classes</h2><div class="classes">' + o.classes.map(classCard).join('') + '</div>';
     if (o.log.length) {
       h += '<h2>Latest activity</h2><div class="card">' + logTable(o.log.slice(0, 5)) + '</div>';
@@ -509,6 +882,15 @@ function mailSet(id, change) {
   if (S.overview && change.status && change.status !== 'Needs reply') { S.overview.mailWaiting = Math.max(0, (S.overview.mailWaiting || 1) - 1); renderNav(); }
 }
 
+/** The class on now (or the next one waiting for attendance), with one button to take it. */
+function heroCard(o) {
+  var now = classAtTime(Date.now()), load = (o.tasks || []).filter(function (t) { return t.type === 'load'; })[0], k, t, c, d;
+  if (now) { k = 'Happening now'; c = now; d = ymd(new Date()); t = now.course.split(':')[0] + ' · started ' + minLabel(now.startMin); }
+  else if (load) { c = classInfo(load.go.classId); d = load.go.date; k = 'Waiting for attendance'; t = load.text.replace(/^Load attendance · /, ''); }
+  else return '';
+  return '<div class="card hero"><div><div class="k">' + esc(k) + '</div><div class="t">' + esc(t) + '</div></div><div class="spacer"></div>' +
+    '<button class="btn" data-act="takePick" data-c="' + esc(c.id) + '" data-d="' + esc(d) + '">' + (isZoom(c) ? 'Take attendance' : 'Mark it') + '</button></div>';
+}
 function taskRow(t) {
   var icon = { question: '?', load: '!', followup: '✉', excuse: '+', populi: '☑', mail: '@' }[t.type] || '•';
   var g = t.go || {};
@@ -625,6 +1007,7 @@ function viewSession() {
   });
 }
 function drawSession() {
+  if (!$('sessTable')) return;
   var d = S.sess, c = { P: 0, T: 0, A: 0, E: 0, left: 0, none: 0 };
   d.students.forEach(function (s) { var k = letterOf(s); if (k in c) c[k]++; else c.none++; if (s.left) c.left++; });
   $('sessStats').innerHTML = stat('P', c.P, 'Present') + stat('T', c.T, 'Tardy') + stat('A', c.A, 'Absent') + (c.E ? stat('E', c.E, 'Excused') : '') +
@@ -633,11 +1016,12 @@ function drawSession() {
   var h = '<table><thead><tr><th class="num">#</th><th>Student</th><th>Status</th><th>Flags</th><th>Why</th><th></th></tr></thead><tbody>';
   d.students.forEach(function (s, i) {
     var k = letterOf(s);
-    h += '<tr><td class="num muted">' + (s.order || '') + '</td><td style="white-space:nowrap"><span class="name-link" data-go="student" data-sid="' + esc(s.id) + '">' + esc(s.name) + '</span></td>' +
+    h += '<tr data-i="' + i + '"' + (S.focusRow === i ? ' class="focus"' : '') + '><td class="num muted">' + (s.order || '') + '</td><td style="white-space:nowrap"><span class="name-link" data-go="student" data-sid="' + esc(s.id) + '">' + esc(s.name) + '</span></td>' +
       '<td>' + picker(k, s.id, d.date) + '</td><td>' + flags(s) + '</td><td class="note">' + esc(s.notes || '') + '</td>' +
       '<td><button class="more" data-act="menu" data-sid="' + esc(s.id) + '" data-date="' + esc(d.date) + '" title="More">⋯</button></td></tr>';
   });
-  $('sessTable').innerHTML = h + '</tbody></table>';
+  $('sessTable').innerHTML = h + '</tbody></table>' +
+    '<div class="small muted" style="padding:8px 12px">Keyboard: <span class="kbd">↑</span> <span class="kbd">↓</span> pick a student, then <span class="kbd">P</span> <span class="kbd">T</span> <span class="kbd">A</span> <span class="kbd">E</span></div>';
   function stat(k, n, l) { return '<div class="card stat ' + k + '"><div class="n">' + n + '</div><div class="small muted">' + l + '</div></div>'; }
 }
 function shotsCard(d) {
@@ -946,6 +1330,31 @@ function viewActivity() {
 
 /* ---------- actions ---------- */
 var ACTIONS = {
+  takeCls: function (b) { T.picked = true; setTakeClass(b.getAttribute('data-c'), T.date || ymd(new Date())); drawTake(); },
+  takePick: function (b) {
+    var c = classInfo(b.getAttribute('data-c')), d = b.getAttribute('data-d');
+    T.picked = true; setTakeClass(c.id, d);
+    if (!isZoom(c)) { go('session', { classId: c.id, date: d }); return; }
+    if (S.view === 'take') drawTake(); else go('take');
+  },
+  takeGo: function () { takeSubmit(); },
+  takeClear: function () { T.files.forEach(function (x) { URL.revokeObjectURL(x.url); }); T.files = []; T.picked = false; T.detected = false; T.msg = ''; drawTake(); },
+  takeRemove: function (b) {
+    var id = b.getAttribute('data-id');
+    T.files = T.files.filter(function (x) { if (x.id === id) URL.revokeObjectURL(x.url); return x.id !== id; });
+    drawTake();
+  },
+  takeLane: function () { /* handled on change */ },
+  standFilter: function (b) { S.standFilter = b.getAttribute('data-f'); drawStanding(); },
+  standSent: function (b) {
+    var classId = b.getAttribute('data-c'), ids = b.getAttribute('data-ids').split(',');
+    var card = b.closest('.msg'); if (card) card.classList.add('sent');
+    b.disabled = true; b.textContent = 'Saving…';
+    call('apiStandingSent', classId, ids).then(function (d) {
+      S.standing = d; cacheWrite(ckey('apiStanding'), d); renderNav(); if (S.view === 'standing') drawStanding();
+      toast('Marked as sent. It comes back here if their numbers change.');
+    }, function () { if (card) card.classList.remove('sent'); b.disabled = false; b.textContent = 'Mark as sent'; });
+  },
   process: function (b) {
     b.disabled = true; b.textContent = 'Processing…';
     call('apiProcessNow').then(function (r) {
@@ -1013,29 +1422,7 @@ var ACTIONS = {
   },
   rec: function (b) {
     $('menu').classList.remove('on');
-    var sid = b.getAttribute('data-sid'), date = b.getAttribute('data-date'), change = JSON.parse(b.getAttribute('data-change'));
-    // Instant: show the change now, save in the background, undo it if saving fails.
-    var s0 = S.view === 'session' ? S.sess.students.filter(function (x) { return x.id === sid; })[0] : null, before = s0 ? JSON.stringify(s0) : '';
-    if (s0) {
-      if (change.status) { s0.status = change.status; if (change.status !== 'Absent') s0.left = false; }
-      if (change.leftEarly !== undefined) { s0.left = change.leftEarly; if (change.leftEarly) s0.status = 'Absent'; }
-      if (change.noId !== undefined) s0.noId = change.noId;
-      if (change.excuse !== undefined) s0.excuse = change.excuse;
-      if (change.office === 'Present') { s0.status = 'Present'; s0.left = false; }
-      drawSession();
-    }
-    call('apiSetRecord', S.classId, date, sid, change).catch(function () {
-      if (s0) { Object.assign(s0, JSON.parse(before)); drawSession(); }
-    }).then(function (r) {
-      if (!r) return;
-      if (S.view === 'session') {
-        var s = S.sess.students.filter(function (x) { return x.id === sid; })[0];
-        Object.assign(s, { status: r.status, left: r.left, noId: r.noId, excuse: r.excuse, notes: r.notes });
-        cacheWrite(ckey('apiSession', [S.classId, S.date]), S.sess);
-        drawSession();
-      } else if (S.view === 'student') { viewStudent(); }
-      toast('Saved · now ' + r.effective + ' counted absence' + (r.effective === 1 ? '' : 's') + ', ' + r.pct + '% (' + r.stateLabel + ')');
-    });
+    setRec(b.getAttribute('data-sid'), b.getAttribute('data-date'), JSON.parse(b.getAttribute('data-change')));
   },
   bulk: function (b) {
     var st = b.getAttribute('data-s');
@@ -1073,6 +1460,30 @@ var ACTIONS = {
     }, function () { b.disabled = false; b.textContent = 'Save as PDF in Drive'; });
   }
 };
+/** Change one student's record: shown at once, saved in the background, undone if saving fails. */
+function setRec(sid, date, change) {
+  var s0 = S.view === 'session' ? S.sess.students.filter(function (x) { return x.id === sid; })[0] : null, before = s0 ? JSON.stringify(s0) : '';
+  if (s0) {
+    if (change.status) { s0.status = change.status; if (change.status !== 'Absent') s0.left = false; }
+    if (change.leftEarly !== undefined) { s0.left = change.leftEarly; if (change.leftEarly) s0.status = 'Absent'; }
+    if (change.noId !== undefined) s0.noId = change.noId;
+    if (change.excuse !== undefined) s0.excuse = change.excuse;
+    if (change.office === 'Present') { s0.status = 'Present'; s0.left = false; }
+    drawSession();
+  }
+  call('apiSetRecord', S.classId, date, sid, change).catch(function () {
+    if (s0) { Object.assign(s0, JSON.parse(before)); drawSession(); }
+  }).then(function (r) {
+    if (!r) return;
+    if (S.view === 'session') {
+      var s = S.sess.students.filter(function (x) { return x.id === sid; })[0];
+      Object.assign(s, { status: r.status, left: r.left, noId: r.noId, excuse: r.excuse, notes: r.notes });
+      cacheWrite(ckey('apiSession', [S.classId, S.date]), S.sess);
+      drawSession();
+    } else if (S.view === 'student') { viewStudent(); }
+    toast('Saved · now ' + r.effective + ' counted absence' + (r.effective === 1 ? '' : 's') + ', ' + r.pct + '% (' + r.stateLabel + ')');
+  });
+}
 function answer(row, ans, b) {
   var card = b.closest('.q'); if (card) card.style.opacity = .5;
   call('apiAnswer', +row, ans).then(function (r) {
@@ -1081,6 +1492,62 @@ function answer(row, ans, b) {
     refreshOverview(); render();
   }, function () { if (card) card.style.opacity = 1; });
 }
+
+/* Desktop: keyboard shortcuts, drop or paste screenshots anywhere. */
+document.addEventListener('change', function (e) {
+  var sel = e.target.closest('[data-act="takeLane"]');
+  if (sel) moveShot(sel.getAttribute('data-id'), sel.value);
+});
+document.addEventListener('keydown', function (e) {
+  if (e.metaKey || e.ctrlKey || e.altKey) return;
+  var a = document.activeElement, tag = a && a.tagName;
+  if (/INPUT|TEXTAREA|SELECT/.test(tag)) { if (e.key === 'Escape') a.blur(); return; }
+  var k = e.key;
+  if (k === 'Escape') { $('menu').classList.remove('on'); var f = $('finder'); if (f) f.classList.remove('on'); return; }
+  if (S.view === 'session' && S.sess) {
+    var n = S.sess.students.length;
+    if (k === 'ArrowDown' || k === 'ArrowUp') {
+      e.preventDefault();
+      S.focusRow = S.focusRow == null ? 0 : Math.max(0, Math.min(n - 1, S.focusRow + (k === 'ArrowDown' ? 1 : -1)));
+      drawSession();
+      var tr = document.querySelector('#sessTable tr.focus'); if (tr) tr.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    var letter = k.toUpperCase();
+    if (S.focusRow != null && LETTER_NAME[letter] && k.length === 1) {
+      var st = S.sess.students[S.focusRow];
+      if (st) { setRec(st.id, S.sess.date, { status: LETTER_NAME[letter] }); if (S.focusRow < n - 1) S.focusRow++; }
+      return;
+    }
+  }
+  if (k === 'n' || k === 'N') go('take');
+  else if (k === 'f' || k === 'F') go('standing');
+  else if (k === 'h' || k === 'H') go('home');
+  else if (k === '/') { e.preventDefault(); openFinder(); }
+});
+document.addEventListener('click', function (e) {
+  var tr = e.target.closest('#sessTable tr[data-i]');
+  if (tr && !e.target.closest('button,[data-go]') && S.view === 'session') { S.focusRow = +tr.getAttribute('data-i'); drawSession(); }
+  var f = $('finder');
+  if (f && f.classList.contains('on') && !e.target.closest('#finder')) f.classList.remove('on');
+  if (f && e.target.closest('#finder [data-go]')) f.classList.remove('on');
+});
+document.addEventListener('dragover', function (e) { if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) { e.preventDefault(); var d = $('drop'); if (d) d.classList.add('over'); } });
+document.addEventListener('dragleave', function (e) { if (!e.relatedTarget) { var d = $('drop'); if (d) d.classList.remove('over'); } });
+document.addEventListener('drop', function (e) {
+  if (e.target.closest && e.target.closest('.dz')) return; // the session's own drop zones
+  var files = Array.prototype.slice.call((e.dataTransfer || {}).files || []);
+  if (!files.length) return;
+  e.preventDefault();
+  addShots(files);
+});
+document.addEventListener('paste', function (e) {
+  if (S.view === 'session') return; // the session view takes it in its own zone
+  var a = document.activeElement;
+  if (a && /INPUT|TEXTAREA/.test(a.tagName)) return;
+  var files = Array.prototype.slice.call((e.clipboardData || {}).files || []);
+  if (files.length) addShots(files, true);
+});
 
 (function start() {
   var cached = cacheRead(ckey('apiOverview'));

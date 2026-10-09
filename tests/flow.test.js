@@ -896,3 +896,53 @@ test('apiAll bigger than one cache entry is cached in pieces', () => {
   assert.equal(env.calls.read, 0, 'served from the cache');
   assert.equal(JSON.stringify(again).replace(/"at":"[^"]*"/, ''), first.replace(/"at":"[^"]*"/, ''));
 });
+
+test('standing follow-ups: below 100% and below 80%, grouped by numbers, done when sent, back when numbers change', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const j = x => JSON.parse(JSON.stringify(x));
+  const S = env.sheet('Students');
+  [['201', 'Ana Uno', 'C1', '1'], ['202', 'Beto Dos', 'C1', '2'], ['203', 'Caro Tres', 'C1', '3'], ['204', 'Dani Cuatro', 'C1', '4'], ['205', 'Eva Cinco', 'C1', '5']]
+    .forEach(s => S.appendRow([s[0], s[1], s[0] + '@ivy.edu', s[2], 'Yes', s[3]]));
+  const A = env.sheet('Attendance');
+  const add = (d, id, st) => A.appendRow([d, 'C1', id, '', st, '', 'Populi']);
+  ['2026-10-05', '2026-10-12', '2026-10-19'].forEach(d => { add(d, '201', 'Absent'); add(d, '205', 'Present'); }); // Ana: 3 absences → below 80%
+  add('2026-10-05', '202', 'Absent'); add('2026-10-05', '203', 'Absent');   // Beto and Caro: 1 absence each → one message
+  add('2026-10-05', '204', 'Tardy');                                         // Dani: 1 tardy → still 100%, not listed
+  ['2026-10-05', '2026-10-12', '2026-10-19'].forEach(d => add(d, '206', 'Tardy')); // Fer: 3 tardies = 1 absence → own message (different numbers)
+  S.appendRow(['206', 'Fer Seis', '206@ivy.edu', 'C1', 'Yes', '6']);
+  env.setNow('2026-10-20T14:00:00Z');
+  let st = j(env.gas.apiStanding()).classes.find(c => c.id === 'C1');
+  assert.deepEqual(st.students.map(s => [s.name, s.level]), [['Ana Uno', 'below80'], ['Beto Dos', 'below100'], ['Caro Tres', 'below100'], ['Fer Seis', 'below100']]);
+  assert.equal(st.messages.length, 3);
+  const [m80, m1, mt] = st.messages;
+  assert.equal(m80.level, 'below80');
+  assert.match(m80.subject, /below 80%/);
+  assert.match(m80.text, /^Dear Ana,/);
+  assert.match(m80.text, /now 70%, below the 80% minimum/);
+  assert.match(m80.text, /Classes missed or late: Monday, October 5, Monday, October 12, Monday, October 19/);
+  assert.deepEqual(m1.roster, [2, 3]);
+  assert.match(m1.text, /^Dear student,/);
+  assert.match(m1.text, /attendance is 90% and you have 1 absence left/);
+  assert.deepEqual(mt.ids, ['206']);
+  assert.match(mt.text, /^Dear Fer,/);
+  assert.match(mt.text, /1 absence \+ |Tardies: 3/);
+  // Diego sends Beto + Caro's message in Populi
+  st = j(env.gas.apiStandingSent('C1', ['202', '203'])).classes.find(c => c.id === 'C1');
+  assert.equal(st.messages.length, 2);
+  const beto = st.students.find(s => s.id === '202');
+  assert.ok(beto.upToDate);
+  assert.equal(beto.last.date, '2026-10-20');
+  const fu = env.sheet('Follow-ups').objects().find(r => r.Type === 'Standing: below 100%');
+  assert.match(fu.Done, /^Yes/);
+  assert.equal(fu.Standing, '202@1/0; 203@1/0');
+  assert.equal(j(env.gas.apiFollowups()).length, 0, 'not in the Populi to-send list: it was already sent');
+  // Beto misses again → his numbers changed → pending again (now with no absences left)
+  add('2026-10-19', '202', 'Absent');
+  st = j(env.gas.apiStanding()).classes.find(c => c.id === 'C1');
+  const again = st.messages.find(m => m.ids.includes('202'));
+  assert.ok(again);
+  assert.match(again.text, /no absences left/);
+  assert.ok(st.students.find(s => s.id === '203').upToDate);
+  // apiAll carries it for the dashboard
+  assert.ok(j(env.gas.apiAll()).standing.classes.length);
+});
