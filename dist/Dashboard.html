@@ -294,6 +294,18 @@
   .weekPick button.missed { border-left: 4px solid var(--a); } .weekPick button.now { border-left: 4px solid var(--brand2); } .weekPick button.later { border-left: 4px solid var(--line); }
   .weekPick button.on { background: var(--brand-soft); border-color: var(--brand2); box-shadow: 0 0 0 1px var(--brand2) inset; font-weight: 600; }
   .redo { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: var(--warn-bg); color: var(--warn); font-size: 12px; }
+  .ctabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
+  .ctabs button { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-left: 4px solid #6b3fa0; background: #fff; border-radius: 10px; padding: 7px 12px; cursor: pointer; color: var(--ink); font-size: 13px; text-align: left; }
+  .ctabs button:first-child { border-left-color: var(--brand2); }
+  .ctabs button.zoom { border-left-color: var(--e); }
+  .ctabs button small { color: var(--ink3); font-size: 11px; }
+  .ctabs button .n { background: #eef1f4; border-radius: 10px; padding: 1px 7px; font-size: 12px; font-weight: 700; }
+  .ctabs button.none { opacity: .55; }
+  .ctabs button.on { background: var(--brand-soft); border-color: var(--brand2); box-shadow: 0 0 0 1px var(--brand2) inset; }
+  .ctabs button.on .n { background: var(--brand2); color: #fff; }
+  .fu-cls { border-left: 4px solid #6b3fa0; padding-left: 14px; margin: 18px 0 26px; }
+  .fu-cls.zoom { border-left-color: var(--e); }
+  .fu-cls > .row h2 { margin: 0; }
   .takeCls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; border: 1px solid var(--line); border-left: 6px solid #6b3fa0; background: #fff; border-radius: 10px; padding: 10px 14px; margin: 0 0 12px; }
   .takeCls.zoom { border-left-color: var(--e); }
   .takeCls.none { border-left-color: var(--line); color: var(--ink3); }
@@ -462,7 +474,8 @@ function cacheWrite(k, v) { MEM[k] = v; STAMP[k] = Date.now(); try { if (STORE) 
 var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1,
   apiStudent: 1, apiMail: 1, apiShotFiles: 1, apiStanding: 1,
   apiPrepareShots: 1, apiUploadShot: 1 }; // saving screenshots changes nothing on screen until the analysis (no reload in between)
-var STAMP = {}, FRESH_MS = 60000;
+var STAMP = {}, FRESH_MS = 180000;
+setInterval(function () { if (!document.hidden) loadAll(true); }, 120000);
 function afterWrite() {
   STAMP = {};
   clearTimeout(afterWrite.t);
@@ -507,10 +520,19 @@ function fresh(fn, args, draw) {
   var k = ckey(fn, args), nav = S.nav, old = cacheRead(k), oldJson = old ? JSON.stringify(old) : '';
   if (old) draw(old, true);
   if (old && STAMP[k] && Date.now() - STAMP[k] < FRESH_MS) return Promise.resolve(old); // just loaded: no need to ask again
-  return call.apply(null, [fn].concat(args || [])).then(function (d) {
+  // Already on screen: check for news silently (no loading bar); only a screen never seen before shows the bar.
+  var ask = old ? quietCall : call;
+  return ask.apply(null, [fn].concat(args || [])).then(function (d) {
     cacheWrite(k, d);
     if (S.nav === nav && JSON.stringify(d) !== oldJson) draw(d, false);
     return d;
+  });
+}
+/** Like call(), without the loading bar (the screen already shows a copy). */
+function quietCall(fn) {
+  var args = Array.prototype.slice.call(arguments, 1);
+  return new Promise(function (ok, fail) {
+    google.script.run.withSuccessHandler(ok).withFailureHandler(fail)[fn].apply(null, args);
   });
 }
 /** Load in the background without the loading bar (to make the next click instant). */
@@ -824,17 +846,22 @@ function drawStanding() {
     kpiF(n.limit, 'At 80% · no absences left', n.limit ? 'warn' : '', 'below100') +
     kpiF(n.below100, 'Below 100%', '', 'below100') +
     kpiF(n.msgs, 'Messages to send', n.msgs ? 'warn' : '', 'all') + '</div>';
+  var cnt = {};
+  d.classes.forEach(function (c) { cnt[c.id] = c.students.filter(function (s) { return f === 'all' || s.level === f; }).length; });
+  h += classTabs(cnt, 'fuClass');
   h += '<div class="toolbar"><div class="seg">' + [['all', 'Everyone'], ['below80', 'Below 80%'], ['below100', 'Below 100%']].map(function (x) {
     return '<button class="' + (f === x[0] ? 'on' : '') + '" data-act="standFilter" data-f="' + x[0] + '">' + x[1] + '</button>';
   }).join('') + '</div><div class="spacer"></div><span class="small muted">Visibility in Populi: ' + esc(d.visibility || '') + '</span></div>';
   var any = false;
   d.classes.forEach(function (c) {
+    if (S.fuClass && S.fuClass !== 'all' && c.id !== S.fuClass) return;
     var studs = c.students.filter(function (s) { return f === 'all' || s.level === f; });
     var msgs = c.messages.filter(function (m) { return f === 'all' || m.level === f; });
     if (!studs.length) return;
     any = true;
     var code = c.course.split(':')[0];
-    h += '<div class="stand-cls"><div class="row"><h2>' + esc(c.course) + '</h2><span class="muted small">' + esc(c.day) + ' · ' + esc(c.time) + '</span><div class="spacer"></div>' +
+    var ci = classInfo(c.id);
+    h += '<div class="stand-cls fu-cls ' + (ci && isZoom(ci) ? 'zoom' : 'room') + '"><div class="row"><h2>' + esc(c.course) + '</h2>' + (ci ? modeChip(isZoom(ci) ? 'Zoom' : roomLabel(ci.mode)) : '') + '<span class="muted small">' + esc(c.day) + ' · ' + esc(c.time) + '</span><div class="spacer"></div>' +
       (msgs.length ? '<span class="chip warn">' + msgs.length + ' message' + (msgs.length === 1 ? '' : 's') + ' to send</span>' : '<span class="chip good">All up to date</span>') + '</div>';
     h += '<div class="card tbl-wrap" style="margin-top:10px;max-height:none"><table><thead><tr><th class="num">#</th><th>Student</th><th class="num">Absences</th><th class="num">Tardies</th>' +
       '<th class="num">Counted</th><th class="num">Left</th><th class="num">Attendance</th><th>Level</th><th>Missed or late</th><th>Follow-up</th></tr></thead><tbody>' +
@@ -1381,27 +1408,54 @@ function viewReview() {
 }
 
 /* ---------- Follow-ups ---------- */
+/** Tabs to see one class at a time (shared by both follow-up screens): All + each class with its count, Zoom / in person color. */
+function classTabs(counts, act) {
+  var on = S.fuClass || 'all', total = Object.keys(counts).reduce(function (n, k) { return n + counts[k]; }, 0);
+  return '<div class="ctabs"><button class="' + (on === 'all' ? 'on' : '') + '" data-act="' + act + '" data-c="all">All classes <span class="n">' + total + '</span></button>' +
+    classesInfo().filter(function (c) { return c.active !== false; }).map(function (c) {
+      var n = counts[c.id] || 0;
+      return '<button class="' + (isZoom(c) ? 'zoom' : 'room') + (on === c.id ? ' on' : '') + (n ? '' : ' none') + '" data-act="' + act + '" data-c="' + esc(c.id) + '">' +
+        '<b>' + esc(c.course.split(':')[0]) + '</b><small>' + esc(c.day.slice(0, 3)) + ' · ' + (isZoom(c) ? 'Zoom' : 'In person') + '</small><span class="n">' + n + '</span></button>';
+    }).join('') + '</div>';
+}
+function fuClassId(f) { return String(f.Class || '').split(' · ')[0]; }
 function viewFollowups() {
-  fresh('apiFollowups', [], function (list) {
-    var h = '<h1>Follow-ups to send in Populi</h1><p class="sub">For each one: in the class Roster select the students by #, then Actions → Email selected students. Paste the subject and message, check the visibility boxes and send.</p>';
-    if (!list.length) h += '<div class="card empty"><b>Nothing to send</b>New follow-ups appear here after each class.</div>';
-    list.forEach(function (f) {
+  fresh('apiFollowups', [], function (list) { S.fuList = list; drawFollowups(); });
+}
+function drawFollowups() {
+  var list = S.fuList || [], counts = {};
+  list.forEach(function (f) { var id = fuClassId(f); counts[id] = (counts[id] || 0) + 1; });
+  if (S.fuClass && S.fuClass !== 'all' && !classInfo(S.fuClass)) S.fuClass = 'all';
+  var h = '<h1>After-class notices to send in Populi</h1><p class="sub">One class at a time: in that class\'s Populi roster select the students by #, then Actions → Email selected students. Paste the subject and message, check the visibility boxes and send.</p>';
+  h += classTabs(counts, 'fuClass');
+  var show = list.filter(function (f) { return !S.fuClass || S.fuClass === 'all' || fuClassId(f) === S.fuClass; });
+  if (!show.length) h += '<div class="card empty"><b>Nothing to send' + (S.fuClass && S.fuClass !== 'all' ? ' for this class' : '') + '</b>New notices appear here after each class.</div>';
+  // grouped by class (in schedule order), newest class date first
+  var order = classesInfo().map(function (c) { return c.id; });
+  var groups = {};
+  show.forEach(function (f) { (groups[fuClassId(f)] = groups[fuClassId(f)] || []).push(f); });
+  Object.keys(groups).sort(function (a, b) { return order.indexOf(a) - order.indexOf(b); }).forEach(function (id) {
+    var c = classInfo(id), fs = groups[id].sort(function (a, b) { return String(b['Class date']).localeCompare(String(a['Class date'])); });
+    h += '<div class="fu-cls ' + (isZoom(c) ? 'zoom' : 'room') + '"><div class="row"><h2>' + esc(c ? c.course : id) + '</h2>' + (c ? modeChip(isZoom(c) ? 'Zoom' : roomLabel(c.mode)) : '') +
+      '<span class="muted small">' + (c ? esc(c.day) + ' · ' + esc(minLabel(c.startMin)) : '') + '</span><div class="spacer"></div><span class="chip warn">' + fs.length + ' to send</span></div>';
+    fs.forEach(function (f) {
       var vis = String(f['Visibility (check in Populi)'] || '').split(/\s*,\s*/).filter(String);
       h += '<div class="card fu"><div class="row"><span class="chip ' + (/Absent|LeftEarly/.test(f.Type) ? 'bad' : /Tardy/.test(f.Type) ? 'warn' : '') + '">' + esc(f.Type.replace('Student ', '').replace('LeftEarly', 'Left early')) + '</span>' +
-        '<b>' + esc(f.Class) + '</b><span class="muted">' + esc(shortDate(f['Class date'])) + '</span><div class="spacer"></div>' +
+        '<b>' + esc(c ? c.course.split(':')[0] : f.Class) + '</b><span class="muted">' + esc(shortDate(f['Class date'])) + (f['Class date'] && c ? ' · Week ' + ((weekOf(c, f['Class date']) || {}).week || '?') : '') + '</span><div class="spacer"></div>' +
         '<button class="btn sm primary" data-act="fuDone" data-row="' + f.row + '">Mark as sent</button></div>' +
-        '<div class="who">' + (f['Roster #'] ? 'Select in the Populi roster: <b>#' + esc(f['Roster #'].split(', ').join(', #')) + '</b>' : '<b>' + esc(f.Students) + '</b>') +
+        '<div class="who">' + (f['Roster #'] ? 'Select in the ' + esc(c ? c.course.split(':')[0] : '') + ' Populi roster: <b>#' + esc(f['Roster #'].split(', ').join(', #')) + '</b>' : '<b>' + esc(f.Students) + '</b>') +
         (f['Roster #'] ? '<div class="small muted" style="margin-top:4px">' + esc(f.Students) + '</div>' : '') + '</div>' +
         '<div class="row"><b style="font-weight:600">' + esc(f.Subject) + '</b><div class="spacer"></div>' +
         '<button class="btn sm" data-act="copy" data-what="Subject" data-text="' + esc(f.Subject) + '">Copy subject</button>' +
         '<button class="btn sm" data-act="copy" data-what="Message" data-text="' + esc(f.Message) + '">Copy message</button></div>' +
-        (f.changed && f.changed.length ? '<div class="changed"><b>Changed after this was written:</b> ' + f.changed.map(function (c) { return esc(c.name) + ' is now ' + esc(c.now); }).join(', ') +
+        (f.changed && f.changed.length ? '<div class="changed"><b>Changed after this was written:</b> ' + f.changed.map(function (x) { return esc(x.name) + ' is now ' + esc(x.now); }).join(', ') +
           '. Do not include them when you send it.</div>' : '') +
         '<pre>' + esc(f.Message) + '</pre>' +
         '<div class="vis"><span class="small muted">Visibility:</span>' + vis.map(function (v) { return '<span class="chip">☑ ' + esc(v) + '</span>'; }).join('') + '</div></div>';
     });
-    $('main').innerHTML = h;
+    h += '</div>';
   });
+  $('main').innerHTML = h;
 }
 
 /* ---------- Weekly reports ---------- */
@@ -1465,6 +1519,7 @@ var ACTIONS = {
   },
   takeLane: function () { /* handled on change */ },
   standFilter: function (b) { S.standFilter = b.getAttribute('data-f'); drawStanding(); },
+  fuClass: function (b) { S.fuClass = b.getAttribute('data-c'); if (S.view === 'standing') drawStanding(); else drawFollowups(); },
   standSent: function (b) {
     var classId = b.getAttribute('data-c'), ids = b.getAttribute('data-ids').split(',');
     var card = b.closest('.msg'); if (card) card.classList.add('sent');
@@ -1530,7 +1585,10 @@ var ACTIONS = {
   },
   fuDone: function (b) {
     b.disabled = true;
-    call('apiFollowupDone', +b.getAttribute('data-row')).then(function () { toast('Marked as sent'); refreshOverview(); viewFollowups(); });
+    var row = +b.getAttribute('data-row');
+    S.fuList = (S.fuList || []).filter(function (f) { return f.row !== row; }); // gone from the screen at once
+    cacheWrite(ckey('apiFollowups'), S.fuList); drawFollowups();
+    call('apiFollowupDone', row).then(function () { toast('Marked as sent'); refreshOverview(); });
   },
   copy: function (b) { copy(b.getAttribute('data-text'), b.getAttribute('data-what')); },
   menu: function (b) { openMenu(b); },
