@@ -300,6 +300,7 @@
   .rp-grid { display: grid; grid-template-columns: 3fr 2fr; gap: 24px; }
   .roster-panel textarea { width: 100%; font: inherit; font-size: 13px; border: 1px solid var(--line); border-radius: 8px; padding: 8px; box-sizing: border-box; }
   .drop.sm { padding: 14px; }
+  .rp-steps { margin-top: 12px; font-size: 13px; } .rp-steps summary { cursor: pointer; } .rp-steps ol { margin: 8px 0 0 18px; padding: 0; } .rp-steps li { margin: 0 0 4px; }
   .rp-msg { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--brand-soft); font-size: 13px; }
   .ctabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 16px; }
   .ctabs button { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-left: 4px solid #6b3fa0; background: #fff; border-radius: 10px; padding: 7px 12px; cursor: pointer; color: var(--ink); font-size: 13px; text-align: left; }
@@ -1077,7 +1078,7 @@ function viewClass() {
       '<div class="row"><div><h1>' + esc(d.cls.course) + '</h1><p class="sub">' + esc(d.cls.day) + ' · ' + esc(d.cls.time) + ' · ' + modeChip(d.cls.mode) + ' · ' + d.students.length + ' students in Populi order</p></div></div>';
     h += '<h2>Weeks <span class="muted small">— click a week to see it, mark it, or fix it</span></h2><div class="wtiles">' + d.schedule.map(function (w) {
       var cls = w.counts ? 'ok' : w.over ? 'missing' : 'future';
-      var info = w.counts ? '<span style="color:var(--p)">' + w.counts.P + ' P</span> · <span style="color:var(--t)">' + w.counts.T + ' T</span> · <span style="color:var(--a)">' + w.counts.A + ' A</span>'
+      var info = w.counts ? '<span style="color:var(--p)">' + w.counts.P + ' P</span> · ' + (isZoom(d.cls) && !w.counts.T ? '' : '<span style="color:var(--t)">' + w.counts.T + ' T</span> · ') + '<span style="color:var(--a)">' + w.counts.A + ' A</span>'
         : w.over ? '<span style="color:var(--a)">Not loaded yet</span>' : 'Upcoming';
       var extra = (w.questions ? ' <span class="chip warn">' + w.questions + ' to confirm</span>' : '') +
         (w.counts && /zoom/i.test(d.cls.mode) ? (w.populi ? ' <span class="chip good">Populi ✓</span>' : ' <span class="chip">Populi pending</span>') : '');
@@ -1114,7 +1115,18 @@ function rosterPanelHTML(d) {
     '<div class="small muted" style="margin-top:4px">Classes before this date do not count against them.</div>' +
     '<button class="btn sm" data-act="rosterAdd" style="margin-top:8px">+ Add to the end of the roster</button>' +
     '<div class="small muted" style="margin-top:12px">To take someone off: open the student and use "Remove from roster". Every change is listed in the "Roster changes" sheet.</div></div></div>' +
-    (S.rosterMsg ? '<div class="rp-msg">' + S.rosterMsg + '</div>' : '') + '</div>';
+    (S.rosterMsg && S.rosterMsg.classId === d.cls.id ? '<div class="rp-msg">' + S.rosterMsg.html + '</div>' : '') + rosterSteps(code, !(S.rosterMsg && S.rosterMsg.classId === d.cls.id)) + '</div>';
+}
+/** The roster message belongs to one class: switching classes never shows another class's numbers. */
+function rosterSay(classId, html) { S.rosterMsg = html ? { classId: classId, html: html } : null; }
+function rosterSteps(code, open) {
+  return '<details class="rp-steps"' + (open ? ' open' : '') + '><summary><b>Step by step: update the ' + code + ' roster</b></summary><ol>' +
+    '<li>In Populi open <b>' + code + '</b> → <b>Roster</b> → <b>Export</b> (CSV). Do it for one class at a time.</li>' +
+    '<li>Make sure this page says <b>' + code + '</b>, then drop the CSV in box 1 (or paste the roster table).</li>' +
+    '<li>Read the result: the total must match the number of students Populi shows for ' + code + '. New students and people no longer on the roster are listed by name.</li>' +
+    '<li>New students count from today: earlier classes are not absences. If someone joined on another date, use box 2 with that date instead (or change "On roster since" in the Students sheet).</li>' +
+    '<li>Someone missing who should not be? Open the student and check, or add them in box 2. Every change is in the "Roster changes" sheet.</li>' +
+    '<li>Click the next class in the left menu (Classes) → Update roster, and repeat from step 1.</li></ol></details>';
 }
 function setupRosterPanel() {
   var d = $('rosterDrop'), f = $('rosterFile');
@@ -1132,19 +1144,20 @@ function rosterFromFile(file) {
   r.readAsText(file);
 }
 function rosterImport(text, name, force) {
-  var classId = S.classId;
-  S.rosterMsg = 'Updating the roster…'; viewClass();
+  var classId = S.classId, code = ((S.cls && S.cls.cls && S.cls.cls.id === classId ? S.cls.cls.course : classId) || '').split(':')[0];
+  rosterSay(classId, 'Updating the ' + esc(code) + ' roster…'); viewClass();
   call('apiImportRoster', classId, text, name || 'pasted', force).then(function (r) {
     if (r.warning) {
-      S.rosterMsg = esc(r.warning) + ' <button class="btn sm" data-act="rosterForce">Yes, update it anyway</button>';
-      S.rosterPending = text; viewClass(); return;
+      rosterSay(classId, esc(r.warning) + ' <button class="btn sm" data-act="rosterForce">Yes, update it anyway</button>');
+      S.rosterPending = { classId: classId, text: text }; viewClass(); return;
     }
-    S.rosterMsg = '<b>Roster updated:</b> ' + r.total + ' students in Populi order.' +
-      (r.addedNames.length ? '<br>New (earlier classes do not count): ' + esc(r.addedNames.join(', ')) : '') +
+    rosterSay(classId, '<b>' + esc(code) + ' roster updated:</b> ' + r.total + ' students in Populi order (' + esc(shortDate(ymd(new Date()))) + ').' +
+      (r.addedNames.length ? '<br>New (count from today; earlier classes are not absences): ' + esc(r.addedNames.join(', ')) : '') +
       (r.removedNames.length ? '<br>No longer on the roster: ' + esc(r.removedNames.join(', ')) : '') +
-      (!r.addedNames.length && !r.removedNames.length ? ' No one added or removed.' : '');
+      (!r.addedNames.length && !r.removedNames.length ? ' No one added or removed.' : '') +
+      '<br><span class="muted">Check that ' + r.total + ' matches Populi for ' + esc(code) + '. Next class: click it in the left menu and repeat.</span>');
     MEM = {}; storeClear(); loadAll(false).then(function () { viewClass(); });
-  }).catch(function () { S.rosterMsg = ''; viewClass(); });
+  }).catch(function () { rosterSay(classId, ''); viewClass(); });
 }
 function drawClassTable() {
   var d = S.cls, q = S.search.trim().toLowerCase();
@@ -1580,14 +1593,15 @@ var ACTIONS = {
   },
   takeLane: function () { /* handled on change */ },
   standFilter: function (b) { S.standFilter = b.getAttribute('data-f'); drawStanding(); },
-  rosterToggle: function () { S.rosterOpen = !S.rosterOpen; S.rosterMsg = ''; viewClass(); },
+  rosterToggle: function () { S.rosterOpen = !S.rosterOpen; rosterSay('', ''); viewClass(); },
   rosterPasteGo: function () { var t = ($('rosterPaste') || {}).value || ''; if (!t.trim()) { toast('Paste the roster first', true); return; } rosterImport(t, 'pasted', false); },
-  rosterForce: function () { rosterImport(S.rosterPending || '', 'pasted', true); },
+  rosterForce: function () { var p = S.rosterPending; if (p && p.classId === S.classId) rosterImport(p.text, 'pasted', true); else toast('Upload the roster again for this class', true); },
   rosterAdd: function () {
     var n = ($('newName') || {}).value || '', since = ($('newSince') || {}).value || '';
     if (!n.trim()) { toast('Write the name', true); return; }
-    call('apiAddStudent', S.classId, n, since).then(function (r) {
-      S.rosterMsg = '<b>Added:</b> #' + r.order + ' ' + esc(r.name) + ' (from ' + esc(shortDate(since)) + ').';
+    var classId = S.classId;
+    call('apiAddStudent', classId, n, since).then(function (r) {
+      rosterSay(classId, '<b>Added:</b> #' + r.order + ' ' + esc(r.name) + ' (from ' + esc(shortDate(since)) + ').');
       MEM = {}; storeClear(); loadAll(false).then(function () { viewClass(); });
     });
   },
