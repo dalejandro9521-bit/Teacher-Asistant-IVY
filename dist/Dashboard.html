@@ -16,7 +16,7 @@
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; }
-  body { font-family: Inter, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size: 14px; color: var(--ink); background: var(--bg); }
+  body { font-family: Inter, -apple-system, "Segoe UI", Roboto, Arial, sans-serif; font-size: 14.5px; line-height: 1.45; color: var(--ink); background: var(--bg); }
   button { font: inherit; cursor: pointer; }
   input { font: inherit; }
   .app { display: grid; grid-template-columns: 232px 1fr; height: 100vh; }
@@ -34,6 +34,19 @@
   .badge { min-width: 22px; height: 20px; padding: 0 7px; border-radius: 10px; background: #fff; color: var(--brand); font-size: 12px; font-weight: 700;
     display: inline-flex; align-items: center; justify-content: center; }
   .badge.alert { background: #ffb4a8; color: #5c1009; }
+  .cdot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: 0; flex: none; }
+  .cls { border-left: 5px solid var(--cc, var(--brand2)); }
+  .cls .code { color: var(--cc, var(--brand2)) !important; font-size: 13px !important; }
+  .fold { margin-top: 18px; }
+  .fold > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 10px; padding: 12px 16px; background: var(--card);
+    border: 1px solid var(--line); border-radius: var(--radius); font-weight: 600; }
+  .fold > summary::-webkit-details-marker { display: none; }
+  .fold > summary::before { content: "▸"; color: var(--ink3); transition: transform .15s; }
+  .fold[open] > summary::before { transform: rotate(90deg); }
+  .fold[open] > summary { border-radius: var(--radius) var(--radius) 0 0; }
+  .fold > .fold-b { padding: 14px 16px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 var(--radius) var(--radius); background: #fbfcfd; }
+  .fold > summary .hint { font-weight: 400; color: var(--ink3); font-size: 13px; }
+  .step-h { font-size: 13px; font-weight: 700; color: var(--brand2); text-transform: uppercase; letter-spacing: .6px; margin: 22px 0 8px; }
   .nav-foot { margin-top: auto; padding: 14px 10px 0; font-size: 12px; opacity: .6; }
 
   /* main */
@@ -67,7 +80,7 @@
   .kpi .l { color: var(--ink2); font-size: 13px; }
   .kpi.alert .n { color: var(--a); }
   .kpi.warn .n { color: var(--warn); }
-  .kpi.click { cursor: pointer; }
+  .kpi.click, .chip.click { cursor: pointer; }
   .kpi.click:hover { border-color: #cbd2d9; }
 
   /* class cards */
@@ -428,24 +441,27 @@ function renderNav() {
   h += '<button class="nav-i nav-cta' + (S.view === 'take' ? ' on' : '') + '" data-go="take" title="Shortcut: N">+ Take attendance</button>';
   h += item('home', 'Home', '', '');
   var pend = standingPending();
-  h += item('standing', 'Below 100% / 80%', pend ? '<span class="badge alert">' + pend + '</span>' : '', '');
-  h += item('followups', 'After-class notices', o.pendingFollowups ? '<span class="badge">' + o.pendingFollowups + '</span>' : '', '');
-  h += item('review', 'Names to confirm', o.openQuestions ? '<span class="badge alert">' + o.openQuestions + '</span>' : '', '');
+  h += '<div class="nav-h">To send</div>';
+  h += item('followups', 'After-class messages', o.pendingFollowups ? '<span class="badge">' + o.pendingFollowups + '</span>' : '', '');
+  h += item('standing', 'Students at risk', pend ? '<span class="badge alert">' + pend + '</span>' : '', '');
   h += item('mail', 'Student emails', o.mailWaiting ? '<span class="badge alert">' + o.mailWaiting + '</span>' : '', '');
-  h += item('reports', 'Weekly reports', '', '');
+  h += '<div class="nav-h">To check</div>';
+  h += item('review', 'Names to confirm', o.openQuestions ? '<span class="badge alert">' + o.openQuestions + '</span>' : '', '');
+  h += item('reports', 'Weekly report', '', '');
   h += '<div class="nav-h">Classes</div>';
   o.classes.forEach(function (c) {
     var on = (S.view === 'class' || S.view === 'session' || S.view === 'student') && S.classId === c.id;
-    h += '<button class="nav-i' + (on ? ' on' : '') + '" data-go="class" data-class="' + esc(c.id) + '"><span>' + esc(c.course.split(':')[0]) +
+    h += '<button class="nav-i' + (on ? ' on' : '') + '" data-go="class" data-class="' + esc(c.id) + '"><span>' + cdot(c.id) + esc(c.course.split(':')[0]) +
       '<small>' + esc(c.day) + ' · ' + esc(c.time) + '</small></span>' + (c.questions ? '<span class="badge alert">' + c.questions + '</span>' : '') + '</button>';
   });
   h += '<div class="nav-h">More</div>' + item('activity', 'Activity log', '', '');
-  h += '<div class="nav-foot"><span class="kbd">N</span> take attendance · <span class="kbd">F</span> follow-ups · <span class="kbd">/</span> find a student<br>Data stays in this Google account.</div>';
+  h += '<div class="nav-foot"><span class="kbd">/</span> find a student · <span class="kbd">N</span> take attendance<br>Data stays in this Google account.</div>';
   $('nav').innerHTML = h;
   function item(v, label, extra) {
     return '<button class="nav-i' + (S.view === v ? ' on' : '') + '" data-go="' + v + '"><span>' + label + '</span>' + extra + '</button>';
   }
 }
+document.addEventListener('toggle', function (e) { if (e.target.getAttribute && e.target.getAttribute('data-fold') === 'ocr') S.ocrOpen = e.target.open; }, true);
 document.addEventListener('click', function (e) {
   var b = e.target.closest('[data-go]');
   if (!e.target.closest('#menu') && !e.target.closest('[data-act="menu"]')) $('menu').classList.remove('on');
@@ -586,6 +602,14 @@ function nextWeek(c) {
   var ws = classWeeks(c).filter(function (w) { return !w.done; });
   return ws.filter(function (w) { return w.state === 'missed'; })[0] || ws.filter(function (w) { return w.state === 'now'; })[0] || ws[0] || null;
 }
+var CLASS_COLORS = ['#0f8b8d', '#7b4fc9', '#2f6fd6', '#d9772b', '#c2417a', '#4f8a2b'];
+/** One color per class, used everywhere (left menu dot, class cards, page titles). */
+function classColor(id) {
+  var i = classesInfo().map(function (c) { return c.id; }).indexOf(id);
+  if (i < 0) i = (parseInt(String(id).replace(/\D/g, ''), 10) || 1) - 1;
+  return CLASS_COLORS[((i % CLASS_COLORS.length) + CLASS_COLORS.length) % CLASS_COLORS.length];
+}
+function cdot(id) { return '<i class="cdot" style="background:' + classColor(id) + '"></i>'; }
 function isZoom(c) { return c && /zoom/i.test(c.mode || ''); }
 
 /** When a screenshot was taken: from the Mac's file name ("Screenshot 2026-10-05 at 6.15.32 PM"), else the file's time. */
@@ -850,8 +874,8 @@ function drawStanding() {
     c.students.forEach(function (s) { n[s.level]++; if (s.state === 'at-limit') n.limit++; });
     n.msgs += c.messages.length;
   });
-  var h = '<div class="row"><div><h1>Below 100% and below 80%</h1><p class="sub">Every student who has missed or been late, by class, in Populi order. ' +
-    'Students with the same numbers share one message: select them together in the Populi roster, paste, and mark it as sent.</p></div></div>';
+  var h = '<div class="row"><div><h1>Students at risk</h1><p class="sub">Every student who has missed or been late, by class, in Populi order. ' +
+    'Same numbers = one message: select those students together in Populi, paste, and mark it as sent.</p></div></div>';
   h += '<div class="kpis" style="margin-bottom:16px">' +
     kpiF(n.below80, 'Below 80% · losing the course', n.below80 ? 'alert' : '', 'below80') +
     kpiF(n.limit, 'At 80% · no absences left', n.limit ? 'warn' : '', 'below100') +
@@ -944,15 +968,10 @@ function viewHome() {
       (o.inboxUrl ? '<a class="btn" href="' + esc(o.inboxUrl) + '" target="_blank">Open TA Inbox</a>' : '') +
       '<button class="btn primary" data-act="process">Process inbox now</button></div>';
     h += heroCard(o);
-    h += '<h2 style="margin-top:6px">To do' + (o.tasks.length ? ' <span class="muted small">(' + o.tasks.length + ')</span>' : '') + '</h2><div class="card todo">' +
+    h += '<h2 style="margin-top:6px">What to do now' + (o.tasks.length ? ' <span class="muted small">(' + o.tasks.length + ')</span>' : '') + '</h2><div class="card todo">' +
       (o.tasks.length ? o.tasks.map(taskRow).join('') : '<div class="alldone">✓ All caught up. Nothing pending.</div>') + '</div>';
-    h += '<h2>At a glance</h2><div class="kpis">' +
-      kpi(o.mailWaiting || 0, 'Student emails waiting', o.mailWaiting ? 'warn' : '', 'mail') +
-      kpi(o.openQuestions, 'Names to confirm', o.openQuestions ? 'warn' : '', 'review') +
-      kpi(o.pendingFollowups, 'Follow-ups to send in Populi', o.pendingFollowups ? 'warn' : '', 'followups') +
-      kpi(limit, 'Students with no absences left', limit ? 'warn' : '', 'standing') +
-      kpi(losing, 'Students below 80%', losing ? 'alert' : '', 'standing') + '</div>';
-    h += '<h2>Your classes</h2><div class="classes">' + o.classes.map(classCard).join('') + '</div>';
+    h += '<h2>Your classes ' + (losing ? ' <span class="chip bad click" data-go="standing">' + losing + ' below 80%</span>' : '') +
+      (limit ? ' <span class="chip warn click" data-go="standing">' + limit + ' with no absences left</span>' : '') + '</h2><div class="classes">' + o.classes.map(classCard).join('') + '</div>';
     if (o.log.length) {
       h += '<h2>Latest activity</h2><div class="card">' + logTable(o.log.slice(0, 5)) + '</div>';
     }
@@ -1045,7 +1064,7 @@ function classCard(c) {
   var total = c.lastCounts.P + c.lastCounts.T + c.lastCounts.A + c.lastCounts.E;
   var pct = function (n) { return total ? (n * 100 / total) + '%' : '0'; };
   var parts = c.course.split(':');
-  var h = '<div class="card cls" data-go="class" data-class="' + esc(c.id) + '">' +
+  var h = '<div class="card cls" style="--cc:' + classColor(c.id) + '" data-go="class" data-class="' + esc(c.id) + '">' +
     '<div class="row"><span class="code">' + esc(parts[0]) + '</span><div class="spacer"></div>' + modeChip(c.mode) + '</div>' +
     '<div class="name">' + esc((parts[1] || parts[0]).trim()) + '</div>' +
     '<div class="when">' + esc(c.day) + ' · ' + esc(c.time) + ' · ' + c.students + ' students</div>';
@@ -1078,7 +1097,7 @@ function viewClass() {
   fresh('apiClass', [S.classId], function (d) {
     S.cls = d;
     var h = '<div class="crumbs"><a data-go="home">Home</a> / ' + esc(d.cls.course.split(':')[0]) + '</div>' +
-      '<div class="row"><div><h1>' + esc(d.cls.course) + '</h1><p class="sub">' + esc(d.cls.day) + ' · ' + esc(d.cls.time) + ' · ' + modeChip(d.cls.mode) + ' · ' + d.students.length + ' students in Populi order</p></div></div>';
+      '<div class="row"><div><h1>' + cdot(d.cls.id) + esc(d.cls.course) + '</h1><p class="sub">' + esc(d.cls.day) + ' · ' + esc(d.cls.time) + ' · ' + modeChip(d.cls.mode) + ' · ' + d.students.length + ' students in Populi order</p></div></div>';
     h += '<h2>Weeks <span class="muted small">— click a week to see it, mark it, or fix it</span></h2><div class="wtiles">' + d.schedule.map(function (w) {
       var cls = w.counts ? 'ok' : w.over ? 'missing' : 'future';
       var info = w.counts ? '<span style="color:var(--p)">' + w.counts.P + ' P</span> · ' + (isZoom(d.cls) && !w.counts.T ? '' : '<span style="color:var(--t)">' + w.counts.T + ' T</span> · ') + '<span style="color:var(--a)">' + w.counts.A + ' A</span>'
@@ -1191,13 +1210,14 @@ function viewSession() {
     S.sess = d;
     var open = d.questions.filter(function (q) { return !q.Done; });
     var h = '<div class="crumbs"><a data-go="home">Home</a> / <a data-go="class" data-class="' + esc(d.cls.id) + '">' + esc(d.cls.course.split(':')[0]) + '</a> / ' + esc(shortDate(d.date)) + '</div>' +
-      '<div class="row"><div><h1>' + (d.week ? 'Week ' + d.week + ' · ' : '') + esc(d.label) + '</h1><p class="sub">' + esc(d.cls.course) + ' · ' + esc(d.cls.time) + ' · ' +
+      '<div class="row"><div><h1>' + cdot(d.cls.id) + (d.week ? 'Week ' + d.week + ' · ' : '') + esc(d.label) + '</h1><p class="sub">' + esc(d.cls.course) + ' · ' + esc(d.cls.time) + ' · ' +
       esc(d.source || 'No attendance loaded yet') + '</p></div><div class="spacer"></div>' +
       '<div class="card pad startbox"><span class="small muted">Class really started at</span><input id="startIn" value="' + esc(d.start) + '"><button class="btn sm primary" data-act="saveStart">Save &amp; re-check</button>' +
       '<span class="small muted">(scheduled ' + esc(d.scheduled) + ')</span></div></div>';
     h += '<div class="stats" id="sessStats"></div>';
-    if (d.zoom) h += shotsCard(d);
-    h += correctionCard(d);
+    var shotN = d.zoom ? ['present', 'tardy', 'end'].reduce(function (a, p) { return a + ((d.shots || {})[p] || 0); }, 0) : 0;
+    // Nothing read yet: the screenshots are the first step, so they stay on top and open.
+    if (d.zoom && !shotN) h += '<div class="step-h">Step 1 · Add the Zoom screenshots</div>' + shotsCard(d);
     if (open.length) {
       h += '<h2>Confirm these names <span class="muted small">— follow-ups for this class wait until you answer</span></h2>' + open.map(questionCard).join('');
     }
@@ -1209,7 +1229,11 @@ function viewSession() {
       '<button class="btn primary" data-act="finish">Done — prepare follow-ups</button></div>';
     var students = '<div class="card"><div class="tabs"><button class="on">Students in Populi order (' + d.students.length + ')</button></div><div class="tbl-wrap" style="max-height:none" id="sessTable"></div></div>';
     h += students;
-    if (d.ocr) h += '<h2>What the screenshots said <span class="muted small">— use this to check that the screenshots are read well</span></h2><div class="card" id="ocrCard">' + ocrPanel(d) + '</div>';
+    if (d.zoom && shotN) h += fold('Zoom screenshots', shotN + ' read · add more or replace them', shotsCard(d), false);
+    var cn = (d.shots || {}).correction || 0, waiting = cn && (d.correctionRead || 0) < cn;
+    h += fold('Populi correction', waiting ? 'waiting for Claude to read it' : cn ? '✓ applied' : 'a medical excuse or the office changed this week?', correctionCard(d), waiting);
+    if (d.ocr) h += '<details class="fold"' + (S.ocrOpen ? ' open' : '') + ' data-fold="ocr"><summary>What the screenshots said <span class="hint">check that the names were read well</span></summary>' +
+      '<div class="card" id="ocrCard" style="border-radius:0 0 var(--radius) var(--radius);border-top:0">' + ocrPanel(d) + '</div></details>';
     $('main').innerHTML = h;
     drawSession();
     setupDrops();
@@ -1234,13 +1258,15 @@ function drawSession() {
   function stat(k, n, l) { return '<div class="card stat ' + k + '"><div class="n">' + n + '</div><div class="small muted">' + l + '</div></div>'; }
 }
 /** Any class, any week already taken: a screenshot of Populi after a change (medical excuse, the office) → Populi wins. */
+function fold(title, hint, body, open) {
+  return '<details class="fold"' + (open ? ' open' : '') + '><summary>' + esc(title) + ' <span class="hint">' + esc(hint) + '</span></summary><div class="fold-b">' + body + '</div></details>';
+}
 function correctionCard(d) {
   var n = (d.shots || {}).correction || 0, read = d.correctionRead || 0;
   var state = !n ? '<span class="muted small">Drop or click to choose</span>'
     : read >= n ? '<span class="chip good">✓ ' + n + ' read and applied</span> <a class="small" data-act="clearShots" data-phase="correction">clear</a>'
     : '<span class="chip warn">' + n + ' uploaded · ' + (n - read) + ' waiting for Claude to read</span> <a class="small" data-act="clearShots" data-phase="correction">clear</a>';
-  return '<h2>Populi correction <span class="muted small">— a medical excuse or the office changed this week in Populi?</span></h2>' +
-    '<div class="dzs"><div class="card dz corr" data-phase="correction"><b>Drop a screenshot of Populi\'s attendance for this week</b>' +
+  return '<div class="dzs"><div class="card dz corr" data-phase="correction"><b>Drop a screenshot of Populi\'s attendance for this week</b>' +
     '<div class="small muted">Each student in it gets exactly the status Populi shows (even over your manual edits). Students not in it stay as they are.</div>' +
     '<div class="dz-n">' + state + '</div></div></div>' +
     '<div id="corrStatus" class="corr-msg' + (d.correctionMsg || (n && read < n) ? ' on' : '') + '">' +
@@ -1252,7 +1278,7 @@ function correctionCard(d) {
 function shotsCard(d) {
   var info = { present: ['15 min', 'Present (minutes 0–15)'], tardy: ['31 min', 'Still Present (minutes 16–30). Online: no Tardy'], end: ['Last screenshot', 'Before you leave (who is still there)'] };
   var sh = d.shots || {};
-  return '<h2>Zoom screenshots <span class="muted small">— drag them here, click to choose, or paste (Cmd+V) into the last zone you clicked</span></h2>' +
+  return '<div class="small muted" style="margin:0 2px 8px">Drag them here, click to choose, or paste (Cmd+V) into the last zone you clicked.</div>' +
     '<div class="dzs">' + ['present', 'tardy', 'end'].map(function (p) {
       var n = sh[p] || 0;
       return '<div class="card dz' + (S.activePhase === p ? ' active' : '') + '" data-phase="' + p + '"><b>' + info[p][0] + '</b><div class="small muted">' + info[p][1] + '</div>' +
@@ -1538,7 +1564,7 @@ function drawFollowups() {
   var list = S.fuList || [], counts = {};
   list.forEach(function (f) { var id = fuClassId(f); counts[id] = (counts[id] || 0) + 1; });
   if (S.fuClass && S.fuClass !== 'all' && !classInfo(S.fuClass)) S.fuClass = 'all';
-  var h = '<h1>After-class notices to send in Populi</h1><p class="sub">One class at a time: in that class\'s Populi roster select the students by #, then Actions → Email selected students. Paste the subject and message, check the visibility boxes and send.</p>';
+  var h = '<h1>After-class messages to send in Populi</h1><p class="sub">One class at a time: in that class\'s Populi roster select the students by #, then Actions → Email selected students. Paste the subject and message, check the visibility boxes and send.</p>';
   h += classTabs(counts, 'fuClass');
   var show = list.filter(function (f) { return !S.fuClass || S.fuClass === 'all' || fuClassId(f) === S.fuClass; });
   if (!show.length) h += '<div class="card empty"><b>Nothing to send' + (S.fuClass && S.fuClass !== 'all' ? ' for this class' : '') + '</b>New notices appear here after each class.</div>';
