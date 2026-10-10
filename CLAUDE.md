@@ -70,6 +70,8 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
   gives each listed student Populi's status with `override` (wins over Manual), source "Populi correction" is kept by re-runs.
 - Student names: `apiSetStudentNames` (student page → Edit name / Zoom names) renames (old name kept as a Zoom name),
   sets Zoom names for the same Populi ID in every class, logs to Roster changes and re-reads those classes' screenshots.
+- Look (2026-10-10): one color per class (`classColor`/`cdot`: menu dot, class cards, page titles); left menu grouped To send / To check / Classes;
+  session page shows the students first, Zoom screenshots (once read), Populi correction and the OCR text in folded sections (`fold()`).
 - `table_()` adds missing columns from `SHEETS` on its own (and creates a missing sheet), so updates don't need "Set up" again.
 - AI: `aiJson_` calls the Claude Messages API with UrlFetchApp (no SDK in Apps Script): structured output (`output_config.format`),
   model from Config (`claude-opus-5-5`), key in script properties `ANTHROPIC_API_KEY` (menu "Set Claude API key"), never in the sheet.

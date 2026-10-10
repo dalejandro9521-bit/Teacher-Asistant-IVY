@@ -99,7 +99,7 @@ window.google = { script: { run: (function make(ok, fail) {
   await shot('1-home');
   await page.click('.cls[data-class="C3"]'); await shot('2-class');
   await page.click('.wt.ok'); await shot('3-session');
-  await page.click('[data-act="ocrTab"][data-p="end"]'); await shot('4-session-last-screenshot');
+  await page.click('[data-fold="ocr"] > summary'); await page.click('[data-act="ocrTab"][data-p="end"]'); await shot('4-session-last-screenshot');
   // drop 4 screenshots in "15 min": folder prepared once, uploaded 4 at a time, then one analysis
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
   await page.evaluate(() => { const orig = window.google.script.run; window.__calls = [];
