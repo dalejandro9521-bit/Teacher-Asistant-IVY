@@ -1552,7 +1552,7 @@ function drawFollowups() {
       '<span class="muted small">' + (c ? esc(c.day) + ' · ' + esc(minLabel(c.startMin)) : '') + '</span><div class="spacer"></div><span class="chip warn">' + fs.length + ' to send</span></div>';
     fs.forEach(function (f) {
       var vis = String(f['Visibility (check in Populi)'] || '').split(/\s*,\s*/).filter(String);
-      h += '<div class="card fu"><div class="row"><span class="chip ' + (/Absent|LeftEarly/.test(f.Type) ? 'bad' : /Tardy/.test(f.Type) ? 'warn' : '') + '">' + esc(f.Type.replace('Student ', '').replace('LeftEarly', 'Left early')) + '</span>' +
+      h += '<div class="card fu"><div class="row"><span class="chip ' + (/Absent|LeftEarly|attendance/.test(f.Type) ? 'bad' : /Tardy/.test(f.Type) ? 'warn' : '') + '">' + esc(f.Type.replace('Student ', '').replace('LeftEarly', 'Left early')) + '</span>' +
         '<b>' + esc(c ? c.course.split(':')[0] : f.Class) + '</b><span class="muted">' + esc(shortDate(f['Class date'])) + (f['Class date'] && c ? ' · Week ' + ((weekOf(c, f['Class date']) || {}).week || '?') : '') + '</span><div class="spacer"></div>' +
         '<button class="btn sm primary" data-act="fuDone" data-row="' + f.row + '">Mark as sent</button></div>' +
         '<div class="who">' + (f['Roster #'] ? 'Select in the ' + esc(c ? c.course.split(':')[0] : '') + ' Populi roster: <b>#' + esc(f['Roster #'].split(', ').join(', #')) + '</b>' : '<b>' + esc(f.Students) + '</b>') +

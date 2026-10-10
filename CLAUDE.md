@@ -36,7 +36,8 @@ API key is set and "Read screenshots with AI" = Yes), or a Zoom participants rep
 
 ## Emails go out from Populi
 Default `Email mode = POPULI`: notices become rows in the "Follow-ups" sheet (roster # in Populi order, names, subject,
-message, the 6 visibility roles). Students with the same class/date/kind/numbers share one row ("Dear student,").
+message, the 6 visibility roles). One GENERAL row per class and date for everyone affected (absent, left early, tardy) — `buildClassNotice`, no reasons
+or counts per student (Diego, 2026-10-10); Diego selects them all in Populi and sends it once.
 No Populi API (Diego cannot get a key). Students' order = Populi roster order (`Order` column), never alphabetical.
 
 ## Reading Zoom screenshots for Diego (only as a fallback — the OCR does this for free)

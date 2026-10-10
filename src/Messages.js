@@ -107,6 +107,27 @@ function buildStudentNotice(p) {
 }
 
 /**
+ * One general notice for everyone affected in one class and date (Populi mode): absent, left early or tardy.
+ * No reasons or counts per student (each one knows theirs). Online classes: the text never mentions tardies.
+ * p: {cls, date, cfg, tardy: some student was tardy (in-person classes only)}
+ */
+function buildClassNotice(p) {
+  var cfg = cfgForClass(p.cfg, p.cls), c = rulesConfig_(cfg), cls = p.cls;
+  var when = longDate(p.date) + ', ' + classTime(cls);
+  var inPerson = c.noTardy !== true;
+  var what = inPerson && p.tardy ? 'an absence, a late arrival, or leaving before the end of class' : 'an absence or leaving before the end of class';
+  var text = 'Dear student,\n\n' +
+    'Our attendance records for ' + classLabel(cls) + ' on ' + when + ' show ' + what + ' for you. You can see your attendance in Populi.\n\n' +
+    'Please remember:\n' +
+    '• You need at least ' + c.minAttendancePct + '% attendance to pass this course. Over the ' + c.totalSessions + '-week course, that means no more than ' + c.maxAbsences + ' absences.\n' +
+    (inPerson ? '• Every ' + c.tardiesPerAbsence + ' tardies count as 1 absence.\n' : '') +
+    '• If you check in and then leave before class ends, you are marked absent.\n\n' +
+    medicalExcuseText_(cfg) + '\n\n' +
+    'Best regards,\n' + signature_(cfg);
+  return { subject: 'Attendance notice – ' + classLabel(cls) + ' – ' + longDate(p.date), text: text, html: textToHtml_(text) };
+}
+
+/**
  * Follow-up about a student's standing in a course (not about one class).
  * level: 'below80' (losing the course) | 'below100' (has absences or tardies, still passing)
  * p: {level, student:{name} (empty name → "Dear student,"), cls, tally, cfg, dates: ['yyyy-mm-dd' of absences/tardies]}

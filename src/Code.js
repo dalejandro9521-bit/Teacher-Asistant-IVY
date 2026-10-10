@@ -681,18 +681,18 @@ function sendPendingNotices_(ctx) {
     });
     return pending.length;
   }
-  // Populi: students of the same class, date and kind with the same numbers get one email ("Email selected students").
+  // Populi: ONE general message per class and date for everyone affected (absent, left early, tardy): Diego selects them
+  // all in Populi and sends it once. No reasons or numbers per person: each student knows their own.
   var groups = {}, order = [];
   pending.forEach(function (p) {
-    var x = p.tally;
-    var key = [p.cls.id, p.date, p.kind, x.absences, x.tardies, x.excused, x.effective, x.remaining, x.pct, x.state].join('|');
+    var key = p.cls.id + '|' + p.date;
     if (!groups[key]) { groups[key] = []; order.push(key); }
     groups[key].push(p);
   });
   order.forEach(function (key) {
     var g = groups[key], p = g[0];
-    var msg = buildStudentNotice({ kind: p.kind, student: { name: '' }, cls: p.cls, date: p.date, cfg: cfg, tally: p.tally });
-    deliver_(ctx, 'Student ' + p.kind, '', msg, { cls: p.cls, date: p.date, students: g.map(function (x) { return x.student; }) });
+    var msg = buildClassNotice({ cls: p.cls, date: p.date, cfg: cfg, tardy: g.some(function (x) { return x.kind === STATUS.T; }) });
+    deliver_(ctx, 'Student attendance', '', msg, { cls: p.cls, date: p.date, students: g.map(function (x) { return x.student; }) });
     g.forEach(function (x) { t.set(x.row, 'Notified', x.kind + ' · ' + nowStr_() + ' · POPULI'); });
   });
   return order.length;
@@ -1428,7 +1428,7 @@ function followups_(ctx) {
   var y = yearOf_(ctx);
   return rowsOf_(table_('Follow-ups')).filter(function (f) { return !f.Done; }).map(function (f) {
     var classId = String(f.Class || '').split(' · ')[0], date = parseDateCell(f['Class date'], y);
-    var want = /Tardy/.test(f.Type) ? STATUS.T : /Absent|LeftEarly/.test(f.Type) ? STATUS.A : '';
+    var want = /Tardy/.test(f.Type) ? STATUS.T : /Absent|LeftEarly/.test(f.Type) ? STATUS.A : /Student attendance/.test(f.Type) ? STATUS.A + '|' + STATUS.T : '';
     f.changed = [];
     if (want && classId && date) {
       var roster = roster_(ctx, classId);
@@ -1437,7 +1437,7 @@ function followups_(ctx) {
         if (!s) return;
         var r = attRow_(ctx, classId, date, s.id);
         var now = r ? (/^accepted$/i.test(ctx.att.get(r, 'Excuse')) ? STATUS.E : normalizeStatus(ctx.att.get(r, 'Status'))) : '';
-        if (now !== want) f.changed.push({ name: name, now: now || 'no status' });
+        if (want.split('|').indexOf(now) < 0) f.changed.push({ name: name, now: now || 'no status' });
       });
     }
     return f;

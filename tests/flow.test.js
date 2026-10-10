@@ -277,7 +277,7 @@ test('Populi roster export keeps Populi\'s order and is found by the course code
   assert.equal(env.sheet('Students').objects().filter(s => s['Class ID'] === 'C3').length, 9);
 });
 
-test('screenshots list → attendance; POPULI follow-ups group students with the same numbers', () => {
+test('screenshots list → attendance; POPULI follow-ups: one general message per class and date', () => {
   const env = populiTerm();
   // What Claude writes after reading the 6:15 / 6:31 / end-of-class screenshots
   env.inbox().addFile('Zoom screenshots 2026-10-05 [C3].csv', [
@@ -294,14 +294,15 @@ test('screenshots list → attendance; POPULI follow-ups group students with the
   // no Gmail at all in POPULI mode
   assert.equal(env.mail.drafts.length + env.mail.sent.length, 0);
   const fu = env.sheet('Follow-ups').objects();
-  assert.equal(fu.length, 1);                       // 2 absents with the same numbers share one email; no tardy online
-  const abs = fu.find(f => f.Type === 'Student Absent');
+  assert.equal(fu.length, 1);                       // one general message for the class and date
+  const abs = fu.find(f => f.Type === 'Student attendance');
   assert.equal(abs['Roster #'], '3, 4');
   assert.equal(abs.Students, 'Quinn Alder, Moe Allen');
   assert.equal(abs.Count, '2');
   assert.match(abs.Message, /^Dear student,/);
   assert.match(abs.Message, /HA 103: History of World Religions.*6:00 PM – 7:00 PM/);
-  assert.match(abs.Message, /Absences remaining: 1/);
+  assert.match(abs.Message, /show an absence or leaving before the end of class for you/);
+  assert.doesNotMatch(abs.Message, /tard|minute|Absences remaining/i);   // general: no counts, no tardy talk online
   assert.match(abs['Visibility (check in Populi)'], /Academic Auditor/);
   assert.ok(!fu.some(f => f.Type === 'Student Tardy'));
   assert.match(env.row('2026-10-05', 'C3', 'Quinn Alder').Notified, /POPULI$/);
@@ -647,8 +648,12 @@ test('to-do list, quick marking of an on-campus class, excuses, office changes, 
 
   // Done → follow-ups are prepared right away
   const fin = env.gas.apiFinishSession('C1', '2026-10-05');
-  assert.equal(fin.sent, 2);
-  assert.equal(j(env.gas.apiFollowups()).length, 2);
+  assert.equal(fin.sent, 1);                                  // Beto (absent) and Caro (tardy): one message for the class
+  const one = j(env.gas.apiFollowups());
+  assert.equal(one.length, 1);
+  assert.equal(one[0].Students, 'Beto Dos, Caro Tres');
+  assert.match(one[0].Message, /an absence, a late arrival, or leaving before the end of class/);
+  assert.match(one[0].Message, /Every 3 tardies count as 1 absence/);
   assert.ok(j(env.gas.apiOverview()).tasks.some(t => t.type === 'followup'));
 
   // The office changes Beto to Present → the pending follow-up warns not to send it to him
@@ -656,7 +661,7 @@ test('to-do list, quick marking of an on-campus class, excuses, office changes, 
   assert.equal(o.status, 'Present');
   assert.match(o.notes, /Changed to Present by the office/);
   const fus = j(env.gas.apiFollowups());
-  const abs = fus.find(f => f.Type === 'Student Absent');
+  const abs = fus.find(f => f.Type === 'Student attendance');
   assert.deepEqual(abs.changed, [{ name: 'Beto Dos', now: 'Present' }]);
 
   // Medical excuse: received → after 7 days it's a task → accepted → counts as excused
