@@ -1305,5 +1305,8 @@ test('Populi correction after the class (any class): Populi wins over the screen
   // A re-run of the class (start time changed) keeps the correction
   env.gas.apiSetStart('C1', '2026-10-05', '9:05');
   assert.equal(env.row('2026-10-05', 'C1', '2002').Status, 'Excused');
-  assert.equal(JSON.parse(JSON.stringify(env.gas.apiSession("C1", "2026-10-05"))).shots.correction, 1);
+  const se = JSON.parse(JSON.stringify(env.gas.apiSession("C1", "2026-10-05")));
+  assert.equal(se.shots.correction, 1);
+  assert.equal(se.correctionRead, 1);                                      // the card shows "read and applied"
+  assert.match(se.correctionMsg, /^\S+ \S+ · Populi correction: 2 changed/);
 });

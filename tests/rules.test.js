@@ -345,8 +345,8 @@ test('online classes: no Tardy, Present until minute 30, Absent from minute 31',
   // The notice never talks about tardies in an online class
   const t = g.tally([{ classId: 'C3', studentId: '1001', status: 'Absent' }, { classId: 'C3', studentId: '1001', status: 'Absent' }])['C3|1001'];
   const m = g.buildStudentNotice({ kind: 'Absent', student: roster[0], cls, date: '2026-10-05', tally: t, cfg: {}, minutesLate: 40 });
-  assert.ok(!/tard(y|ies)/i.test(m.text.replace(/there is no tardy/, '')), m.text);
-  assert.ok(m.text.includes('joined 40 minutes after'));
-  assert.ok(m.text.includes('from minute 31 on they are absent'));
+  // The online rule is internal: students never read about tardies, minute 31 or "no tardy"
+  assert.ok(!/tard(y|ies)|minute 3\d|minutes after/i.test(m.text), m.text);
+  assert.ok(!/no tardy|online class/i.test(g.mailSystemPrompt({}).replace(/NEVER mention it to a student: online \(Zoom\) classes are recorded only as Present or Absent\. Do not explain tardy rules for online classes\./, '')));
   assert.ok(m.text.includes('One more absence will put you below 80%'));
 });

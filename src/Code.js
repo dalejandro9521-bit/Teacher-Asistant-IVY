@@ -1370,6 +1370,10 @@ function apiSession(classId, date) {
       if (it.hasNext()) {
         var saved = JSON.parse(it.next().getBlob().getDataAsString());
         ['present', 'tardy', 'end', 'correction'].forEach(function (k) { out.shots[k] = ((saved.phases || {})[k] || []).length; });
+        out.correctionRead = ((saved.ai || {}).correction || []).filter(Boolean).length;
+        var logs = rowsOf_(table_('Inbox log')).filter(function (x) { return x.Class === cls.id && x.Dates === date && /Populi correction:/.test(x.Result || ''); });
+        var lg = logs.filter(function (x) { return /Populi correction: \d+ changed/.test(x.Result); }).pop() || logs.pop(); // re-runs say "no changes"
+        out.correctionMsg = lg ? lg.Time + ' · ' + String(lg.Result).replace(/^[\s\S]*?(Populi correction:)/, '$1') : '';
         out.ocr = screenshotDiagnostics(saved.phases, roster, String(ctx.cfg.ignoreNames || '').split(/\s*;\s*/).filter(String),
           { start: sessionStart_(ctx, cls, date), cfg: ctx.cfg, ai: saved.ai });
         out.aiShots = ['present', 'tardy', 'end'].reduce(function (n, k) { return n + ((saved.ai || {})[k] || []).filter(Boolean).length; }, 0);

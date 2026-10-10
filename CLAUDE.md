@@ -8,6 +8,8 @@ Attendance automation for Diego, a Teacher Assistant (dgomez230@ivy.edu). Talk t
 - Minutes 0–15 Present, 16–30 Tardy, 31+ Absent. 3 tardies = 1 absence.
 - Online (Zoom) classes, HA 105 and SB 100, have NO Tardy (Diego, 2026-10-09): minutes 0–30 Present, 31+ Absent
   (`cfgForClass` → `noTardy`; `applyEntries_` and `applyManualFlags_` turn any Tardy in a Zoom class into Present).
+  INTERNAL ONLY (Diego, 2026-10-10): never tell students (notices, follow-ups, emails, drafts) that online classes have no tardy
+  or explain the minute-31 rule; it is handled only between Diego and Ivy's administration.
 - Checking in and leaving before the end → Absent.
 - More than 2 check-ins without ID → notify the office.
 - One email per absence/tardy: class, date and time, current and remaining absences, 80% minimum, medical excuse

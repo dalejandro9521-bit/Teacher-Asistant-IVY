@@ -253,6 +253,8 @@
     .loading { left: 0; }
   }
   .dzs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .corr-msg { display: none; margin: 8px 2px 0; padding: 10px 12px; border-radius: 8px; background: var(--brand-soft); font-size: 13px; }
+  .corr-msg.on { display: block; }
   .dz { padding: 18px; border: 2px dashed #cbd2d9; text-align: center; cursor: pointer; box-shadow: none; transition: all .15s; }
   .dz:hover, .dz.active { border-color: var(--brand2); background: var(--brand-soft); }
   .dz.over { border-color: var(--p); background: var(--p-bg); }
@@ -1233,11 +1235,17 @@ function drawSession() {
 }
 /** Any class, any week already taken: a screenshot of Populi after a change (medical excuse, the office) → Populi wins. */
 function correctionCard(d) {
-  var n = (d.shots || {}).correction || 0;
+  var n = (d.shots || {}).correction || 0, read = d.correctionRead || 0;
+  var state = !n ? '<span class="muted small">Drop or click to choose</span>'
+    : read >= n ? '<span class="chip good">✓ ' + n + ' read and applied</span> <a class="small" data-act="clearShots" data-phase="correction">clear</a>'
+    : '<span class="chip warn">' + n + ' uploaded · ' + (n - read) + ' waiting for Claude to read</span> <a class="small" data-act="clearShots" data-phase="correction">clear</a>';
   return '<h2>Populi correction <span class="muted small">— a medical excuse or the office changed this week in Populi?</span></h2>' +
     '<div class="dzs"><div class="card dz corr" data-phase="correction"><b>Drop a screenshot of Populi\'s attendance for this week</b>' +
     '<div class="small muted">Each student in it gets exactly the status Populi shows (even over your manual edits). Students not in it stay as they are.</div>' +
-    '<div class="dz-n">' + (n ? '<span class="chip good">' + n + ' correction screenshot' + (n === 1 ? '' : 's') + '</span> <a class="small" data-act="clearShots" data-phase="correction">clear</a>' : '<span class="muted small">Drop or click to choose</span>') + '</div></div></div>' +
+    '<div class="dz-n">' + state + '</div></div></div>' +
+    '<div id="corrStatus" class="corr-msg' + (d.correctionMsg || (n && read < n) ? ' on' : '') + '">' +
+    (n && read < n ? 'Saved. Claude reads Populi corrections weekdays at 1:15, 3:15 and 7:15 PM, or ask Claude in the chat to read them now. This box turns green when they are applied.'
+      : d.correctionMsg ? '<b>Last correction:</b> ' + esc(d.correctionMsg) : '') + '</div>' +
     (d.zoom ? '' : '<div id="upStatus" class="small muted" style="margin:6px 2px 0"></div>') +
     '<input type="file" id="corrInput" accept="image/*" multiple style="display:none">';
 }
@@ -1306,7 +1314,7 @@ function uploadShots(phase, files) {
   if (!files.length) { toast('Drop image files (PNG or JPG)', true); return; }
   var label = { present: '15 min', tardy: '31 min', end: 'last screenshot', correction: 'Populi correction' }[phase], i = 0, names = 0, aiErr = '';
   var how = S.sess && S.sess.aiOn ? ' with AI' : '';
-  var status = function (t) { var el = $('upStatus'); if (el) el.textContent = t; };
+  var status = function (t) { var el = $(phase === 'correction' ? 'corrStatus' : 'upStatus'); if (el) { el.textContent = t; el.classList.toggle('on', !!t); } };
   var done = 0, failed = false, subs = null, got = [];
   // Four at a time, without the script lock: each one is saved and read; the analysis then registers them all at once.
   var worker = function () {
@@ -1330,7 +1338,7 @@ function uploadShots(phase, files) {
   }).then(function () {
     status('Analyzing the class with all the screenshots…');
     return call('apiAnalyzeSession', S.classId, S.date, got.filter(Boolean)).then(function (r) {
-      status(''); toast(r.waiting ? r.msg : 'Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some (' + aiErr + '); the OCR was used' : ''), !!aiErr);
+      status(''); if (phase === 'correction') toast(r.waiting ? '✓ ' + got.filter(Boolean).length + ' Populi correction screenshot(s) saved. Waiting for Claude to read them.' : '✓ Populi correction applied'); else toast(r.waiting ? r.msg : 'Done: ' + String(r.msg).split('. ')[0] + (aiErr ? '. AI could not read some (' + aiErr + '); the OCR was used' : ''), !!aiErr);
       MEM = {}; storeClear();
       viewSession();
     });

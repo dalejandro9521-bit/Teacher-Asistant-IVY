@@ -90,10 +90,8 @@ function buildStudentNotice(p) {
       'Leaving before the time set by the professor changes your attendance from Present to Absent.';
   } else {
     subjectWord = 'Absence';
-    what = 'You were marked ABSENT for ' + classLabel(cls) + ' on ' + when + '.' +
-      (c.noTardy === true && p.minutesLate > c.tardyUntilMin ? ' You joined ' + p.minutesLate + ' minutes after the start of class.' : '') +
-      (c.noTardy === true ? '\n\nIn online classes there is no tardy: students who join in the first ' + c.tardyUntilMin +
-        ' minutes are present, and from minute ' + (c.tardyUntilMin + 1) + ' on they are absent.' : '');
+    // The online no-tardy rule is internal (Diego and Ivy only): never explained to students.
+    what = 'You were marked ABSENT for ' + classLabel(cls) + ' on ' + when + '.';
   }
   var text = 'Dear ' + first + ',\n\n' + what + '\n\n' +
     'Your attendance in this course:\n' + summaryLines_(t, cfg) + '\n\n' +
@@ -482,7 +480,7 @@ function mailSystemPrompt(cfg) {
     'Students need at least ' + c.minAttendancePct + '%, so at most ' + c.maxAbsences + ' absences.\n' +
     '- Minutes 0-' + c.presentUntilMin + ' after the start: Present. Minutes ' + (c.presentUntilMin + 1) + '-' + c.tardyUntilMin +
     ': Tardy. Later: Absent. Every ' + c.tardiesPerAbsence + ' tardies count as 1 absence. Checking in and leaving before the end counts as Absent.\n' +
-    '- Online (Zoom) classes have no Tardy: minutes 0-' + c.tardyUntilMin + ' Present, minute ' + (c.tardyUntilMin + 1) + ' or later Absent.\n' +
+    '- Internal only, NEVER mention it to a student: online (Zoom) classes are recorded only as Present or Absent. Do not explain tardy rules for online classes.\n' +
     '- ' + medicalExcuseText_(cfg).replace(/\n+/g, ' ') + '\n\n' +
     'How to reply:\n' +
     '- Warm, brief and professional. Use the student\'s first name. Reply in the language the student wrote in.\n' +
