@@ -3799,7 +3799,7 @@ function apiAnalyzeSession(classId, date, shots, registerOnly) {
     var unread = claudeUnread_(saved.data);
     if (claudeBlocks_(saved.data)) {
       // Nothing is marked from screenshots nobody has read yet (it would make everyone absent).
-      msg = 'Saved. Waiting for Claude to read ' + unread + ' screenshot(s): it checks every hour (10 AM–3 PM and 7–8 PM, weekdays); for right now, write "ya subí" in the chat. The attendance is taken a few minutes after Claude reads them.';
+      msg = 'Saved. Waiting for Claude to read ' + unread + ' screenshot(s): it checks every hour (10 AM–8 PM, weekdays); for right now, write "ya subí" in the chat. The attendance is taken a few minutes after Claude reads them.';
       waiting = true;
       return;
     }

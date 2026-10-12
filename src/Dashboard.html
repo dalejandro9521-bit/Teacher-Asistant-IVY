@@ -1270,7 +1270,7 @@ function correctionCard(d) {
     '<div class="small muted">Each student in it gets exactly the status Populi shows (even over your manual edits). Students not in it stay as they are.</div>' +
     '<div class="dz-n">' + state + '</div></div></div>' +
     '<div id="corrStatus" class="corr-msg' + (d.correctionMsg || (n && read < n) ? ' on' : '') + '">' +
-    (n && read < n ? 'Saved. Claude checks every hour (10 AM–3 PM and 7–8 PM, weekdays); for right now, write "ya subí" in the chat. This box turns green when they are applied.'
+    (n && read < n ? 'Saved. Claude checks every hour (10 AM–8 PM, weekdays); for right now, write "ya subí" in the chat. This box turns green when they are applied.'
       : d.correctionMsg ? '<b>Last correction:</b> ' + esc(d.correctionMsg) : '') + '</div>' +
     (d.zoom ? '' : '<div id="upStatus" class="small muted" style="margin:6px 2px 0"></div>') +
     '<input type="file" id="corrInput" accept="image/*" multiple style="display:none">';
