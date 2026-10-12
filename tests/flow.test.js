@@ -82,21 +82,20 @@ test('Populi export → roster, 15/30 rule, missing = absent, draft notices with
   assert.equal(st('2004'), 'Absent');   // 9:45
   assert.equal(st('2005'), 'Absent');
   assert.equal(env.row('2026-10-05', 'C1', '2003')['Minutes late'], '16');
-  // 3 notices as Gmail drafts, Reply-To set
-  assert.equal(env.mail.drafts.length, 3);
+  // 2 notices (the absences) as Gmail drafts, Reply-To set; a tardy that keeps the student at 80%+ gets none
+  assert.equal(env.mail.drafts.length, 2);
   assert.equal(env.mail.sent.length, 0);
   assert.ok(env.mail.drafts.every(d => d.replyTo === 'dgomez230@ivy.edu' && d.name === 'Diego Gomez' && d.htmlBody));
-  const grace = env.mail.drafts.find(d => d.to === 'grace@ivy.edu');
-  assert.match(grace.subject, /ENG 111 \(01\).*Tardy/);
-  assert.match(grace.body, /9:00 AM – 1:00 PM/);
-  assert.match(env.row('2026-10-05', 'C1', '2003').Notified, /^Tardy · 2026-10-05 10:00 · DRAFT$/);
+  assert.ok(!env.mail.drafts.some(d => d.to === 'grace@ivy.edu'));
+  assert.match(env.mail.drafts[0].body, /9:00 AM – 1:00 PM/);
+  assert.match(env.row('2026-10-05', 'C1', '2003').Notified, /^Tardy · no notice/);
   // Summary
   const sum = env.sheet('Summary').objects().filter(r => r['Class ID'] === 'C1');
   assert.equal(sum.length, 5);
   assert.equal(sum.find(r => r['Student ID'] === '2004')['Absences left'], '1');
   // nothing is sent twice
   env.gas.tick();
-  assert.equal(env.mail.drafts.length, 3);
+  assert.equal(env.mail.drafts.length, 2);
 });
 
 test('Zoom report: class by meeting ID, left early, not seen, unmatched names', () => {
@@ -186,18 +185,34 @@ test('absences before "Send notices from" are not emailed', () => {
   assert.match(env.row('2026-09-28', 'C3', '1001').Notified, /not sent/);
 });
 
+test('a tardy gets a notice only when it puts the student below 80% (2 absences + 1 tardy)', () => {
+  const env = setupTerm();
+  env.inbox().addFile('a [C1].csv', populiC1);
+  env.gas.tick();
+  const before = env.mail.drafts.length;
+  // 2004 (Absent on Oct 5) misses Oct 12 too, then is late on Oct 19: 2 A + 1 T = 76.7% → below 80%
+  env.gas.apiSetRecord('C1', '2026-10-12', '2004', { status: 'Absent' });
+  env.gas.apiSetRecord('C1', '2026-10-19', '2004', { status: 'Tardy' });
+  env.gas.tick();
+  assert.match(env.row('2026-10-19', 'C1', '2004').Notified, /^Tardy · 2026-/);
+  assert.ok(env.mail.drafts.length > before);
+  const t = JSON.parse(JSON.stringify(env.gas.apiStudent('C1', '2004'))).tally;
+  assert.equal(t.state, 'failing');
+  assert.equal(t.pct, 77);
+});
+
 test('SEND mode sends right away; LOG mode only writes Outbox', () => {
   const env = setupTerm();
   env.setConfig('Email mode', 'SEND');
   env.inbox().addFile('a [C1].csv', populiC1);
   env.gas.tick();
-  assert.equal(env.mail.sent.length, 3);
+  assert.equal(env.mail.sent.length, 2);
   const env2 = setupTerm();
   env2.setConfig('Email mode', 'LOG');
   env2.inbox().addFile('a [C1].csv', populiC1);
   env2.gas.tick();
   assert.equal(env2.mail.sent.length + env2.mail.drafts.length, 0);
-  assert.equal(env2.sheet('Outbox').objects().length, 3);
+  assert.equal(env2.sheet('Outbox').objects().length, 2);
 });
 
 test('unknown file goes to "Needs attention"', () => {
@@ -648,12 +663,11 @@ test('to-do list, quick marking of an on-campus class, excuses, office changes, 
 
   // Done → follow-ups are prepared right away
   const fin = env.gas.apiFinishSession('C1', '2026-10-05');
-  assert.equal(fin.sent, 1);                                  // Beto (absent) and Caro (tardy): one message for the class
+  assert.equal(fin.sent, 1);                                  // Beto (absent): one message for the class; Caro's tardy keeps her at 97% → none
   const one = j(env.gas.apiFollowups());
   assert.equal(one.length, 1);
-  assert.equal(one[0].Students, 'Beto Dos, Caro Tres');
-  assert.match(one[0].Message, /an absence, a late arrival, or leaving before the end of class/);
-  assert.match(one[0].Message, /Every 3 tardies count as 1 absence/);
+  assert.equal(one[0].Students, 'Beto Dos');
+  assert.match(one[0].Message, /an absence or leaving before the end of class/);
   assert.ok(j(env.gas.apiOverview()).tasks.some(t => t.type === 'followup'));
 
   // The office changes Beto to Present → the pending follow-up warns not to send it to him

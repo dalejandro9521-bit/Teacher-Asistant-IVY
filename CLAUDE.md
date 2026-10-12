@@ -10,6 +10,8 @@ Attendance automation for Diego, a Teacher Assistant (dgomez230@ivy.edu). Talk t
   (`cfgForClass` → `noTardy`; `applyEntries_` and `applyManualFlags_` turn any Tardy in a Zoom class into Present).
   INTERNAL ONLY (Diego, 2026-10-10): never tell students (notices, follow-ups, emails, drafts) that online classes have no tardy
   or explain the minute-31 rule; it is handled only between Diego and Ivy's administration.
+- Percentage (Diego, 2026-10-12): each tardy is 1/3 of an absence (`exact` in `finishTally_`), so 2 absences + 1 tardy = 77% → below 80%.
+  Notices (Diego, 2026-10-12): only for Absent (incl. left early); a Tardy gets one only when it puts the student below 80%.
 - Checking in and leaving before the end → Absent.
 - More than 2 check-ins without ID → notify the office.
 - One email per absence/tardy: class, date and time, current and remaining absences, 80% minimum, medical excuse

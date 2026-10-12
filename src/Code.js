@@ -670,6 +670,10 @@ function sendPendingNotices_(ctx) {
     var s = ctx.students.filter(function (x) { return x.classId === t.get(r, 'Class ID') && x.id === t.get(r, 'Student ID'); })[0];
     // Gmail needs an address; Populi doesn't. Rows without one are tried again on the next run.
     if (!cls || !s || (!populi && !s.email)) return;
+    // Diego, 2026-10-12: notices only for absences, and for a tardy only when it puts the student below 80%.
+    if (kind === STATUS.T && (totals[cls.id + '|' + s.id] || emptyTally(cfg)).state !== 'failing') {
+      t.set(r, 'Notified', kind + ' · no notice (still at 80% or more)'); return;
+    }
     pending.push({ row: r, kind: kind, date: date, cls: cls, student: s, tally: totals[cls.id + '|' + s.id] || emptyTally(cfg),
       minutesLate: +t.get(r, 'Minutes late') || 0 });
   });

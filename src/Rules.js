@@ -105,8 +105,10 @@ function finishTally_(t, c) {
   t.tardyAbsences = Math.floor(t.tardies / c.tardiesPerAbsence);
   t.effective = t.absences + t.tardyAbsences;
   t.remaining = c.maxAbsences - t.effective;
-  t.pct = Math.max(0, Math.round(100 - t.effective * 100 / c.totalSessions));
-  t.state = t.effective > c.maxAbsences ? 'failing'
+  // Each tardy is a third of an absence for the percentage (Diego, 2026-10-12): 2 absences + 1 tardy = 76.7% → below 80%.
+  t.exact = t.absences + t.tardies / c.tardiesPerAbsence;
+  t.pct = Math.max(0, Math.round(100 - t.exact * 100 / c.totalSessions));
+  t.state = t.exact > c.maxAbsences + 1e-9 ? 'failing'
     : t.effective === c.maxAbsences ? 'at-limit'
     : t.effective === c.maxAbsences - 1 ? 'warning' : 'ok';
   return t;

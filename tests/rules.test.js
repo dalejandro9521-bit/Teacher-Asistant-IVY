@@ -39,11 +39,13 @@ test('time parsing', () => {
 test('3 tardies = 1 absence, max 2, each absence 10%', () => {
   const rec = (st, d) => ({ classId: 'C1', studentId: 'x', date: d, status: st });
   let t = g.tally([rec('Tardy'), rec('Tardy')])['C1|x'];
-  assert.equal(t.effective, 0); assert.equal(t.remaining, 2); assert.equal(t.state, 'ok'); assert.equal(t.pct, 100);
+  assert.equal(t.effective, 0); assert.equal(t.remaining, 2); assert.equal(t.state, 'ok'); assert.equal(t.pct, 93);  // each tardy = 1/3 absence for the %
   t = g.tally([rec('Tardy'), rec('Tardy'), rec('Tardy')])['C1|x'];
   assert.equal(t.effective, 1); assert.equal(t.remaining, 1); assert.equal(t.state, 'warning'); assert.equal(t.pct, 90);
   t = g.tally([rec('Absent'), rec('Absent')])['C1|x'];
   assert.equal(t.state, 'at-limit'); assert.equal(t.pct, 80);
+  t = g.tally([rec('Absent'), rec('Absent'), rec('Tardy')])['C1|x'];   // Diego: 2 absences + a tardy → below 80%
+  assert.equal(t.effective, 2); assert.equal(t.state, 'failing'); assert.equal(t.pct, 77);
   t = g.tally([rec('Absent'), rec('Absent'), rec('Tardy'), rec('Tardy'), rec('Tardy')])['C1|x'];
   assert.equal(t.effective, 3); assert.equal(t.state, 'failing'); assert.equal(t.pct, 70);
   // An accepted medical excuse does not count.
