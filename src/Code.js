@@ -21,7 +21,7 @@ var SHEETS = {
   Outbox: ['Time', 'Type', 'To', 'Subject', 'Mode', 'Body'],
   'Inbox log': ['Time', 'File', 'Kind', 'Class', 'Dates', 'Result'],
   Mail: ['Thread ID', 'Received', 'Student ID', 'Student', 'Email', 'Class ID', 'Subject', 'Category', 'Summary', 'Status',
-    'Waiting since', 'Draft', 'Excuse', 'Last message ID', 'Read by', 'Updated']
+    'Waiting since', 'Draft', 'Excuse', 'Last message ID', 'Read by', 'Updated', 'Claude draft ID', 'Claude version', 'Reply subject', 'Gmail draft ID']
 };
 
 // [key, label in the Config sheet, default, note]
@@ -217,6 +217,7 @@ function runAll_(ctx) {
   save_(ctx.att); save_(ctx.studentsT); save_(ctx.sessT); save_(ctx.revT);
   var mail = 0;
   try { mail = scanMail_(ctx); } catch (e) { appendRow_('Inbox log', [nowStr_(), 'Gmail', 'error', '', '', String(e && e.message || e)]); }
+  try { mail += claudeMailApply_(ctx); } catch (e) { appendRow_('Inbox log', [nowStr_(), 'email-drafts.json', 'error', '', '', String(e && e.message || e)]); }
   save_(ctx.att);
   var r = null;
   withLock_(function () { ctx = load_(); claudeApply_(ctx).forEach(function (x) { log.push(x); }); r = runLight_(ctx); });
@@ -2004,6 +2005,8 @@ function scanMail_(ctx, budgetMs, full) {
       return;
     }
     if (mt.get(r, 'Last message ID') === last.id) return; // nothing new since the last look
+    // Claude's reply (email-drafts.json) came first for this email: keep it, only remember the message.
+    if (mt.get(r, 'Read by') === 'Claude' && !mt.get(r, 'Last message ID')) { mt.set(r, 'Last message ID', last.id); return; }
     var res = null, by = 'rules';
     if (useAi && Date.now() - t0 > budgetMs) { outOfTime = true; if (!mt.get(r, 'Status')) mt.set(r, 'Status', 'Needs reply'); return; }
     if (useAi) {
@@ -2043,14 +2046,14 @@ function hoursSince_(stamp) {
 }
 
 function mail_(ctx) {
-  var mt = table_('Mail'), order = { 'Needs reply': 0, 'No reply needed': 1, Answered: 2, Done: 3 };
+  var mt = table_('Mail'), order = { 'Needs reply': 0, 'Waiting for Claude': 0, 'No reply needed': 1, Answered: 2, Done: 3 };
   return mt.rows.map(function (r, i) {
     var who = mailStudent_(ctx, mt.get(r, 'Email'));
     return {
       row: i, threadId: mt.get(r, 'Thread ID'), student: mt.get(r, 'Student'), studentId: mt.get(r, 'Student ID'), email: mt.get(r, 'Email'),
       subject: mt.get(r, 'Subject'), category: mt.get(r, 'Category'), summary: mt.get(r, 'Summary'), status: mt.get(r, 'Status'),
       received: mt.get(r, 'Received'), waiting: mt.get(r, 'Status') === 'Needs reply' ? hoursSince_(mt.get(r, 'Waiting since')) : 0,
-      draft: mt.get(r, 'Draft'), excuse: mt.get(r, 'Excuse'), by: mt.get(r, 'Read by'),
+      draft: mt.get(r, 'Draft'), excuse: mt.get(r, 'Excuse'), by: mt.get(r, 'Read by'), replySubject: mt.get(r, 'Reply subject'),
       classes: who ? who.classes.map(function (k) {
         return { id: k.id, code: k.code, effective: k.tally.effective, remaining: Math.max(0, k.tally.remaining), pct: k.tally.pct, state: k.tally.state };
       }) : []
@@ -2063,7 +2066,7 @@ function apiMail() { return mail_(load_()); }
 /** Look for new student emails now (instead of waiting for the 15-minute job). */
 function apiCheckMail() {
   var n = 0;
-  var ran = withJob_(function () { var ctx = load_(); n = scanMail_(ctx, 0, true); save_(ctx.att); });
+  var ran = withJob_(function () { var ctx = load_(); n = scanMail_(ctx, 0, true) + claudeMailApply_(ctx); save_(ctx.att); });
   if (!ran) return { changed: 0, busy: true };
   return { changed: n };
 }
@@ -2088,13 +2091,35 @@ function apiMailRedraft(threadId, instruction) {
   return { draft: res.reply };
 }
 
-/** Save the (edited) reply as a Gmail draft in the same thread. */
+/**
+ * Save the (edited) reply as a draft inside the student's conversation in this (Ivy) Gmail and return the link that
+ * opens it there. The draft saved last time is replaced while it is untouched; once Diego edited it in Gmail it is kept.
+ */
 function apiMailToGmail(threadId, text) {
-  var m = mailRow_(threadId), th = GmailApp.getThreadById(threadId), cfg = config_();
-  th.createDraftReply(text, { replyTo: cfg.replyTo });
+  var m = mailRow_(threadId), cfg = config_(), old = m.t.get(m.r, 'Gmail draft ID'), d = null;
+  if (old) {
+    try { d = GmailApp.getDraft(old); } catch (e) { d = null; }
+    if (d && String(d.getMessage().getPlainBody()).replace(/\s+/g, ' ').trim() !== String(m.t.get(m.r, 'Draft')).replace(/\s+/g, ' ').trim()) {
+      return { url: gmailUrl_(cfg, /^claude:/.test(threadId) ? '' : threadId), kept: true };
+    }
+    if (d) try { d.deleteDraft(); } catch (e) { /* already gone */ }
+  }
+  if (/^claude:/.test(threadId)) { // the student's email was not found in this mailbox: a new email to them
+    var subj = m.t.get(m.r, 'Reply subject') || 'Re: ' + m.t.get(m.r, 'Subject');
+    d = GmailApp.createDraft(m.t.get(m.r, 'Email'), subj, text, { replyTo: cfg.replyTo });
+  } else d = GmailApp.getThreadById(threadId).createDraftReply(text, { replyTo: cfg.replyTo });
   m.t.set(m.r, 'Draft', text);
+  try { m.t.set(m.r, 'Gmail draft ID', d.getId()); } catch (e) { /* ignore */ }
   save_(m.t);
-  return { url: 'https://mail.google.com/mail/u/0/#drafts' };
+  return { url: gmailUrl_(cfg, /^claude:/.test(threadId) ? '' : threadId) };
+}
+
+/** A Gmail link that opens in this script's account (Ivy), not in the first account signed in on the Mac. */
+function gmailUrl_(cfg, threadId) {
+  var me = '';
+  try { me = Session.getEffectiveUser().getEmail(); } catch (e) { me = ''; }
+  me = me || cfg.replyTo || '';
+  return 'https://mail.google.com/mail/u/?authuser=' + encodeURIComponent(me) + '#' + (threadId ? 'all/' + threadId : 'drafts');
 }
 
 /** Status by hand: Answered, No reply needed, Done, or back to Needs reply. */
@@ -2103,6 +2128,7 @@ function apiMailStatus(threadId, status) {
   m.t.set(m.r, 'Status', status);
   m.t.set(m.r, 'Updated', nowStr_());
   save_(m.t);
+  if (m.t.get(m.r, 'Claude draft ID')) try { writeMailFeedback_(m.t); } catch (e) { /* the next 15-minute job writes it */ }
   if (status !== 'Needs reply') {
     var l = GmailApp.getUserLabelByName(MAIL_LABELS.reply);
     if (l) try { GmailApp.getThreadById(threadId).removeLabel(l); } catch (e) { /* ignore */ }
@@ -2121,6 +2147,143 @@ function apiMailForwardExcuse(threadId) {
     'From: ' + msg.getFrom() + '\nDate: ' + Utilities.formatDate(msg.getDate(), tz_(), 'yyyy-MM-dd HH:mm') + '\nSubject: ' + msg.getSubject() + '\n\n' + msg.getPlainBody();
   GmailApp.createDraft(to, 'Medical excuse – ' + m.t.get(m.r, 'Student'), body, { attachments: msg.getAttachments(), replyTo: cfg.replyTo });
   return { to: to, url: 'https://mail.google.com/mail/u/0/#drafts' };
+}
+
+/* ---------- Claude's email replies ----------
+ * The email agent (Claude) reads the students' emails in the forwarded copies and writes one reply per email in
+ * TA Inbox/Processed/email-drafts.json (only Claude writes it). The dashboard shows them with the real Ivy conversation,
+ * and writes email-feedback.json (only the dashboard writes it): Diego's notes for Claude and what happened to each reply.
+ */
+var CLAUDE_MAIL = { drafts: 'email-drafts.json', feedback: 'email-feedback.json' };
+
+function processedFile_(name, create) {
+  var id = config_().inboxFolderId;
+  if (!id) return null;
+  try {
+    var folder = subfolder_(DriveApp.getFolderById(id), 'Processed'), it = folder.getFilesByName(name);
+    if (it.hasNext()) return it.next();
+    return create ? folder.createFile(name, '{}', 'application/json') : null;
+  } catch (e) { return null; }
+}
+
+function readJsonFile_(f, fallback) {
+  try { return JSON.parse(f.getBlob().getDataAsString() || 'null') || fallback; } catch (e) { return fallback; }
+}
+
+/** Claude's replies into the Mail sheet (a new version replaces the text; Diego's Answered / Done are kept). */
+function claudeMailApply_(ctx) {
+  var f = processedFile_(CLAUDE_MAIL.drafts);
+  if (!f) return 0;
+  var data = readJsonFile_(f, {}), drafts = Array.isArray(data) ? data : data.drafts || [];
+  var mt = table_('Mail'), byDraft = {}, byThread = {}, n = 0;
+  mt.rows.forEach(function (r) {
+    if (mt.get(r, 'Claude draft ID')) byDraft[mt.get(r, 'Claude draft ID')] = r;
+    byThread[mt.get(r, 'Thread ID')] = r;
+  });
+  drafts.forEach(function (d) {
+    if (!d || !d.id) return;
+    var ver = String(d.version || 1), r = byDraft[d.id], tid = r ? mt.get(r, 'Thread ID') : '';
+    var lost = !r || /^claude:/.test(tid); // not linked to the Ivy conversation yet
+    if (r && !lost && mt.get(r, 'Claude version') === ver) return;
+    if (lost) {
+      var found = ivyThreadFor_(d);
+      if (found) {
+        if (!r) r = byThread[found];
+        else if (byThread[found] && byThread[found] !== r) { mt.rows.splice(mt.rows.indexOf(r), 1); r = byThread[found]; }
+        tid = found;
+      } else tid = tid || 'claude:' + d.id;
+    }
+    if (!r) { r = blankRow_(mt); mt.rows.push(r); }
+    byThread[tid] = r; byDraft[d.id] = r;
+    var fresh = mt.get(r, 'Claude version') !== ver || mt.get(r, 'Claude draft ID') !== d.id;
+    mt.set(r, 'Thread ID', tid);
+    mt.set(r, 'Claude draft ID', d.id);
+    if (!mt.get(r, 'Student')) mt.set(r, 'Student', d.studentName || d.studentEmail || '');
+    if (!mt.get(r, 'Email')) mt.set(r, 'Email', String(d.studentEmail || '').toLowerCase());
+    if (!mt.get(r, 'Subject')) mt.set(r, 'Subject', d.subject || '');
+    if (!mt.get(r, 'Received')) mt.set(r, 'Received', d.receivedAt || '');
+    if (!mt.get(r, 'Waiting since')) mt.set(r, 'Waiting since', d.receivedAt || nowStr_());
+    if (!fresh) { mt.set(r, 'Updated', nowStr_()); n++; return; }
+    mt.set(r, 'Draft', d.replyBody || '');
+    mt.set(r, 'Reply subject', d.replySubject || '');
+    if (d.summary) mt.set(r, 'Summary', d.summary);
+    if (d.type) mt.set(r, 'Category', d.type);
+    mt.set(r, 'Read by', 'Claude');
+    mt.set(r, 'Claude version', ver);
+    var st = mt.get(r, 'Status');
+    if (d.status === 'sent') st = 'Answered';
+    else if (st !== 'Answered' && st !== 'Done') st = d.status === 'dismissed' ? 'No reply needed' : 'Needs reply';
+    mt.set(r, 'Status', st);
+    mt.set(r, 'Updated', nowStr_());
+    n++;
+  });
+  if (n) save_(mt);
+  writeMailFeedback_(mt);
+  return n;
+}
+
+/** The Ivy conversation of an email Claude read in the forwarded copy: by Message-ID, else by sender + subject + time. */
+function ivyThreadFor_(d) {
+  try {
+    if (d.messageId) {
+      var t = GmailApp.search('rfc822msgid:' + String(d.messageId).replace(/[<>\s]/g, ''), 0, 1);
+      if (t.length) return t[0].getId();
+    }
+    var email = String(d.studentEmail || '').toLowerCase().trim();
+    if (!/^[^\s@]+@[^\s@]+$/.test(email)) return null;
+    var cands = GmailApp.search('from:' + email + ' newer_than:30d', 0, 20).map(function (th) {
+      return { id: th.getId(), subject: th.getFirstMessageSubject(), dates: th.getMessages()
+        .filter(function (m) { return emailOf_(m.getFrom()) === email; })
+        .map(function (m) { return Utilities.formatDate(m.getDate(), tz_(), 'yyyy-MM-dd HH:mm'); }) };
+    });
+    return pickMailThread(cands, d);
+  } catch (e) { return null; }
+}
+
+/** email-feedback.json: Diego's notes (kept) + what happened to each of Claude's replies (from the Mail sheet). */
+function writeMailFeedback_(mt, note) {
+  var f = processedFile_(CLAUDE_MAIL.feedback, true);
+  if (!f) return null;
+  var old = readJsonFile_(f, {}), notes = (old.notes || []).slice(-200), drafts = {};
+  if (note) notes.push(note);
+  var st = { Answered: 'sent', Done: 'dismissed', 'No reply needed': 'dismissed', 'Waiting for Claude': 'redo' };
+  (mt || table_('Mail')).rows.forEach(function (r) {
+    var id = mt.get(r, 'Claude draft ID');
+    if (!id) return;
+    var tid = mt.get(r, 'Thread ID');
+    drafts[id] = { status: st[mt.get(r, 'Status')] || 'pending', ivyThreadId: /^claude:/.test(tid) ? '' : tid, at: mt.get(r, 'Updated') };
+  });
+  var out = { notes: notes, drafts: drafts };
+  if (JSON.stringify({ notes: old.notes || [], drafts: old.drafts || {} }) === JSON.stringify(out)) return out;
+  out.updated = new Date().toISOString();
+  f.setContent(JSON.stringify(out, null, 1));
+  return out;
+}
+
+/**
+ * A note for Claude from the dashboard. With an email: Claude rewrites that reply with it (the email waits for Claude);
+ * without: information Claude keeps in mind for every reply.
+ */
+function apiClaudeNote(text, threadId) {
+  text = String(text || '').trim();
+  if (!text) throw new Error('Write the note first');
+  var out = null;
+  withLock_(function () {
+    var mt = table_('Mail'), r = null;
+    if (threadId) r = mt.rows.filter(function (x) { return mt.get(x, 'Thread ID') === threadId; })[0] || null;
+    var note = { id: 'n' + Date.now(), at: nowStr_(), text: text, draftId: r && mt.get(r, 'Claude draft ID') || null,
+      student: r ? mt.get(r, 'Student') : '', studentEmail: r ? mt.get(r, 'Email') : '', subject: r ? mt.get(r, 'Subject') : '' };
+    if (r) { mt.set(r, 'Status', 'Waiting for Claude'); mt.set(r, 'Updated', nowStr_()); save_(mt); }
+    if (!writeMailFeedback_(mt, note)) throw new Error('TA Inbox folder not found (Config → Inbox folder)');
+    out = { id: note.id, forEmail: !!r };
+  });
+  return out;
+}
+
+/** The notes sent to Claude (newest first) for the Student emails page. */
+function apiClaudeNotes() {
+  var f = processedFile_(CLAUDE_MAIL.feedback);
+  return f ? (readJsonFile_(f, {}).notes || []).slice(-20).reverse() : [];
 }
 
 /* ---------- screenshots dropped in the dashboard ---------- */

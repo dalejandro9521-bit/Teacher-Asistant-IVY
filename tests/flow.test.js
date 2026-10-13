@@ -955,6 +955,72 @@ test('with a Claude API key, screenshots are read by AI: sure matches count, dou
   assert.equal(j(env.gas.apiShotFiles('C3', '2026-10-05')).end[1].done, true);
 });
 
+test('Claude\'s email replies: linked to the Ivy conversation, opened in Ivy Gmail, notes for Claude, statuses back to Claude', () => {
+  const env = setupTerm({ mode: 'POPULI' });
+  const j = x => JSON.parse(JSON.stringify(x));
+  env.setNow('2026-10-07T15:00:00Z');
+  const ana = env.mail.receive({ from: 'Ana Lopez <ana@ivy.edu>', subject: 'Absence Monday', body: 'I was sick.', at: '2026-10-07T13:00:00Z' });
+  env.gas.tick(); // the dashboard's own reading (templates)
+  const put = drafts => env.gas.processedFile_('email-drafts.json', true).setContent(JSON.stringify({ updated: 'x', drafts }));
+  const feedback = () => JSON.parse(env.gas.processedFile_('email-feedback.json').getBlob().getDataAsString());
+  const d1 = { id: 'p1', version: 1, studentName: 'Ana Maria Lopez', studentEmail: 'ana@ivy.edu', subject: 'Fwd: Absence Monday',
+    receivedAt: '2026-10-07 09:01', type: 'Medical excuse', summary: 'Sick on Monday', replySubject: 'Re: Absence Monday',
+    replyBody: 'Hi Ana, [COMPLETAR] Diego', status: 'pending' };
+  const d2 = { id: 'p2', version: 1, studentName: 'Zed Out', studentEmail: 'zed@x.com', subject: 'Question', receivedAt: '2026-10-07 09:30',
+    replySubject: 'Re: Question', replyBody: 'Hi Zed', status: 'pending' };
+  put([d1, d2]);
+  env.gas.tick();
+  let m = j(env.gas.apiMail());
+  const a = m.find(x => x.email === 'ana@ivy.edu');
+  assert.equal(a.threadId, ana.id, 'same Ivy conversation');
+  assert.equal(a.draft, 'Hi Ana, [COMPLETAR] Diego');
+  assert.equal(a.by, 'Claude');
+  assert.equal(m.filter(x => x.email === 'ana@ivy.edu').length, 1);
+  const z = m.find(x => x.email === 'zed@x.com');
+  assert.equal(z.threadId, 'claude:p2', 'not in the Ivy mailbox: still listed');
+  assert.equal(feedback().drafts.p1.status, 'pending');
+  assert.equal(feedback().drafts.p1.ivyThreadId, ana.id);
+  // a later scan does not replace Claude's reply with the template
+  env.gas.apiCheckMail();
+  assert.equal(j(env.gas.apiMail()).find(x => x.email === 'ana@ivy.edu').draft, 'Hi Ana, [COMPLETAR] Diego');
+
+  // Open in Gmail: a draft inside the conversation, in the Ivy account; untouched drafts are replaced, edited ones kept
+  let r = env.gas.apiMailToGmail(ana.id, 'Hi Ana, see you Monday. Diego');
+  assert.match(r.url, /authuser=ta%40ivy\.edu#all\/th/);
+  assert.equal(env.mail.replies.length, 1);
+  env.gas.apiMailToGmail(ana.id, 'Hi Ana, v2');
+  assert.deepEqual(env.mail.replies.map(x => x.body), ['Hi Ana, v2']);
+  env.mail.replies[0].body = 'Hi Ana, edited in Gmail';
+  r = env.gas.apiMailToGmail(ana.id, 'Hi Ana, v3');
+  assert.equal(r.kept, true);
+  assert.deepEqual(env.mail.replies.map(x => x.body), ['Hi Ana, edited in Gmail']);
+  env.gas.apiMailToGmail('claude:p2', 'Hi Zed');
+  assert.equal(env.mail.drafts.at(-1).to, 'zed@x.com');
+  assert.equal(env.mail.drafts.at(-1).subject, 'Re: Question');
+
+  // Notes for Claude: general, and for one email (it waits for Claude's new version)
+  env.gas.apiClaudeNote('Office hours are Monday 9 to 2:30', '');
+  env.gas.apiClaudeNote('Ask for the doctor\'s phone', ana.id);
+  assert.equal(j(env.gas.apiMail()).find(x => x.email === 'ana@ivy.edu').status, 'Waiting for Claude');
+  let fb = feedback();
+  assert.equal(fb.notes.length, 2);
+  assert.equal(fb.notes[0].draftId, null);
+  assert.equal(fb.notes[1].draftId, 'p1');
+  assert.equal(fb.drafts.p1.status, 'redo');
+  assert.equal(j(env.gas.apiClaudeNotes())[0].text, 'Ask for the doctor\'s phone');
+  put([Object.assign({}, d1, { version: 2, replyBody: 'Hi Ana, what is the doctor\'s phone? Diego', notesUsed: [fb.notes[1].id] }), d2]);
+  env.gas.tick();
+  const a2 = j(env.gas.apiMail()).find(x => x.email === 'ana@ivy.edu');
+  assert.equal(a2.status, 'Needs reply');
+  assert.match(a2.draft, /doctor's phone/);
+  // Diego answers from Ivy → Claude is told it was sent
+  env.mail.receive({ thread: ana, from: 'Diego <dgomez230@ivy.edu>', body: 'Thanks Ana' });
+  env.gas.tick();
+  assert.equal(feedback().drafts.p1.status, 'sent');
+  env.gas.apiMailStatus('claude:p2', 'No reply needed');
+  assert.equal(feedback().drafts.p2.status, 'dismissed');
+});
+
 test('student emails: sorted, excuse marks the absence, reply drafts, answered threads close, to-do shows waiting time', () => {
   const env = setupTerm({ mode: 'POPULI' });
   const j = x => JSON.parse(JSON.stringify(x));

@@ -369,3 +369,12 @@ test('Ivy tracker rows: absences only, one week, "Last, First" split, excuse not
     { week: 'Week 2', date: '10/12/2026', first: 'Brian', last: 'Smith', notes: 'Medical excuse accepted' }
   ]);
 });
+
+test('Claude\'s email → the Ivy thread: subject without Re:/Fwd:, closest time', () => {
+  assert.equal(g.mailSubjectKey('Fwd: RE:  Absence   Monday'), 'absence monday');
+  const c = [{ id: 'a', subject: 'Absence Monday', dates: ['2026-10-07 08:00'] }, { id: 'b', subject: 'Re: absence monday', dates: ['2026-10-07 09:00'] },
+    { id: 'c', subject: 'Other', dates: ['2026-10-07 09:01'] }];
+  assert.equal(g.pickMailThread(c, { subject: 'Fwd: Absence Monday', receivedAt: '2026-10-07 09:02' }), 'b');
+  assert.equal(g.pickMailThread(c, { subject: 'Absence Monday', receivedAt: '2026-10-09 09:02' }), null, 'too far in time');
+  assert.equal(g.pickMailThread(c, { subject: '', receivedAt: '2026-10-07 09:05' }), 'c');
+});

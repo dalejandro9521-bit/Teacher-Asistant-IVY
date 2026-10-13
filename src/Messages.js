@@ -558,3 +558,31 @@ function mailTemplateReply(p) {
   }
   return 'Hi ' + first + ',\n\n' + body + '\n\nBest regards,\n' + signature_(cfg);
 }
+
+/** Subject without "Re:" / "Fwd:" prefixes, lowercase, single spaces: the same email in two mailboxes has the same key. */
+function mailSubjectKey(s) {
+  var t = String(s || '').toLowerCase().replace(/\s+/g, ' ').trim(), prev;
+  do { prev = t; t = t.replace(/^(re|fw|fwd|rv|tr)\s*(\[\d+\])?\s*:\s*/, '').trim(); } while (t !== prev);
+  return t;
+}
+
+/**
+ * The Ivy thread of a student email that Claude read in the forwarded copy.
+ * cands: [{id, subject, dates: ['yyyy-MM-dd HH:mm' of the student's messages]}]; d: {subject, receivedAt}.
+ * Same subject (without Re:/Fwd:) and a student message within 2 hours of receivedAt; the closest wins. No subject → time only (30 min).
+ */
+function pickMailThread(cands, d) {
+  var key = mailSubjectKey(d.subject), at = mailMinutes_(d.receivedAt), best = null;
+  (cands || []).forEach(function (c) {
+    if (key && mailSubjectKey(c.subject) !== key) return;
+    var gap = at == null ? 0 : Math.min.apply(null, (c.dates || []).map(function (x) { var m = mailMinutes_(x); return m == null ? 1e9 : Math.abs(m - at); }).concat([1e9]));
+    if (gap > (key ? 120 : 30)) return;
+    if (!best || gap < best.gap) best = { id: c.id, gap: gap };
+  });
+  return best ? best.id : null;
+}
+
+function mailMinutes_(s) {
+  var m = String(s || '').match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}):(\d{2})/);
+  return m ? dayNum(m[1]) * 1440 + +m[2] * 60 + +m[3] : null;
+}

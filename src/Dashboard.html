@@ -498,7 +498,7 @@ function cacheRead(k) {
 }
 function cacheWrite(k, v) { MEM[k] = v; STAMP[k] = Date.now(); try { if (STORE) STORE.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
 /* Calls that only read. Any other call is a write: copies older than it are re-checked, and everything reloads in the background. */
-var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1, apiTracker: 1,
+var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1, apiTracker: 1, apiClaudeNotes: 1,
   apiStudent: 1, apiMail: 1, apiShotFiles: 1, apiStanding: 1,
   apiPrepareShots: 1, apiUploadShot: 1 }; // saving screenshots changes nothing on screen until the analysis (no reload in between)
 var STAMP = {}, FRESH_MS = 180000;
@@ -988,29 +988,39 @@ var REWRITES = [['Shorter', 'Make it shorter.'], ['More formal', 'Make it more f
 function viewMail() {
   fresh('apiMail', [], function (list) {
     S.mail = list;
-    var o = S.overview || {}, waiting = list.filter(function (m) { return m.status === 'Needs reply'; });
+    var o = S.overview || {}, waiting = list.filter(function (m) { return m.status === 'Needs reply' || m.status === 'Waiting for Claude'; });
     if (!S.mailFilter) S.mailFilter = 'reply';
     var shown = S.mailFilter === 'reply' ? waiting : list;
     var h = '<div class="row"><div><h1>Student emails</h1><p class="sub">Emails from your students to ' + esc(o.replyTo || 'your inbox') +
-      ' in the last ' + (o.mailDays || 14) + ' days, checked every 15 minutes. Each one comes with a reply draft' + (o.ai ? ' written by AI with the student\'s attendance' : '') + '.</p></div><div class="spacer"></div>' +
-      '<a class="btn" href="https://mail.google.com/mail/u/0/#inbox" target="_blank">Open Gmail</a><button class="btn primary" data-act="mailCheck">Check now</button></div>';
-    if (!o.ai) h += '<div class="card" style="padding:12px 16px;margin-bottom:12px">Replies are simple templates. For replies written for each situation: TA Attendance → Set Claude API key.</div>';
+      ' in the last ' + (o.mailDays || 14) + ' days, checked every 15 minutes. Each one comes with a reply draft' + (o.ai ? ' written by AI with the student\'s attendance' : ' (Claude\'s replies arrive from the email agent and replace the simple templates)') + '. Nothing here marks your emails as read.</p></div><div class="spacer"></div>' +
+      '<a class="btn" href="' + esc(gmailLink('')) + '" target="_blank">Open Gmail</a><button class="btn primary" data-act="mailCheck">Check now</button></div>';
+    h += '<div class="card" style="padding:12px 16px;margin-bottom:12px"><div class="row"><b>Notes for Claude</b><span class="small muted" style="margin-left:8px">' +
+      'Anything Claude should keep in mind for every reply (a deadline, an office rule, how you want to sound).</span></div>' +
+      '<div class="row" style="gap:8px;margin-top:8px"><input id="claudeNote" placeholder="e.g. The office verifies medical excuses within a week" style="flex:1">' +
+      '<button class="btn primary" data-act="claudeNote">Send to Claude</button></div><div id="claudeNotes" class="small muted" style="margin-top:6px"></div></div>';
     h += '<div class="seg" style="margin-bottom:12px"><button class="' + (S.mailFilter === 'reply' ? 'on' : '') + '" data-act="mailFilter" data-f="reply">Needs reply (' + waiting.length + ')</button>' +
       '<button class="' + (S.mailFilter === 'all' ? 'on' : '') + '" data-act="mailFilter" data-f="all">All (' + list.length + ')</button></div>';
     if (!shown.length) h += '<div class="card empty"><b>' + (S.mailFilter === 'reply' ? 'No student is waiting for an answer' : 'No student emails') + '</b>New emails from students on your rosters appear here.</div>';
     shown.forEach(function (m) { h += mailCard(m, o.ai); });
     $('main').innerHTML = h;
+    loadClaudeNotes();
   });
 }
+/** Gmail in the Ivy account (u/0 is whichever account was signed in first on this Mac). */
+function gmailLink(threadId) {
+  var o = S.overview || {};
+  return 'https://mail.google.com/mail/u/?authuser=' + encodeURIComponent(o.replyTo || '') + '#' + (threadId && !/^claude:/.test(threadId) ? 'all/' + threadId : 'inbox');
+}
 function mailCard(m, ai) {
-  var open = m.status === 'Needs reply';
+  var open = m.status === 'Needs reply' || m.status === 'Waiting for Claude', redo = m.status === 'Waiting for Claude';
   var wait = open ? (m.waiting < 1 ? 'just now' : m.waiting < 48 ? m.waiting + ' h' : Math.floor(m.waiting / 24) + ' days') : '';
   var h = '<div class="card ml' + (open ? '' : ' closed') + '" data-thread="' + esc(m.threadId) + '"><div class="top"><span class="who">' + esc(m.student) + '</span>' +
     m.classes.map(function (k) {
       var cls = k.state === 'failing' || k.state === 'at-limit' ? 'bad' : k.state === 'warning' ? 'warn' : 'good';
       return '<span class="chip ' + cls + '" title="Counted absences · attendance">' + esc(k.code) + ' · ' + k.effective + ' abs · ' + k.pct + '%</span>';
     }).join('') +
-    (m.category ? '<span class="chip">' + esc(m.category) + '</span>' : '') + '<div class="spacer"></div>' +
+    (m.category ? '<span class="chip">' + esc(m.category) + '</span>' : '') + (m.by === 'Claude' ? '<span class="chip">Reply by Claude</span>' : '') + '<div class="spacer"></div>' +
+    (redo ? '<span class="chip warn">Claude is rewriting it with your note</span>' : '') +
     (open ? '<span class="chip ' + (m.waiting >= 24 ? 'bad' : 'warn') + '">Waiting ' + wait + '</span>' : '<span class="chip good">' + esc(m.status) + '</span>') +
     '<span class="small muted">' + esc(m.received) + '</span></div>' +
     '<div class="subj">' + esc(m.subject) + '</div><div class="sum small">' + esc(m.summary) + '</div>';
@@ -1020,21 +1030,30 @@ function mailCard(m, ai) {
   }
   if (!open && S.mailOpen !== m.threadId) {
     return h + '<div class="acts"><button class="btn sm" data-act="mailShow">Show reply</button>' +
-      '<a class="btn sm" target="_blank" href="https://mail.google.com/mail/u/0/#all/' + esc(m.threadId) + '">Open in Gmail</a>' +
+      '<a class="btn sm" target="_blank" href="' + esc(gmailLink(m.threadId)) + '">Open in Gmail</a>' +
       (m.status !== 'Answered' ? '<button class="btn sm" data-act="mailStatus" data-s="Needs reply">Needs reply</button>' : '') + '</div></div>';
   }
   h += '<textarea class="draft" spellcheck="true">' + esc(m.draft) + '</textarea>' +
-    '<div class="acts"><button class="btn sm primary" data-act="mailCopy">Copy reply</button>' +
-    '<button class="btn sm" data-act="mailGmail">Put in Gmail as a draft</button>' +
-    '<a class="btn sm" target="_blank" href="https://mail.google.com/mail/u/0/#all/' + esc(m.threadId) + '">Open in Gmail</a><div class="spacer"></div>' +
+    '<div class="acts"><button class="btn sm" data-act="mailCopy">Copy reply</button>' +
+    '<button class="btn sm primary" data-act="mailGmail">Open in Gmail with this reply</button><div class="spacer"></div>' +
     '<button class="btn sm" data-act="mailStatus" data-s="Answered">✓ Answered</button>' +
     '<button class="btn sm" data-act="mailStatus" data-s="No reply needed">No reply needed</button></div>';
+  h += '<div class="rw"><span class="small muted">Tell Claude:</span><input placeholder="What to change, or something Claude should know for this reply…" class="noteIn">' +
+    '<button class="btn sm" data-act="mailNote">Send to Claude</button></div>';
   if (ai) {
     h += '<div class="rw"><span class="small muted">Rewrite:</span>' + REWRITES.map(function (r, i) {
       return '<button class="btn sm" data-act="mailRewrite" data-i="' + i + '">' + esc(r[0]) + '</button>';
     }).join('') + '<input placeholder="Or tell it what to say…" class="rwIn"><button class="btn sm" data-act="mailRewrite">Rewrite</button></div>';
   }
   return h + '</div>';
+}
+function loadClaudeNotes() {
+  call('apiClaudeNotes').then(function (list) {
+    var box = $('claudeNotes');
+    if (!box) return;
+    var general = list.filter(function (n) { return !n.draftId && !n.subject; }).slice(0, 5);
+    box.innerHTML = general.length ? 'Sent: ' + general.map(function (n) { return '<span title="' + esc(n.at) + '">“' + esc(n.text) + '”</span>'; }).join(' · ') : '';
+  }, function () {});
 }
 function mailOf(b) { var c = b.closest('.ml'); return { card: c, id: c.getAttribute('data-thread'), m: (S.mail || []).filter(function (x) { return x.threadId === c.getAttribute('data-thread'); })[0] }; }
 function mailSet(id, change) {
@@ -1742,8 +1761,27 @@ var ACTIONS = {
   mailCopy: function (b) { copy(mailOf(b).card.querySelector('textarea').value, 'Reply'); },
   mailGmail: function (b) {
     var x = mailOf(b), text = x.card.querySelector('textarea').value;
+    var w = window.open('', '_blank'); // opened now, so the browser does not block it after the save
     b.disabled = true;
-    call('apiMailToGmail', x.id, text).then(function () { b.disabled = false; mailSet(x.id, { draft: text }); toast('Draft saved in Gmail, in the same conversation. Review it and press Send there.'); },
+    call('apiMailToGmail', x.id, text).then(function (r) {
+      b.disabled = false; mailSet(x.id, { draft: text });
+      if (w) w.location = r.url; else window.open(r.url, '_blank');
+      toast(r.kept ? 'You already edited this draft in Gmail, so it was kept. Opening it.' : 'The reply is a draft in the student\'s conversation in your Ivy Gmail. Fill in [COMPLETAR], review and press Send there.');
+    }, function () { b.disabled = false; if (w) w.close(); });
+  },
+  mailNote: function (b) {
+    var x = mailOf(b), inp = x.card.querySelector('.noteIn'), text = inp.value.trim();
+    if (!text) { toast('Write what Claude should change or know', true); return; }
+    b.disabled = true;
+    call('apiClaudeNote', text, x.id).then(function () {
+      mailSet(x.id, { status: 'Waiting for Claude' }); toast('Sent to Claude. The new reply shows up here when it is ready.'); viewMail();
+    }, function () { b.disabled = false; });
+  },
+  claudeNote: function (b) {
+    var inp = $('claudeNote'), text = inp.value.trim();
+    if (!text) { toast('Write the note first', true); return; }
+    b.disabled = true;
+    call('apiClaudeNote', text, '').then(function () { b.disabled = false; inp.value = ''; toast('Saved. Claude keeps it in mind for every reply.'); loadClaudeNotes(); },
       function () { b.disabled = false; });
   },
   mailStatus: function (b) {

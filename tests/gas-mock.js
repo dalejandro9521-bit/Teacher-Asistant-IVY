@@ -176,7 +176,7 @@ function makeEnv(opts) {
   const DocumentApp = { openById: id => ({ getBody: () => ({ getText: () => drive.docs[id].text }) }) };
 
   /* ---- Gmail etc. ---- */
-  const mail = { sent: [], drafts: [], threads: [], labels: {}, replies: [] };
+  const mail = { sent: [], drafts: [], threads: [], labels: {}, replies: [], byDraftId: {} };
   let mailId = 1;
   class GThread {
     constructor(subject) { this.id = 'th' + mailId++; this.subject = subject; this.msgs = []; this.labels = new Set(); }
@@ -185,8 +185,11 @@ function makeEnv(opts) {
     getFirstMessageSubject() { return this.subject; }
     addLabel(l) { this.labels.add(l.name); return this; }
     removeLabel(l) { this.labels.delete(l.name); return this; }
-    createDraftReply(body, o) { mail.replies.push({ thread: this.id, body, ...o }); }
+    createDraftReply(body, o) { const d = { thread: this.id, body, ...o }; mail.replies.push(d); return draftOf(d, mail.replies); }
   }
+  // A GmailDraft over a recorded draft (Diego can edit it: change .body; deleteDraft removes it).
+  const draftOf = (d, list) => { d.id = d.id || 'dr' + mailId++; mail.byDraftId[d.id] = { d, list }; return {
+    getId: () => d.id, getMessage: () => ({ getPlainBody: () => d.body }), deleteDraft: () => { list.splice(list.indexOf(d), 1); delete mail.byDraftId[d.id]; } }; };
   // test helper: add an email to a thread (a new thread when none is given). Returns the thread.
   mail.receive = ({ thread, from, body, subject, attachments, at }) => {
     const th = thread || (mail.threads.push(new GThread(subject || '(no subject)')), mail.threads[mail.threads.length - 1]);
@@ -197,7 +200,8 @@ function makeEnv(opts) {
   };
   const GmailApp = {
     sendEmail: (to, subject, body, o) => mail.sent.push({ to, subject, body, ...o }),
-    createDraft: (to, subject, body, o) => mail.drafts.push({ to, subject, body, ...o }),
+    createDraft: (to, subject, body, o) => { const d = { to, subject, body, ...o }; mail.drafts.push(d); return draftOf(d, mail.drafts); },
+    getDraft: id => { const x = mail.byDraftId[id]; if (!x) throw new Error('no draft'); return draftOf(x.d, x.list); },
     search: () => mail.threads.slice(),
     getThreadById: id => mail.threads.find(t => t.id === id),
     getUserLabelByName: n => mail.labels[n] || null,
