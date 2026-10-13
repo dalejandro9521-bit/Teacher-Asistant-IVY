@@ -79,7 +79,8 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
   so it is NEVER written by script (a whole-file upload would erase other TAs' rows). Weekly report page → "Ivy attendance tracker"
   (`apiTracker`/`tracker_`, `trackerRows`/`splitName` in Rules.js): absences only per class and week, "Copy rows" (tab-separated)
   to paste in column A of the first empty row, plus the Weekly review choice. Tab = course code (`TRACKER_TABS`: SB 100 → "SB 100 (1)"),
-  or Classes → "Tracker tab". Notes never carry internal Zoom rules.
+  or Classes → "Tracker tab". Notes = `trackerNote` (Diego, 2026-10-13: shortest useful line: Left early / Arrived late / Never
+  joined Zoom / Never arrived / Populi note / medical excuse state); never the screenshot details or the online-class rules.
 - Claude's email replies (Diego, 2026-10-13: everything is sent from Ivy; the personal Gmail only bridges the forwarded copies to
   the email agent). The agent writes `TA Inbox/Processed/email-drafts.json` (only it writes; `drafts[]` with id, version, studentEmail,
   subject, receivedAt, messageId?, replySubject, replyBody, status; the agent creates a new file each run and trashes the old one, so the

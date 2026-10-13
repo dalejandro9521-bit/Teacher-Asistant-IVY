@@ -3009,7 +3009,8 @@ function records0_(ctx) {
     return {
       date: parseDateCell(t.get(r, 'Date'), y), classId: t.get(r, 'Class ID'), studentId: t.get(r, 'Student ID'),
       name: t.get(r, 'Name'), status: normalizeStatus(t.get(r, 'Status')), excuse: t.get(r, 'Excuse'),
-      excuseDate: parseDateCell(t.get(r, 'Excuse date'), y), leftEarly: yes_(t.get(r, 'Left early'))
+      excuseDate: parseDateCell(t.get(r, 'Excuse date'), y), leftEarly: yes_(t.get(r, 'Left early')),
+      source: t.get(r, 'Source'), notes: t.get(r, 'Notes'), late: t.get(r, 'Minutes late')
     };
   }).filter(function (r) { return r.date && r.classId && r.studentId; });
 }

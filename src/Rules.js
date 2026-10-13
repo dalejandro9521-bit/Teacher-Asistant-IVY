@@ -379,13 +379,28 @@ function trackerRows(records, students, classId, week, termStart) {
   return (records || []).filter(function (r) {
     return r.classId === classId && normalizeStatus(r.status) === STATUS.A && termWeek(r.date, termStart) === week;
   }).map(function (r) {
-    var s = byId[r.studentId] || {}, n = splitName(s.name || r.name), ex = String(r.excuse || '').trim(), notes = [];
-    if (r.leftEarly) notes.push('Left before the end of class');
-    if (/^accepted$/i.test(ex)) notes.push('Medical excuse accepted');
-    else if (/^received$/i.test(ex)) notes.push('Excuse received, pending review');
-    var d = String(r.date).split('-');
+    var s = byId[r.studentId] || {}, n = splitName(s.name || r.name), d = String(r.date).split('-');
     return { week: 'Week ' + week, date: +d[1] + '/' + +d[2] + '/' + d[0], first: n.first, last: n.last,
-      notes: notes.join('; '), sort: r.date + '|' + ('0000' + (s.order || 9999)).slice(-4) };
+      notes: trackerNote(r), sort: r.date + '|' + ('0000' + (s.order || 9999)).slice(-4) };
   }).sort(function (a, b) { return a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0; })
     .map(function (x) { delete x.sort; return x; });
+}
+
+/**
+ * The shortest useful note for an absence in Ivy's tracker (Diego, 2026-10-13): what happened, then the medical excuse.
+ * r: {source, notes, leftEarly, late (minutes), excuse}. Never the screenshot details or the online-class rules.
+ */
+function trackerNote(r) {
+  var src = String(r.source || ''), txt = String(r.notes || ''), ex = String(r.excuse || '').trim(), out = [];
+  var populiNote = (txt.match(/(?:As marked in Populi|Corrected from Populi on [\d-]+): ([^·]+)/) || [])[1];
+  if (r.leftEarly || /not in the last screenshot|left (before|early)/i.test(txt)) out.push('Left early');
+  else if (/joined after minute 30/i.test(txt) || +r.late > 30) out.push('Arrived late');
+  else if (/not seen|not in any screenshot/i.test(src + ' ' + txt)) out.push('Never joined Zoom');
+  else if (/populi/i.test(src) && !populiNote) out.push('Never arrived');
+  if (populiNote) out.push(populiNote.trim());
+  if (/populi correction/i.test(src)) out.push('Corrected in Populi');
+  if (/^accepted$/i.test(ex)) out.push('Medical excuse accepted');
+  else if (/^received$/i.test(ex)) out.push('Sent medical excuse (pending)');
+  else if (/^rejected$/i.test(ex)) out.push('Medical excuse rejected');
+  return out.join('; ');
 }

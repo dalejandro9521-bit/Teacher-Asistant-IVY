@@ -365,7 +365,7 @@ test('Ivy tracker rows: absences only, one week, "Last, First" split, excuse not
   ];
   const rows = plain(g.trackerRows(recs, roster.map((s, i) => Object.assign({ order: i + 1 }, s)), 'C3', 2, '2026-10-05'));
   assert.deepEqual(rows, [
-    { week: 'Week 2', date: '10/12/2026', first: 'Ana', last: 'Maria Lopez', notes: 'Left before the end of class' },
+    { week: 'Week 2', date: '10/12/2026', first: 'Ana', last: 'Maria Lopez', notes: 'Left early' },
     { week: 'Week 2', date: '10/12/2026', first: 'Brian', last: 'Smith', notes: 'Medical excuse accepted' }
   ]);
 });
@@ -377,4 +377,15 @@ test('Claude\'s email → the Ivy thread: subject without Re:/Fwd:, closest time
   assert.equal(g.pickMailThread(c, { subject: 'Fwd: Absence Monday', receivedAt: '2026-10-07 09:02' }), 'b');
   assert.equal(g.pickMailThread(c, { subject: 'Absence Monday', receivedAt: '2026-10-09 09:02' }), null, 'too far in time');
   assert.equal(g.pickMailThread(c, { subject: '', receivedAt: '2026-10-07 09:05' }), 'c');
+});
+
+test('Ivy tracker notes: the shortest useful line per absence', () => {
+  const n = r => g.trackerNote(r);
+  assert.equal(n({ source: 'Zoom screenshots (not seen)', notes: 'Not in any screenshot' }), 'Never joined Zoom');
+  assert.equal(n({ source: 'Zoom screenshots', leftEarly: true, notes: 'Only in the 15 minute screenshot, not in the last screenshot: disconnected' }), 'Left early');
+  assert.equal(n({ source: 'Zoom screenshots', notes: 'Joined after minute 30 (only in the last screenshot)' }), 'Arrived late');
+  assert.equal(n({ source: 'Populi screenshot', notes: 'As marked in Populi' }), 'Never arrived');
+  assert.equal(n({ source: 'Populi screenshot', notes: 'As marked in Populi: left at break', excuse: 'Received' }), 'left at break; Sent medical excuse (pending)');
+  assert.equal(n({ source: 'Manual', excuse: 'Accepted' }), 'Medical excuse accepted');
+  assert.equal(n({ source: 'Manual' }), '');
 });
