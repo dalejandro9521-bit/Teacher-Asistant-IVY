@@ -82,7 +82,8 @@ in TA Inbox. If he still sends screenshots here, ask for the participant list cr
   or Classes → "Tracker tab". Notes never carry internal Zoom rules.
 - Claude's email replies (Diego, 2026-10-13: everything is sent from Ivy; the personal Gmail only bridges the forwarded copies to
   the email agent). The agent writes `TA Inbox/Processed/email-drafts.json` (only it writes; `drafts[]` with id, version, studentEmail,
-  subject, receivedAt, messageId?, replySubject, replyBody, status); `claudeMailApply_` (in `runAll_` and Check now) links each to the
+  subject, receivedAt, messageId?, replySubject, replyBody, status; the agent creates a new file each run and trashes the old one, so the
+  newest by creation wins); `claudeMailApply_` (in `runAll_` and Check now) links each to the
   Ivy thread (`ivyThreadFor_`: rfc822msgid, else from: + `pickMailThread` subject/time) or keeps it as `claude:<id>`, and a new
   version replaces the text. The dashboard writes `email-feedback.json` (only it writes: `notes[]` from "Notes for Claude" /
   "Tell Claude" via `apiClaudeNote`, and `drafts{id: status pending|sent|dismissed|redo}`). "Open in Gmail with this reply"

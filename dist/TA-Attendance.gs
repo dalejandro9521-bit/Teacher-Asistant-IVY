@@ -3741,8 +3741,10 @@ function processedFile_(name, create) {
   var id = config_().inboxFolderId;
   if (!id) return null;
   try {
-    var folder = subfolder_(DriveApp.getFolderById(id), 'Processed'), it = folder.getFilesByName(name);
-    if (it.hasNext()) return it.next();
+    var folder = subfolder_(DriveApp.getFolderById(id), 'Processed'), it = folder.getFilesByName(name), best = null;
+    // The email agent can only create files (not rewrite them): it adds a new one each run and trashes the old one.
+    while (it.hasNext()) { var f = it.next(); if (!best || f.getDateCreated().getTime() > best.getDateCreated().getTime()) best = f; }
+    if (best) return best;
     return create ? folder.createFile(name, '{}', 'application/json') : null;
   } catch (e) { return null; }
 }

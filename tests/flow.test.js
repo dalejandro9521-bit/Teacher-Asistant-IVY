@@ -1008,7 +1008,10 @@ test('Claude\'s email replies: linked to the Ivy conversation, opened in Ivy Gma
   assert.equal(fb.notes[1].draftId, 'p1');
   assert.equal(fb.drafts.p1.status, 'redo');
   assert.equal(j(env.gas.apiClaudeNotes())[0].text, 'Ask for the doctor\'s phone');
-  put([Object.assign({}, d1, { version: 2, replyBody: 'Hi Ana, what is the doctor\'s phone? Diego', notesUsed: [fb.notes[1].id] }), d2]);
+  // the agent adds a new email-drafts.json each run (the old one is still there for a moment): the newest wins
+  env.setNow('2026-10-07T16:00:00Z');
+  env.gas.subfolder_(env.inbox(), 'Processed').createFile('email-drafts.json', JSON.stringify({ drafts: [
+    Object.assign({}, d1, { version: 2, replyBody: 'Hi Ana, what is the doctor\'s phone? Diego', notesUsed: [fb.notes[1].id] }), d2] }), 'application/json');
   env.gas.tick();
   const a2 = j(env.gas.apiMail()).find(x => x.email === 'ana@ivy.edu');
   assert.equal(a2.status, 'Needs reply');
