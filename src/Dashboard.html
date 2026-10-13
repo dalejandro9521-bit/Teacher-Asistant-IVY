@@ -498,7 +498,7 @@ function cacheRead(k) {
 }
 function cacheWrite(k, v) { MEM[k] = v; STAMP[k] = Date.now(); try { if (STORE) STORE.setItem('ta:' + k, JSON.stringify(v)); } catch (e) { /* full: memory is enough */ } }
 /* Calls that only read. Any other call is a write: copies older than it are re-checked, and everything reloads in the background. */
-var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1,
+var READS = { apiAll: 1, apiOverview: 1, apiClass: 1, apiSession: 1, apiQuestions: 1, apiFollowups: 1, apiReportWeeks: 1, apiWeeklyReport: 1, apiTracker: 1,
   apiStudent: 1, apiMail: 1, apiShotFiles: 1, apiStanding: 1,
   apiPrepareShots: 1, apiUploadShot: 1 }; // saving screenshots changes nothing on screen until the analysis (no reload in between)
 var STAMP = {}, FRESH_MS = 180000;
@@ -1609,6 +1609,7 @@ function viewReports() {
     }).join('') + '</div>';
     h += '<div class="row" style="margin-bottom:12px"><div id="repTitle" class="muted"></div><div class="spacer"></div>' +
       '<button class="btn" data-act="reportPdf">Save as PDF in Drive</button><button class="btn primary" data-act="reportSend">Email it to me</button></div>' +
+      '<div class="card" id="tracker"></div>' +
       '<div class="card report" id="report"><div class="skeleton"></div></div>';
     $('main').innerHTML = h;
     loadReport();
@@ -1620,6 +1621,28 @@ function loadReport() {
     $('repTitle').textContent = 'Week ' + r.week + ' · ' + longToday(r.start) + ' to ' + longToday(r.end);
     $('report').innerHTML = r.html; // built on the server with every value escaped
   });
+  loadTracker();
+}
+/** Ivy's shared attendance tracker: the week's absences per class, ready to paste in that class's tab. */
+function loadTracker() {
+  var box = $('tracker');
+  if (!box) return;
+  box.innerHTML = '<div class="skeleton"></div>';
+  call('apiTracker', S.reportWeek).then(function (t) {
+    if (!$('tracker') || t.week !== S.reportWeek) return;
+    var body = t.classes.map(function (c) {
+      var tsv = c.rows.map(function (r) { return [r.week, r.date, r.first, r.last, r.notes].join('\t'); }).join('\n');
+      var head = '<div class="row" style="margin:14px 0 6px">' + cdot(c.id) + '<b>' + esc(c.label) + '</b>' +
+        '<span class="muted small" style="margin-left:8px">tab "' + esc(c.tab) + '" · Weekly review, Week ' + t.week + ': <b>' + esc(c.review) + '</b></span><div class="spacer"></div>' +
+        (c.rows.length ? '<button class="btn sm" data-act="copy" data-what="' + esc(c.label + ' rows') + '" data-text="' + esc(tsv) + '">Copy ' + c.rows.length + ' row' + (c.rows.length === 1 ? '' : 's') + '</button>' : '') + '</div>';
+      if (!c.taken) return head + '<div class="muted small">Attendance for this week is not taken yet.</div>';
+      if (!c.rows.length) return head + '<div class="muted small">No absences this week.</div>';
+      return head + '<table><thead><tr><th>Week</th><th>Date of Absence</th><th>First Name</th><th>Last Name</th><th>Notes</th></tr></thead><tbody>' +
+        c.rows.map(function (r) { return '<tr><td>' + esc(r.week) + '</td><td>' + esc(r.date) + '</td><td>' + esc(r.first) + '</td><td>' + esc(r.last) + '</td><td>' + esc(r.notes) + '</td></tr>'; }).join('') +
+        '</tbody></table>';
+    }).join('');
+    box.innerHTML = fold('Ivy attendance tracker', 'Copy each class\'s rows and paste them in its tab, in column A of the first empty row', body, true);
+  }, function () { if ($('tracker')) $('tracker').innerHTML = ''; });
 }
 
 /* ---------- Activity ---------- */

@@ -65,14 +65,15 @@ api.apiSetRecord = { status: 'Absent', left: true, noId: false, excuse: 'Receive
   ['C2', 'LRQ #2', '2026-10-12 23:59', 'Lecture Reading Quizzes', 'Oct 12 4:00pm-11:59pm only'], ['C2', 'TRQ #2', '2026-10-12 23:59', 'Textbook Reading Questions', '']]
   .forEach(a => env.sheet('Assignments').appendRow([a[0], a[1], a[2], 'none', '', '', a[3], a[4]]));
 api.apiWeeklyReport = JSON.parse(JSON.stringify(g.apiWeeklyReport(1)));
+api.apiTracker = {}; for (let w = 1; w <= 10; w++) api.apiTracker[w] = JSON.parse(JSON.stringify(g.apiTracker(w)));
 api.apiStanding = JSON.parse(JSON.stringify(g.apiStanding()));
 api.apiStandingSent = api.apiStanding;
 
 const stub = `window.__API = ${JSON.stringify(api)};
 window.google = { script: { run: (function make(ok, fail) {
   const r = { withSuccessHandler: f => make(f, fail), withFailureHandler: f => make(ok, f) };
-  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots','apiAll','apiMail','apiMailStatus','apiMailToGmail','apiMailForwardExcuse','apiCheckMail','apiMailRedraft','apiStanding','apiStandingSent','apiShotFiles','apiAiReadFile','apiPrepareShots','apiClaudeResults','apiImportRoster','apiAddStudent','apiRemoveStudent','apiSetStudentNames'].forEach(n => {
-    r[n] = (...a) => setTimeout(() => { let v = window.__API[n]; if (n === 'apiClass') v = v[a[0]] || v.C3; if (n === 'apiProcessNow') v = { files: 0, sent: 0 };
+  ['apiOverview','apiQuestions','apiFollowups','apiClass','apiSession','apiProcessNow','apiAnswer','apiSetStart','apiFollowupDone','apiReportWeeks','apiWeeklyReport','apiTracker','apiSendWeeklyReport','apiSaveWeeklyReportPdf','apiStudent','apiSetRecord','apiBulkStatus','apiFinishSession','apiPopuliDone','apiUploadShot','apiAnalyzeSession','apiClearShots','apiAll','apiMail','apiMailStatus','apiMailToGmail','apiMailForwardExcuse','apiCheckMail','apiMailRedraft','apiStanding','apiStandingSent','apiShotFiles','apiAiReadFile','apiPrepareShots','apiClaudeResults','apiImportRoster','apiAddStudent','apiRemoveStudent','apiSetStudentNames'].forEach(n => {
+    r[n] = (...a) => setTimeout(() => { let v = window.__API[n]; if (n === 'apiClass') v = v[a[0]] || v.C3; if (n === 'apiTracker') v = v[a[0]]; if (n === 'apiProcessNow') v = { files: 0, sent: 0 };
       if (n === 'apiAnswer') v = { note: 'Linked to #12 Malek Bay' };
       if (n === 'apiMailRedraft') v = { draft: 'Hi Ana,\\n\\nGot it, thanks! I sent it to the office.\\n\\nDiego' };
       if (n === 'apiMailForwardExcuse') v = { to: 'office@ivy.edu' };

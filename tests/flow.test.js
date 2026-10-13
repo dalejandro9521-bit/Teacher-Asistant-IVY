@@ -201,6 +201,25 @@ test('a tardy gets a notice only when it puts the student below 80% (2 absences 
   assert.equal(t.pct, 77);
 });
 
+test('Ivy tracker: the week\'s absences per class with the Weekly review choice (tardies and other weeks left out)', () => {
+  const env = setupTerm();
+  env.inbox().addFile('a [C1].csv', populiC1);
+  env.gas.tick();
+  env.gas.apiSetRecord('C1', '2026-10-12', '2004', { status: 'Absent', leftEarly: true });
+  env.gas.apiSetRecord('C1', '2026-10-12', '2001', { status: 'Tardy' });
+  const t = JSON.parse(JSON.stringify(env.gas.apiTracker(2)));
+  const c1 = t.classes.find(c => c.id === 'C1');
+  assert.equal(c1.rows.length, 1);
+  assert.equal(c1.rows[0].week, 'Week 2');
+  assert.equal(c1.rows[0].date, '10/12/2026');
+  assert.match(c1.rows[0].notes, /Left before the end/);
+  assert.equal(c1.review, 'Reviewed — Absences Entered');
+  const w1 = JSON.parse(JSON.stringify(env.gas.apiTracker(1))).classes.find(c => c.id === 'C1');
+  assert.ok(w1.rows.every(r => r.week === 'Week 1' && r.date === '10/5/2026'));
+  const w3 = JSON.parse(JSON.stringify(env.gas.apiTracker(3))).classes.find(c => c.id === 'C1');
+  assert.equal(w3.review, 'Not Reviewed');
+});
+
 test('SEND mode sends right away; LOG mode only writes Outbox', () => {
   const env = setupTerm();
   env.setConfig('Email mode', 'SEND');

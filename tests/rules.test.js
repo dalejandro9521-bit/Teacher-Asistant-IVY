@@ -352,3 +352,20 @@ test('online classes: no Tardy, Present until minute 30, Absent from minute 31',
   assert.ok(!/no tardy|online class/i.test(g.mailSystemPrompt({}).replace(/NEVER mention it to a student: online \(Zoom\) classes are recorded only as Present or Absent\. Do not explain tardy rules for online classes\./, '')));
   assert.ok(m.text.includes('One more absence will put you below 80%'));
 });
+
+test('Ivy tracker rows: absences only, one week, "Last, First" split, excuse notes', () => {
+  assert.deepEqual(plain(g.splitName('Lopez Garcia, Ana Maria')), { first: 'Ana Maria', last: 'Lopez Garcia' });
+  assert.deepEqual(plain(g.splitName('Brian  Smith')), { first: 'Brian', last: 'Smith' });
+  const recs = [
+    { date: '2026-10-12', classId: 'C3', studentId: '1002', status: 'Absent', excuse: 'Accepted' },
+    { date: '2026-10-12', classId: 'C3', studentId: '1001', status: 'Absent', leftEarly: true },
+    { date: '2026-10-12', classId: 'C3', studentId: '1003', status: 'Tardy' },
+    { date: '2026-10-05', classId: 'C3', studentId: '1004', status: 'Absent' },
+    { date: '2026-10-12', classId: 'C9', studentId: '1004', status: 'Absent' }
+  ];
+  const rows = plain(g.trackerRows(recs, roster.map((s, i) => Object.assign({ order: i + 1 }, s)), 'C3', 2, '2026-10-05'));
+  assert.deepEqual(rows, [
+    { week: 'Week 2', date: '10/12/2026', first: 'Ana', last: 'Maria Lopez', notes: 'Left before the end of class' },
+    { week: 'Week 2', date: '10/12/2026', first: 'Brian', last: 'Smith', notes: 'Medical excuse accepted' }
+  ]);
+});

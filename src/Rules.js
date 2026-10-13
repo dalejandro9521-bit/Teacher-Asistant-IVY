@@ -356,3 +356,36 @@ function resolveName(probe, roster) {
   if (top.score < 0.8) return null;
   return { doubt: close.map(function (x) { return x.student; }) };
 }
+
+/** "Last, First" → {first, last}; "First Second Last" → first word / the rest (best guess for the Ivy tracker). */
+function splitName(name) {
+  var s = String(name || '').replace(/\s+/g, ' ').trim();
+  if (s.indexOf(',') >= 0) {
+    var p = s.split(',');
+    return { first: p.slice(1).join(',').trim(), last: p[0].trim() };
+  }
+  var w = s.split(' ');
+  return { first: w[0] || '', last: w.slice(1).join(' ') };
+}
+
+/**
+ * Rows for Ivy's shared "Fall Attendance Tracker" (one tab per class, absent students only, one row per absence):
+ * [Week, Date of Absence, First Name, Last Name, Notes] for the absences of one class in one term week, by date then roster order.
+ * records: [{date, classId, studentId, name, status, excuse, leftEarly}]; students: roster with {id, name, order}.
+ */
+function trackerRows(records, students, classId, week, termStart) {
+  var byId = {};
+  (students || []).forEach(function (s) { byId[s.id] = s; });
+  return (records || []).filter(function (r) {
+    return r.classId === classId && normalizeStatus(r.status) === STATUS.A && termWeek(r.date, termStart) === week;
+  }).map(function (r) {
+    var s = byId[r.studentId] || {}, n = splitName(s.name || r.name), ex = String(r.excuse || '').trim(), notes = [];
+    if (r.leftEarly) notes.push('Left before the end of class');
+    if (/^accepted$/i.test(ex)) notes.push('Medical excuse accepted');
+    else if (/^received$/i.test(ex)) notes.push('Excuse received, pending review');
+    var d = String(r.date).split('-');
+    return { week: 'Week ' + week, date: +d[1] + '/' + +d[2] + '/' + d[0], first: n.first, last: n.last,
+      notes: notes.join('; '), sort: r.date + '|' + ('0000' + (s.order || 9999)).slice(-4) };
+  }).sort(function (a, b) { return a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0; })
+    .map(function (x) { delete x.sort; return x; });
+}

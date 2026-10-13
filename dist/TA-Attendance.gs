@@ -364,6 +364,39 @@ function resolveName(probe, roster) {
   return { doubt: close.map(function (x) { return x.student; }) };
 }
 
+/** "Last, First" → {first, last}; "First Second Last" → first word / the rest (best guess for the Ivy tracker). */
+function splitName(name) {
+  var s = String(name || '').replace(/\s+/g, ' ').trim();
+  if (s.indexOf(',') >= 0) {
+    var p = s.split(',');
+    return { first: p.slice(1).join(',').trim(), last: p[0].trim() };
+  }
+  var w = s.split(' ');
+  return { first: w[0] || '', last: w.slice(1).join(' ') };
+}
+
+/**
+ * Rows for Ivy's shared "Fall Attendance Tracker" (one tab per class, absent students only, one row per absence):
+ * [Week, Date of Absence, First Name, Last Name, Notes] for the absences of one class in one term week, by date then roster order.
+ * records: [{date, classId, studentId, name, status, excuse, leftEarly}]; students: roster with {id, name, order}.
+ */
+function trackerRows(records, students, classId, week, termStart) {
+  var byId = {};
+  (students || []).forEach(function (s) { byId[s.id] = s; });
+  return (records || []).filter(function (r) {
+    return r.classId === classId && normalizeStatus(r.status) === STATUS.A && termWeek(r.date, termStart) === week;
+  }).map(function (r) {
+    var s = byId[r.studentId] || {}, n = splitName(s.name || r.name), ex = String(r.excuse || '').trim(), notes = [];
+    if (r.leftEarly) notes.push('Left before the end of class');
+    if (/^accepted$/i.test(ex)) notes.push('Medical excuse accepted');
+    else if (/^received$/i.test(ex)) notes.push('Excuse received, pending review');
+    var d = String(r.date).split('-');
+    return { week: 'Week ' + week, date: +d[1] + '/' + +d[2] + '/' + d[0], first: n.first, last: n.last,
+      notes: notes.join('; '), sort: r.date + '|' + ('0000' + (s.order || 9999)).slice(-4) };
+  }).sort(function (a, b) { return a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0; })
+    .map(function (x) { delete x.sort; return x; });
+}
+
 /* ===== Parsers.js ===== */
 
 /**
@@ -1525,7 +1558,7 @@ function mailTemplateReply(p) {
 
 var SHEETS = {
   Config: ['Setting', 'Value', 'Notes'],
-  Classes: ['Class ID', 'Course', 'Section', 'Professor', 'Professor email', 'Day', 'Start', 'End', 'Mode', 'Zoom meeting ID', 'Active'],
+  Classes: ['Class ID', 'Course', 'Section', 'Professor', 'Professor email', 'Day', 'Start', 'End', 'Mode', 'Zoom meeting ID', 'Active', 'Tracker tab'],
   Students: ['Student ID', 'Name', 'Email', 'Class ID', 'Active', 'Order', 'Zoom names', 'On roster since'],
   'Roster changes': ['Time', 'Class ID', 'Student ID', 'Name', 'Change', 'How'],
   Attendance: ['Date', 'Class ID', 'Student ID', 'Name', 'Status', 'Minutes late', 'Source', 'No ID', 'Left early',
@@ -2994,6 +3027,30 @@ function apiWeeklyReport(week) {
   return { week: r.week, start: r.start, end: r.end, subject: r.subject, html: r.html };
 }
 
+/**
+ * Ivy's shared attendance tracker (an .xlsm the office owns; every TA writes in it, so it is never written by script):
+ * per class, the absences of a week ready to paste in that class's tab, and what to pick in its "Weekly review" column.
+ */
+function apiTracker(week) { return tracker_(load_(), +week); }
+
+/** Ivy's tab names for Diego's sections when they differ from the course code ("Tracker tab" in Classes wins). */
+var TRACKER_TABS = { 'SB 100': 'SB 100 (1)' };
+
+function trackerTab_(cls) {
+  var m = String(cls.course || '').match(/^\s*([A-Za-z]{2,4})\s*(\d{3})/), code = m ? m[1].toUpperCase() + ' ' + m[2] : classLabel(cls);
+  return TRACKER_TABS[code] || code;
+}
+
+function tracker_(ctx, week) {
+  var recs = records_(ctx);
+  return { week: week, classes: ctx.classes.filter(function (c) { return c.active; }).map(function (c) {
+    var rows = trackerRows(recs, ctx.students.filter(function (x) { return x.classId === c.id; }), c.id, week, ctx.cfg.termStart);
+    var taken = recs.some(function (r) { return r.classId === c.id && termWeek(r.date, ctx.cfg.termStart) === week; });
+    return { id: c.id, label: classLabel(c), tab: c.trackerTab || trackerTab_(c), rows: rows, taken: taken,
+      review: !taken ? 'Not Reviewed' : rows.length ? 'Reviewed — Absences Entered' : 'Reviewed — No Absences' };
+  }) };
+}
+
 /** Email the report of a week to "Weekly report to" in Config. */
 function apiSendWeeklyReport(week) {
   var ctx = load_(), r = reportForWeek_(ctx, +week), to = ctx.cfg.reportTo || ctx.cfg.replyTo;
@@ -4280,7 +4337,8 @@ function load_() {
       id: ct.get(r, 'Class ID'), course: ct.get(r, 'Course'), section: ct.get(r, 'Section'),
       professor: ct.get(r, 'Professor'), professorEmail: ct.get(r, 'Professor email'),
       day: ct.get(r, 'Day'), start: hmToMin(ct.get(r, 'Start')), end: hmToMin(ct.get(r, 'End')),
-      mode: ct.get(r, 'Mode'), zoomId: ct.get(r, 'Zoom meeting ID'), active: !/^(no|n|false|0)$/i.test(ct.get(r, 'Active'))
+      mode: ct.get(r, 'Mode'), zoomId: ct.get(r, 'Zoom meeting ID'), active: !/^(no|n|false|0)$/i.test(ct.get(r, 'Active')),
+      trackerTab: ct.get(r, 'Tracker tab')
     };
   }).filter(function (c) { return c.id && c.start != null && c.end != null; });
   ctx.studentsT = table_('Students');
